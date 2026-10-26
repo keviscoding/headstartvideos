@@ -365,7 +365,9 @@ PROMPT_FILE_FLAGS = {"--system-prompt": "--system-prompt-file", "--append-system
 
 def prompts_on_disk(command, folder, *, windows=None):
     """(command, files): the command with each system prompt too long (or, on Windows, multi-line) for the command
-    line moved into a UTF-8 file in `folder`, and the files to delete after the run."""
+    line moved into a UTF-8 file in `folder`, and the files to delete after the run. Every run gets its own file:
+    FOLIO draws three shots at once with the same 54 KB rules, and a file shared between them could be deleted or
+    rewritten while another stage's Claude was still reading it (review, 2026-10-26)."""
     windows = os.name == "nt" if windows is None else windows
     limit = 8000          # on every computer, so a Mac runs FOLIO exactly as a Windows PC does
     out, files = [], []
@@ -380,10 +382,20 @@ def prompts_on_disk(command, folder, *, windows=None):
         if value is not None and (len(value) > limit or (windows and ("\n" in value or "\r" in value))):
             folder = Path(folder)
             folder.mkdir(parents=True, exist_ok=True)
-            path = folder / (".prompt-" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:16] + ".txt")
-            with open(path, "w", encoding="utf-8", newline="") as handle:     # the exact text, \n kept as \n
-                handle.write(value)
+            handle, name = tempfile.mkstemp(prefix=".prompt-", suffix=".txt", dir=folder)    # this run's own file
+            os.close(handle)
+            path = Path(name)
             files.append(path)
+            try:
+                with open(path, "w", encoding="utf-8", newline="") as stream:     # the exact text, \n kept as \n
+                    stream.write(value)
+            except BaseException:
+                for written in files:
+                    try:
+                        written.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise
             out += [PROMPT_FILE_FLAGS[flag], str(path)]
         else:
             out += [str(c) for c in command[i:i + step]]
@@ -550,7 +562,10 @@ class Runtime:
                 completed = self.real_run(run_command, **options)
             finally:
                 for prompt_file in prompt_files:
-                    prompt_file.unlink(missing_ok=True)
+                    try:
+                        prompt_file.unlink(missing_ok=True)
+                    except OSError:
+                        pass            # a file Windows still holds open: never turns a finished run into a failure
             if streamed and completed is not None:
                 # The stream lists rate-limit events on every run: classify a failure by its result alone.
                 completed = subprocess.CompletedProcess(getattr(completed, "args", command), completed.returncode,
