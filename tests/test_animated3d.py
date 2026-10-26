@@ -437,6 +437,23 @@ def test_a_study_judges_a_renderer_composited_over_pictures_on_its_characters(ho
         "the channel's own frames are judged as they are; the drafts' stand-in backgrounds are set aside"
 
 
+def test_music_heard_but_not_measured_still_gets_the_channels_own_score():
+    """@gneef's clone had no music: its Shorts' quiet bed under constant speech couldn't be measured, so the style fell
+    back to a stock library this Studio couldn't reach. Music the look heard is the channel's own score now."""
+    sound = {"music": {"value": "story score", "share": 1.0, "level": None, "bed_in_pauses_db": None,
+                       "genres": ["upbeat electronic, dramatic orchestral tension"], "moods": ["playful", "tense", "heroic"],
+                       "instruments": ["synthesizer", "strings", "percussion"], "under_voice": "quiet", "beat": "driving"},
+             "sfx": {"value": "sparse", "kinds": ["stone thud", "cartoon scream", "countdown beep"]}}
+    plan = cm.plan_style(tsm.profile({"generated": 0.9}, **{"sound__music": sound["music"], "sound__sfx": sound["sfx"]}),
+                         tsm.STYLES)
+    snd = plan["overrides"]["look"]["sound"]
+    assert snd["music"] is True and snd["music_rel_db"] == -22.0 and snd["score"]["instruments"][:2] == ["synthesizer", "strings"]
+    assert snd["score"]["genres"] == ["upbeat electronic, dramatic orchestral tension"] and snd["score"]["beat"] == "driving"
+    silent = cm.plan_style(tsm.profile({"generated": 0.9}, **{"sound__music": {"value": "none", "level": None, "share": 0}}),
+                           tsm.STYLES)["overrides"]["look"]["sound"]
+    assert "score" not in silent, "no music heard, none invented"
+
+
 def test_round_files_belong_to_their_build(tmp_path):
     out = tmp_path / "renderer"
     (out / "round-1").mkdir(parents=True)

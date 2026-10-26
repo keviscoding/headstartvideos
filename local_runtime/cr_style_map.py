@@ -1081,6 +1081,11 @@ def _sound(plan: Plan, profile: dict):
     level = music.get("level")
     bed = music.get("bed_in_pauses_db")
     snd = {}
+    # music heard in the references whose level couldn't be measured (a Short's quiet bed under constant speech):
+    # still the channel's own score, never a stock library this Studio may not reach (@gneef's clone had no music)
+    heard = level is None and (str(_v(music, "") or "").lower() not in ("", "none", "no music")
+                               and float(music.get("share") or 0) > 0
+                               or any(g and g.lower() != "none" for g in music.get("genres") or []))
     if level == "none":
         snd.update(music=False)
         why = "the references' pauses have no music (measured)"
@@ -1099,9 +1104,13 @@ def _sound(plan: Plan, profile: dict):
         rel = round(_clamp(at + 4, -38, -4), 1)
         snd.update(music=True, music_rel_db=rel, duck_db=-6.0 if level == "score" else -8.0)
         why = f"music in the pauses about {abs(bed or 0):.0f} dB under the voice (measured)"
+    elif heard:
+        rel = {"quiet": -22.0, "moderate": -16.0, "loud": -10.0}.get(str(music.get("under_voice") or ""), -18.0)
+        snd.update(music=True, music_rel_db=rel, duck_db=-6.0)
+        why = f"music heard under the voice in the references ({music.get('under_voice') or 'level not measured'})"
     else:
         why = "music level couldn't be measured; the recipe's own level is kept"
-    if level in ("score", "bed", "quiet"):
+    if level in ("score", "bed", "quiet") or heard:
         # music written for each video on the creator's Kie account, in the channel's own sound (cr_score)
         snd["score"] = {"genres": [g for g in (music.get("genres") or []) if g and g.lower() != "none"][:2],
                         "moods": [m for m in (music.get("moods") or [])][:5],
