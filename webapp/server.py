@@ -534,6 +534,7 @@ from webapp.database import (
     ensure_user_mcp_api_key, rotate_user_mcp_api_key, get_user_by_mcp_api_key,
 )
 from webapp import storage
+from webapp import storyboard_staging as _sb_staging
 from webapp import job_queue
 from webapp import plans
 from webapp.cook_runner import run_cook_job, hydrate_job_from_row, job_credits_charged
@@ -5848,7 +5849,9 @@ def match_storyboard_assemble(
         for c in clip_paths
         if c.name not in matched_names
     ]
-    # Persist staging id for assemble start
+    # Persist staging id for assemble start. Assemble may reach the other web container, so the matched clips go to
+    # private storage with a record of the match (webapp/storyboard_staging.py); staging.json stays as this
+    # container's own quick path.
     staging_id = f"{job_id}_{stamp}"
     meta_path = stage / "staging.json"
     meta_path.write_text(json.dumps({
@@ -5858,6 +5861,11 @@ def match_storyboard_assemble(
         "user_id": admin["id"],
         "match_report": matched,
     }), encoding="utf-8")
+    try:
+        _sb_staging.save(admin["id"], staging_id, job_id, ready_dir, matched)
+    except Exception as e:
+        print(f"[sb-assemble] staging save failed for {staging_id}: {e}")
+        raise HTTPException(503, "Couldn't save your matched clips. Try Match again in a moment.")
 
     return {
         "staging_id": staging_id,
@@ -5895,13 +5903,22 @@ def start_storyboard_assemble(
     _require_storyboard_stills_ready(job)
 
     clips_dir: Path | None = None
+    clips_zip_url = ""
+    clip_count = 0
     sid = (staging_id or "").strip()
     if sid:
         # The match step makes "<job id>_<stamp>"; anything else (a "../<another account>/..." path) is refused, so
         # one account can never assemble another's clips.
         own = OUTPUT_DIR / "storyboard_assemble_uploads" / str(admin["id"])
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", sid):
+        if not _sb_staging.valid_id(sid):
             raise HTTPException(400, "That match isn't valid. Run Match again, then assemble.")
+        # The match's record: found whichever web container made it, only ever this account's own.
+        record = _sb_staging.load(admin["id"], sid)
+        if record and record.get("parent_job_id") != job_id:
+            raise HTTPException(400, "That match is for another storyboard. Run Match again, then assemble.")
+        if record and record.get("clips_key"):
+            clips_zip_url = _sb_staging.clips_link(record)
+            clip_count = int(record.get("clip_count") or 0)
         stage = own / sid
         meta_path = stage / "staging.json"
         if meta_path.resolve().is_relative_to(own.resolve()) and meta_path.is_file():
@@ -5921,8 +5938,9 @@ def start_storyboard_assemble(
         if ready:
             clips_dir = stage / "clips"
             sid = f"{job_id}_{stamp}"
+            clips_zip_url = ""                                  # these new clips are bundled below
 
-    if not clips_dir or not clips_dir.is_dir() or not any(clips_dir.iterdir()):
+    if not clips_zip_url and (not clips_dir or not clips_dir.is_dir() or not any(clips_dir.iterdir())):
         raise HTTPException(
             400,
             "Upload your I2V clips (or run Match first), then assemble.",
@@ -5930,28 +5948,25 @@ def start_storyboard_assemble(
 
     _enforce_user_cook_slot(admin)
 
-    # Zip + upload clips so Fly cooks can fetch them (local paths die with the web dyno).
-    clips_zip_local = clips_dir.parent / "clips_bundle.zip"
-    clips_zip_url = ""
-    try:
-        import zipfile as _zf
-        with _zf.ZipFile(clips_zip_local, "w", _zf.ZIP_DEFLATED) as zf:
-            for p in sorted(clips_dir.iterdir()):
-                if p.is_file() and p.suffix.lower() in (".mp4", ".webm", ".mov", ".mkv", ".m4v"):
-                    zf.write(p, arcname=p.name)
-        if clips_zip_local.is_file() and clips_zip_local.stat().st_size > 200:
-            from webapp import storage as _storage
-            clips_zip_url = _storage.store_file(
-                str(clips_zip_local),
-                f"storyboard/{admin['id']}/assemble_clips_{int(time.time())}_{job_id}.zip",
-            )
-    except Exception as e:
-        print(f"[sb-assemble] clips zip upload failed: {e}")
-        if not COOK_ON_WEB:
-            raise HTTPException(
-                500,
-                "Could not stage clips for assemble. Check storage and try again.",
-            )
+    # Clips uploaded here (or a match made before match records): zip + upload them privately so Fly cooks can fetch
+    # them (local paths die with the web container) through a presigned link.
+    if not clips_zip_url:
+        clips_zip_local = clips_dir.parent / "clips_bundle.zip"
+        try:
+            clip_count = _sb_staging.bundle(clips_dir, clips_zip_local)
+            if clips_zip_local.is_file() and clips_zip_local.stat().st_size > 200:
+                clips_zip_url = storage.presigned_get_url(storage.store_private_file(
+                    str(clips_zip_local),
+                    f"storyboard/{admin['id']}/assemble_clips_{int(time.time())}_{job_id}.zip",
+                    "application/zip",
+                ), expires=_sb_staging.LINK_SECONDS)
+        except Exception as e:
+            print(f"[sb-assemble] clips zip upload failed: {e}")
+            if not COOK_ON_WEB:
+                raise HTTPException(
+                    500,
+                    "Could not stage clips for assemble. Check storage and try again.",
+                )
 
     pack_dir = Path(result.get("pack_dir") or "")
     if not pack_dir.is_dir():
@@ -5974,7 +5989,7 @@ def start_storyboard_assemble(
         "recipe": "storyboard_assemble",
         "parent_job_id": job_id,
         "title": title,
-        "clips_dir": str(clips_dir),
+        "clips_dir": str(clips_dir) if clips_dir else "",
         "clips_zip_url": clips_zip_url or "",
         "pack_dir": pack_dir_s,
         "beats": beats,
@@ -6037,7 +6052,7 @@ def start_storyboard_assemble(
     track(admin["id"], "storyboard_assemble_queued", {
         "job_id": assemble_id,
         "parent_job_id": job_id,
-        "clip_count": len(list(clips_dir.iterdir())),
+        "clip_count": clip_count,
     })
     return {
         "job_id": assemble_id,

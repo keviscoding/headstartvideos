@@ -382,6 +382,19 @@ def _conn():
         conn.close()
 
 
+# Table creation and migrations take this transaction-level advisory lock first (two web containers boot together on
+# every deploy, and DDL racing on the same tables can fail or deadlock). One key per module (`name`), so one module's
+# initialize() running while another's transaction is open never waits on itself. 726346119-726346122 are taken.
+SCHEMA_LOCK = 726346118
+
+
+def schema_lock(conn, name: str = "core") -> None:
+    """Hold the schema lock for `name` until `conn`'s transaction ends. Nothing on SQLite (one process)."""
+    if IS_PG:
+        import zlib
+        conn.execute("SELECT pg_advisory_xact_lock(%s, %s)", (SCHEMA_LOCK, zlib.crc32(name.encode()) & 0x7FFFFFFF))
+
+
 def ping(timeout: float = 2.0) -> None:
     """SELECT 1 on a connection obtained within `timeout` seconds (the readiness check). Raises when there is none."""
     if IS_PG and _pool():
