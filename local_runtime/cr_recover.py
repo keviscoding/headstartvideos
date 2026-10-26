@@ -302,7 +302,9 @@ def stuck_stages(home, project_id, server_stages=None, *, allowance=None, now=No
                      "model_role": str(stage.get("model_role") or ""),
                      "error_code": str(stage.get("error_code") or cache.get("error_code") or ""),
                      "attempts": int(stage.get("attempts") or 1), "can_retry": bool(stage.get("can_retry")),
-                     "minutes": round(float((stage.get("usage") or {}).get("duration_seconds") or 0) / 60, 1)}
+                     "minutes": round(float((stage.get("usage") or {}).get("duration_seconds") or 0) / 60, 1),
+                     # cr_claude marks a step "running" here before Claude Code starts: without it, it never started
+                     "never_started": status == "authorized" and cache.get("state") != "running"}
     if server_stages is None:
         for sid, cache in local.items():
             if cache.get("state") in ("running", "failed", "failed_local"):
@@ -318,6 +320,10 @@ def stuck_stages(home, project_id, server_stages=None, *, allowance=None, now=No
         if row["status"] == "retry_allowed":
             row.update(reason="One more attempt is already approved for this step; it hasn't run yet.",
                        may_have_spent=False, spent="no", spent_note="Resuming runs it.")
+        elif row.get("never_started"):
+            row.update(reason="ChannelRecipe allowed this step, but its answer didn't reach this computer, so Claude "
+                              "never started it.", may_have_spent=False, spent="no",
+                       spent_note="None of your Claude usage went on it.")
         elif row["error_code"] in ("auth_missing", "authentication_required") and claude_ready is False:
             fix = "Sign in to Claude Code again (run claude in a terminal, then /login), then carry on."
         elif row["error_code"] == "model_unavailable":
@@ -755,9 +761,14 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
     def look(job, *, sync=False, server=True):
         saved = saved_project(job)
         stages = server_stages(saved["id"], sync) if server else None
-        allowance, ready = allowance_now()
-        diag = diagnose(home, job, server_stages=stages, allowance=allowance, claude_ready=ready,
-                        message=_message(studio, home, job, saved["id"]))
+        message = _message(studio, home, job, saved["id"])
+        diag = diagnose(home, job, server_stages=stages, message=message)
+        allowance = {}
+        if any(s["error_code"] in ("usage_limit", "auth_missing", "authentication_required")
+               for s in diag["claude_stages"]):
+            # Claude Code's own check (usually answered from its 5-minute cache): the reset it reported, signed in
+            allowance, ready = allowance_now()
+            diag = diagnose(home, job, server_stages=stages, allowance=allowance, claude_ready=ready, message=message)
         diag["server_checked"] = stages is not None
         diag["live"] = live_state(studio, job.name)
         try:

@@ -114,6 +114,16 @@ def test_a_step_cut_off_mid_way_says_usage_may_have_gone_on_it(tmp_path):
     assert [x["stage_id"] for x in d["claude_stages"]] == [S1] and d["claude_stages"][0]["needs_approval"]
 
 
+def test_a_step_whose_go_ahead_never_arrived_says_no_usage_went_on_it(tmp_path):
+    """The stage call's answer was lost (a gateway error page): ChannelRecipe recorded the step, Claude never started
+    it. It still needs the creator's yes (ChannelRecipe refuses a second go-ahead), but nothing was used."""
+    job = make_job(tmp_path)
+    d = recover.diagnose(tmp_path, job, server_stages=[stage(S1, "authorized")])
+    [s] = d["claude_stages"]
+    assert s["spent"] == "no" and not s["may_have_spent"] and "never started" in s["reason"] and s["needs_approval"]
+    assert "may already have gone on" not in d["what_to_tell_them"]
+
+
 def test_a_step_with_no_attempts_left_says_so_and_is_not_offered(tmp_path):
     job = make_job(tmp_path)
     d = recover.diagnose(tmp_path, job, server_stages=[stage(S1, "failed", "cli_failed", attempts=3)])
