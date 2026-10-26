@@ -114,11 +114,19 @@ def test_every_channel_that_animates_its_characters_fits_and_its_conventions_are
 def test_the_animated_route_says_what_writing_the_animation_costs(kit):
     plan = cm.plan_style(dart(), tsm.STYLES)
     question = next(q for q in plan["questions"] if q["id"] == "made")
-    assert "minutes of Claude usage" in question["ask"] and question["options"][0] == cm.MADE_CODE
+    assert question["options"][0] == cm.MADE_CODE and question["labels"][0].startswith("Written in code")
+    assert "renderer" not in question["labels"][0], "plain words on the page; the saved answer stays as it was"
     assert not any(q["id"] == "animation" for q in plan["questions"]), "one question decides how videos are made"
     route = plan["route"]
     assert route["engine"] == "animated2d" and "medium_gap" not in route
-    assert "Claude Code writes this channel's own renderer" in route["why"] and "$0.02" in route["why"]
+    # the long paragraph is said once (the route), the time with it; the question stays short
+    assert "Claude Code writes this channel's own animation" in route["why"]
+    assert "10 to 25 minutes of Claude usage for the whole study" in route["why"] and "at most 46" in route["why"]
+    assert "minutes" not in question["ask"] and route["why"] not in question["ask"]
+    # a background picture is an opt-in fact, said once, per picture: never "$0.02 a minute"
+    assert "$0.02" not in route["why"] and plan["cost"]["usd_per_min"] == 0.0
+    assert plan["cost"]["plate_usd"] == 0.02 and "only if" in plan["cost"]["note"]
+    assert "drawn or generated" not in plan["base_for"] and "drawn in code" in plan["base_for"]
     look = plan["overrides"]["look"]
     assert look["visuals"] == a2d.VISUALS and plan["overrides"]["features"]["on"] == ["sound"]
     assert plan["overrides"]["pacing"]["clips_per_min"] == 0.0 and plan["cost"]["clips_per_min"] == 0

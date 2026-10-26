@@ -45,6 +45,31 @@ PHASES = {
     "publish": (94, "Saving your validated style in the studio's preset library."),
     "complete": (100, "Your learned style is saved and ready to use."),
 }
+# A style written in code (Studio 109) has no graphics-kit steps: its own steps and how far along each one is. The
+# renderer's drafts are most of the study, so the bar moves through them (renderer: 40 to 90).
+CODED_PHASES = {
+    "prepared": (0, "Your approved reference study is ready to start."),
+    "design": (6, "Designing the style around your example title and brief."),
+    "watch": (20, "Looking at the references' frames and captions again (free)."),
+    "art": (28, "Writing the picture style, cast and voice from what Studio saw."),
+    "renderer": (40, "Claude is writing this channel's animation in code and checking its test shots against the "
+                     "channel's frames."),
+    "publish": (94, "Saving your style."),
+    "complete": (100, "Your learned style is saved and ready to use."),
+}
+
+
+def time_cap(spec, improve=False) -> int:
+    """The most minutes the study's Claude work may take (the cap _creative_budget enforces): its budget, plus the
+    renderer's own time for a style written in code, plus Studio's drawing for a change to a style."""
+    import cr_animated2d
+    extra = cr_animated2d.BUILD_MINUTES if (spec or {}).get("renderer") else IMPROVE_DRAW_MINUTES if improve else 0
+    return int((spec or {}).get("budget_minutes") or 0) + extra
+
+
+def _drafts(folder) -> int:
+    """How many renderer drafts Claude has answered so far in this study (renderer/round-N.txt)."""
+    return len(list((Path(folder) / "renderer").glob("round-*.txt")))
 
 
 # the failure record's step (cr_failure) for each phase a study can stop in
@@ -867,7 +892,16 @@ def _native_failure(home, saved):
 def status(home, operation_id, bridge):
     folder, saved = _saved(home, operation_id, bridge)
     state, phase = saved.get("state"), saved.get("phase", "prepared")
-    percent, message = PHASES.get(phase, PHASES["prepared"])
+    coded = coded_study(saved.get("spec")) and not saved.get("metadata_only")
+    phases = CODED_PHASES if coded and phase in CODED_PHASES else PHASES
+    percent, message = phases.get(phase, PHASES["prepared"])
+    if coded and phase == "renderer":
+        import cr_animated2d
+        drafts = min(_drafts(folder), cr_animated2d.BUILD_ROUNDS)
+        percent = 40 + round(50 * drafts / cr_animated2d.BUILD_ROUNDS)
+        message = ("Claude is writing this channel's animation in code"
+                   + (f" ({drafts} of up to {cr_animated2d.BUILD_ROUNDS} drafts written)" if drafts else "")
+                   + " and checking its test shots against the channel's frames.")
     failure_code = saved.get("failure_code", "")
     native_failure = _native_failure(home, saved) if state == "failed" else ""
     said, stop_type = "", ""
@@ -886,13 +920,13 @@ def status(home, operation_id, bridge):
         elif native_failure == "usage_limit":
             message = "Claude reported a usage limit during this study. Your saved work is intact. Once your Claude account has available usage, review and approve a new study here."
         if failure_code == "metadata_handoff_failed":
-            message = "Reference study and graphics validation finished, but saving the style stopped. Save the completed study without repeating Claude, downloads or rendering."
+            message = (("Your study and this channel's animation finished, but saving the style stopped. "
+                        if coded else "Reference study and graphics validation finished, but saving the style stopped. ")
+                       + "Save the completed study without repeating Claude, downloads or rendering.")
         if saved.get("update_note"):
             message += " " + saved["update_note"]
     elif state == "complete_local":
         message = "Your validated style is saved locally. Reconnect CR to record completion; no generation needs to repeat."
-    elif state == "running":
-        message = PHASES.get(phase, PHASES["prepared"])[1]
     result = {"operation_id": operation_id, "state": {"complete": "done", "complete_local": "pending"}.get(state, state),
         "phase": phase, "percent": percent, "message": message,
         "elapsed_seconds": max(0, round(saved.get("completed_at", time.time()) - saved.get("started_at", time.time()), 1)),
@@ -901,6 +935,8 @@ def status(home, operation_id, bridge):
         "reference_urls": saved["spec"].get("reference_urls") or [saved["spec"]["reference_url"]],
         "reference_ids": [r["id"] for r in saved["spec"]["references"]],
         "budget_minutes": saved["spec"]["budget_minutes"], "max_calls": saved["spec"]["max_calls"],
+        # the real ceiling on Claude's time (the study's budget plus the renderer's own for a style written in code)
+        "cap_minutes": time_cap(saved["spec"], improve=bool(saved.get("renderer_improve"))), "coded": coded,
         "style_ready": state in {"complete", "complete_local"} and _published(home, saved)}
     result["metadata_recovery_available"] = state == "failed" and (
         _recovery_checkpoint_ready(folder, saved) or _legacy_recovery_possible(home, folder, saved))
@@ -965,8 +1001,10 @@ def status(home, operation_id, bridge):
             if change and renderer.get("state") != "pictures":
                 renderer["improvement_id"] = change
             result["renderer"] = renderer
-            if renderer.get("say"):
-                result["message"] = renderer["say"]
+            # the page's headline; the panel below it (and the tools' what_to_tell_them) says the verdict once
+            result["message"] = ("Your style is saved." if renderer.get("state") in ("passed", "below_bar", "pictures",
+                                                                                     "unchecked")
+                                 else "Your style is saved, but its animation needs your choice below.")
     return result
 
 
@@ -1024,22 +1062,40 @@ def renderer_verdict(style) -> dict:
     if not isinstance(r, dict):
         return {}
     out = {k: r.get(k) for k in ("state", "overall", "bar", "control", "version", "why") if r.get(k) is not None}
+    # one score, said the same way everywhere (the study page once showed 5.67 here and "6/10" under it)
+    score, bar = _tenth(r.get("overall")), _tenth(r.get("bar"))
+    if score is not None:
+        out["score"] = score
     if r.get("state") == "passed":
-        out["say"] = (f"Your style is saved. Claude wrote this channel's animation, and its test shots scored "
-                      f"{r.get('overall')}/10 against the channel's own frames (the bar for this channel: {r.get('bar')}). "
-                      "Every video is animated with it.")
+        out["verdict"] = "Close to the channel"
+        out["say"] = (f"Your style is saved. Claude wrote this channel's animation in code: its test shots scored "
+                      f"{score}/10 against the channel's own frames, reaching this channel's bar of {bar}. Every video "
+                      "is drawn with it.")
     elif r.get("state") == "below_bar":
-        out["say"] = (f"Your style is saved, but Claude's animation for this channel reached {r.get('overall')}/10 "
-                      f"against its own frames, under this channel's bar of {r.get('bar')}. Your videos will be animated "
-                      "with it as it is. If you'd rather have pictures in the channel's look, choose Use pictures "
-                      "instead.")
+        out["verdict"] = "Not as close as the channel yet"
+        out["say"] = (f"Your style is saved. Claude wrote this channel's animation in code: its test shots scored "
+                      f"{score}/10 against the channel's own frames, under this channel's bar of {bar}. Your videos "
+                      "will be drawn with it as it is. You can improve it below; if you'd rather have pictures in the "
+                      "channel's look, choose Use pictures instead.")
         out["offer_pictures"] = True
+    elif r.get("state") == "unchecked" and r.get("file"):          # saved from Style Lab without a check
+        out["say"] = ("Your style is saved. Its animation was last saved from Style Lab without a check against the "
+                      "channel's own frames. Every video is drawn with it.")
     else:
         out["say"] = ("Your style is saved, but Claude couldn't write a working animation for this channel ("
                       + str(r.get("why") or "no draft drew its test shots") + "). Videos in it won't start until you "
                       "choose Use pictures instead, or study the channel again.")
         out["offer_pictures"] = True
     return out
+
+
+def _tenth(value):
+    """A score to one decimal (5.67 -> 5.7, 6.0 -> 6), None when there is none."""
+    try:
+        x = round(float(value), 1)
+    except (TypeError, ValueError):
+        return None
+    return int(x) if x == int(x) else x
 
 
 def use_pictures(home, operation_id, bridge):
@@ -1101,10 +1157,29 @@ def _metadata_checkpoint_ready(folder, saved):
             or design.get("spec_sha256") != expected or validated.get("spec_sha256") != expected
             or not isinstance(payload, dict) or not isinstance(payload.get("genome"), dict)):
         return False
+    if coded_study(saved["spec"]) and not _renderer_built(folder):
+        # a coded study saved before Studio 109 wrote its checkpoint before the renderer: one that stopped while its
+        # renderer was being written is started again, never saved as a style with no renderer
+        return False
     try:
         return _validated_assets(folder, validated.get("record") or {}) == validated.get("assets")
     except (OSError, RuntimeError):
         return False
+
+
+def _renderer_built(folder) -> bool:
+    """The study's renderer build finished (passed, below the bar or failed, as cr_animated2d.build saves it)."""
+    return _read(Path(folder) / "renderer" / "build.json").get("state") in ("passed", "below_bar", "failed")
+
+
+def _renderer_files(source) -> list:
+    """The renderer build a coded study's saved copy needs (its verdict, code, test scene and test shots), relative to
+    the study folder: everything under renderer/ but the drafts' sound files."""
+    root = Path(source) / "renderer"
+    if not root.is_dir():
+        return []
+    return [p.relative_to(source).as_posix() for p in sorted(root.rglob("*"))
+            if p.is_file() and not p.is_symlink() and p.suffix.lower() in (".json", ".js", ".txt", ".jpg", ".png")]
 
 
 def _recovery_checkpoint_ready(folder, saved):
@@ -1312,6 +1387,24 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     genome = design["genome"]
     work = folder / learner.WORK
     work.mkdir(parents=True, exist_ok=True)
+    if coded_study(spec, looked):
+        # Written in code: the channel's own renderer draws every picture, so the motion-graphics learner (Claude
+        # writing, checking and repairing a graphics kit: 12 to 20 minutes of the creator's Claude usage in the owner's
+        # test) never runs; its kit was never used. The references' frames and captions are still looked at (free).
+        record = _coded_record(spec, clock, work, watch, log)
+        progress("art")
+        _art_director(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "art", prompt, images),
+                      log)
+        progress("renderer")
+        with _renderer_effort():
+            _renderer(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "renderer", prompt,
+                                                                                 images, max_tokens=32000), log)
+        # written once the renderer is built, so a recovery ("Save completed style") never saves a coded style whose
+        # renderer was never written
+        _write(folder / "validated-checkpoint.json", {"schema": 1, "record": record,
+            "spec_sha256": _hash(spec), "assets": _validated_assets(folder, record)})
+        return finish_original(engine, folder, spec, design, record, progress,
+            learner=learner, designer=designer, log=log, report=clock.report())
     record = learned(engine, spec["title"], folder, genome, genome.get("analysis") or {},
                      clock, work, spec["base_style"], spec["minutes"])
     record = _graphics_kit(folder, record, renders=bool(spec.get("renderer")) and bool(looked),
@@ -1335,6 +1428,35 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
                                                                                      images, max_tokens=32000), log)
     return finish_original(engine, folder, spec, design, record, progress,
         learner=learner, designer=designer, log=log, report=clock.report())
+
+
+def coded_study(spec, looked=True) -> bool:
+    """A study that writes the channel's own renderer (approved after a look, Studio 104+): its videos never use a
+    motion-graphics kit, so the learner that writes one is skipped (Studio 109)."""
+    return bool((spec or {}).get("renderer")) and bool(looked)
+
+
+CODED_NO_KIT = "a style written in code has no graphics kit: its own renderer draws every picture"
+
+
+def _coded_record(spec, clock, work, watch, log) -> dict:
+    """The study record of a style written in code, with no Claude call: the references' frames and captions are
+    looked at as the learner would (the look's downloaded sections are reused), for the renderer's frames and the
+    study's evidence; no graphics kit is written. The first reference that gives frames is the one named as studied.
+    A reference that can't be read again here never stops the study: the renderer is built from the look's frames."""
+    clock.step("watch")
+    studied = None
+    for row in spec["references"][:4]:
+        seen = watch(row, clock, work)
+        if seen.get("sheets"):
+            studied = row
+            break
+    clock.end()
+    log("  graphics: no graphics kit for a style written in code; its own renderer draws every picture"
+        + ("" if studied else " (the references' frames couldn't be read again here: the renderer uses the look's)"))
+    return {"kit": None, "no_kit": CODED_NO_KIT, "from": "code",
+            "reference": {k: studied.get(k) for k in ("id", "title", "views", "ratio")} if studied else {},
+            "with_brief": bool(str(spec.get("brief") or "").strip())}
 
 
 def _portable(value, home):
@@ -1779,7 +1901,9 @@ def recover_metadata(home, operation_id, bridge, *, readiness, engine=None, lear
         new_id = "op_" + secrets.token_hex(12)
         folder = _operation(home, new_id)
         folder.mkdir(parents=True, mode=0o700)
-        for name in [*assets, "reflearn/reference-evidence.json", *_carried(source)]:
+        # a coded study's renderer build is part of what is saved (its style's renderer is attached from it)
+        renderer_files = _renderer_files(source) if coded_study(original["spec"]) else []
+        for name in [*assets, "reflearn/reference-evidence.json", *_carried(source), *renderer_files]:
             path = source / name
             if path.is_file():
                 target = folder / name
@@ -1991,13 +2115,9 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
                 import make_video as engine
                 import cr_claude
                 cr_claude.install(engine, bridge)
-                extra = 0
-                if saved["spec"].get("renderer"):              # the channel's renderer is written within the study
-                    import cr_animated2d
-                    extra = cr_animated2d.BUILD_MINUTES
-                elif saved.get("renderer_improve"):            # Studio's own drawing of the change and its check
-                    extra = IMPROVE_DRAW_MINUTES
-                with _creative_budget(saved["spec"]["budget_minutes"] + extra):
+                # the channel's renderer is written within the study (its own time on top of the budget); a change
+                # to a style adds Studio's own drawing of it and its check
+                with _creative_budget(time_cap(saved["spec"], improve=bool(saved.get("renderer_improve")))):
                     if saved.get("renderer_improve"):
                         improve_style(home, engine, folder, saved, progress)
                     elif saved.get("refinement_only"):

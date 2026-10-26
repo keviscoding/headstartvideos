@@ -641,7 +641,10 @@ def test_an_animation_under_the_channels_bar_is_said_and_pictures_are_used_only_
     assert "offer_pictures" not in passed and "7.1/10" in passed["say"]
     assert clone.renderer_verdict({"look": {}}) == {}, "a pictures style has no animation to report"
     shown = clone.status(home, op, bridge)
-    assert shown["renderer"]["state"] == "below_bar" and shown["message"] == told["say"]
+    # the verdict is said once, in the renderer panel (and the tools' what_to_tell_them); the headline is short
+    assert shown["renderer"]["state"] == "below_bar" and shown["message"] == "Your style is saved."
+    assert shown["renderer"]["say"] == told["say"] and shown["renderer"]["score"] == 5.2
+    assert told["say"].count("/10") == 1, "one score"
     clone.use_pictures(home, op, bridge)
     after = json.loads(target.read_text())
     assert after["look"].get("visuals") != "cr_animated2d" and "animated2d" not in after["look"] and "cost" not in after

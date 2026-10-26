@@ -189,9 +189,11 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Cloning a style (/clone-style): any channel is cloned in code by default. The look's `made` question comes first:
   ask it before anything else, in plain words. Written in code (Studio's recommendation, first) means the study has
   their Claude Code write this channel's own renderer from its frames, whatever they show (characters, graphics, maps,
-  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames: usually 5
-  to 15 more minutes of Claude usage (at most 25), no money. Every video then reuses it: Claude directs it to the
-  narration and Studio draws every frame on their computer, so a video costs its voice (plus about $0.02 for each
+  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames: usually 10
+  to 25 minutes of Claude usage for the whole study (at most 46: the study budget plus 24 for the animation), no money.
+  A style written in code has no motion-graphics kit (Studio 109 skips that step): its renderer draws every picture.
+  Every video then reuses it: Claude directs it to the narration and Studio draws every frame on their computer, so a
+  video costs its voice (plus about $0.02 for each
   background picture its renderer asks for, up to 6, and its own music when the channel has music, about $0.12 a
   piece: `quote` counts both), vertical with the channel's captions for a Shorts channel. Instead of
   code means Studio's ready-made pictures (AI pictures in their look, some AI-animated clips) or its fixed 3D engine:

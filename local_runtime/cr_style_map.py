@@ -61,6 +61,28 @@ MOVES_ANYWAY = ("live_footage", "archival_footage", "stock_footage", "news_clip"
 MADE_CODE = "Written in code: your Claude Code writes this channel's own renderer (recommended)"
 MADE_OTHER = "Instead of code: Studio's ready-made pictures (AI pictures, some AI clips) or its fixed 3D engine"
 MADES = (MADE_CODE, MADE_OTHER)
+# what the page shows for each answer (the answers themselves stay as saved studies have them)
+MADE_LABELS = {MADE_CODE: "Written in code: your Claude Code writes this channel's own animation (recommended)",
+               MADE_OTHER: MADE_OTHER}
+STUDY_MINUTES = 22           # the Claude study budget a study starts with (the page and clone_style: 15 to 30)
+
+
+def coded_time() -> str:
+    """How long a study written in code takes, measured on Studio 108's coded studies without the graphics-kit steps
+    Studio 109 skips (10 to 25 minutes in all), and its cap: the study budget plus the renderer's own time."""
+    import cr_animated2d
+    return (f"usually 10 to 25 minutes of Claude usage for the whole study, at most "
+            f"{STUDY_MINUTES + cr_animated2d.BUILD_MINUTES}, no money")
+
+
+# a recipe's workflow in words, for a style written in code: its pictures come from the channel's own renderer, so the
+# recipe is said by what it does with the story (never "a drawn or generated picture for every line")
+BASES_CODED = {
+    "avatar-premium": "a presenter between the scenes",
+    "stories": "narrated stories, told line by line",
+    "documentary": "narrated documentaries",
+    "jung": "calm narrated essays",
+}
 ANIMATED_SHARE = 0.6         # of the drawn pictures' time, measured moving: their characters are animated
 ANIMATED_SURE = 0.8          # above this (or with no narrator carrying the story) Studio's guess is to animate them
 
@@ -708,9 +730,9 @@ def medium_question(profile) -> dict:
     guess = MEDIUM_DESIGNED if drawn_3d(fresh) or designed_3d(fresh) else \
         MEDIUM_OBJECTS if isinstance(seen, dict) and float(seen.get("no_people") or 0) > 0.5 else MEDIUM_FACELESS
     import cr_animated2d
-    rebuilt = (" Characters with faces: during the study your Claude Code writes this channel's own 3D renderer and "
-               "checks it against the channel (usually 5 to 15 more minutes of Claude usage); every video is then "
-               "rendered in real 3D and costs only its voice." if cr_animated2d.available3d() else "")
+    rebuilt = (" Characters with faces: during the study your Claude Code writes this channel's own 3D animation and "
+               f"checks it against the channel ({coded_time()}); every video is then rendered in real 3D and costs "
+               "only its voice." if cr_animated2d.available3d() else "")
     return {"id": "medium", "ask": f"How are this channel's 3D pictures made? ({round(share * 100)}% of its pictures "
             "are 3D.) Studio's guess is first: change it if it's wrong, because it decides how your videos are made."
             + rebuilt,
@@ -767,8 +789,8 @@ def animation_question(profile) -> dict:
     guess = animation_guess(profile)
     return {"id": "animation", "ask": f"This channel animates its characters: they move {round(share * 100)}% of the "
             "time its drawn pictures are on screen. How should your videos be made? Animated: during the study your "
-            "Claude Code writes this channel's animation in code and checks it against the channel (usually 3 to 10 "
-            "more minutes of Claude usage, at most 25); every video then costs only its voice, and at most a few "
+            f"Claude Code writes this channel's animation in code and checks it against the channel ({coded_time()}); "
+            "every video then costs only its voice, and at most a few "
             "background pictures. Studio's guess is first: change it if it's wrong, because it decides how your videos "
             "are made.",
             "options": [guess] + [o for o in ANIMATIONS if o != guess]}
@@ -790,7 +812,7 @@ def _animated_route(profile, animation: str) -> dict:
             return {"engine": "animated2d", "why": f"{drawn}% of the pictures are drawn characters the channel animates "
                     f"({seen}). During the study your Claude Code writes this channel's animation in code (its "
                     "characters, moves, effects and camera) and checks its test shots against the channel's own frames "
-                    "(usually 3 to 10 more minutes of Claude usage, at most 25). Every video then reuses it: Claude "
+                    f"({coded_time()}). Every video then reuses it: Claude "
                     "directs the characters to the narration, and Studio draws them on this computer, with their places "
                     "drawn in code or as background pictures in the channel's look (about $0.02 each)."}
         kit = cr_animated2d.available()
@@ -815,13 +837,11 @@ def coded_route(profile) -> dict:
     if not three and not cr_animated2d.available():
         return {}
     return {"engine": "animated3d" if three else "animated2d", "coded": True,
-            "why": "written in code: during the study your Claude Code writes this channel's own renderer ("
-                   + ("in real 3D with three.js" if three else "drawn in 2D") + ") from its frames, whatever they show "
-                   "(characters, graphics, maps, text, effects, camera), and checks its test shots against the "
-                   "channel's own frames (usually 5 to 15 more minutes of Claude usage, at most 25). Every video then "
-                   "reuses it: Claude directs it to the narration and Studio draws every frame on this computer, so a "
-                   "video costs its voice, plus about $0.02 for each background picture its renderer asks for (up to 6 "
-                   "a video) and, when the channel has music, its own music (about $0.12 a piece)"
+            "why": "written in code: during the study your Claude Code writes this channel's own animation ("
+                   + ("in real 3D" if three else "in 2D") + ") from its frames, whatever they show (characters, "
+                   "graphics, maps, text, effects, camera), and checks its test shots against the channel's own frames "
+                   f"({coded_time()}). Every video then reuses it: Claude directs it to the narration and Studio draws "
+                   "every frame on this computer"
                    + (". Your videos are vertical Shorts with its captions, like the channel's" if vertical(profile) else "")
                    + "."}
 
@@ -839,12 +859,12 @@ def made_question(profile, other: dict) -> dict:
                "threed": "Studio's own 3D engine (faceless mannequin figures)"}.get(
         other.get("engine"), "AI pictures in their look, some animated by AI"
         + (", with real clips where the script asks for them" if footage else ""))
-    said = coded["why"][0].upper() + coded["why"][1:]
-    return {"id": "made", "ask": "How should your videos be made? Studio recommends code, first. " + said
-            + (" Its renderer draws every scene: real footage isn't part of a style written in code." if footage else "")
+    return {"id": "made", "ask": "How should your videos be made? Studio recommends code: your Claude Code writes this "
+            "channel's own animation during the study, and Studio draws every frame of every video on this computer."
+            + (" Real footage isn't part of a style written in code: it draws every scene." if footage else "")
             + f" Or, instead of code: {instead}. That's ready at once, but the videos won't look or move exactly like "
             "the channel's.",
-            "options": list(MADES)}
+            "options": list(MADES), "labels": [MADE_LABELS[m] for m in MADES]}
 
 
 def vertical(profile) -> bool:
@@ -876,9 +896,9 @@ def route(profile, chosen: str = "", drawn=None, told: bool = False, designed=No
         art = re.split(r"[.(;]", str(_v(_get(profile, "pictures", "art_style"), "") or ""))[0].strip(" ,")[:110]
         return {"engine": "animated3d", "why": f"{round(share * 100)}% of the pictures are 3D scenes with the channel's "
                 "own characters" + (f" ({art[0].lower() + art[1:]})" if art else "") + ". During the study your Claude "
-                "Code writes this channel's 3D renderer in code (its characters, sets, light and camera, in three.js) "
-                "and checks its test shots against the channel's own frames (usually 5 to 15 more minutes of Claude "
-                "usage, at most 25). Every video then reuses it: Claude directs the characters to the narration and "
+                "Code writes this channel's 3D animation in code (its characters, sets, light and camera) "
+                f"and checks its test shots against the channel's own frames ({coded_time()}). Every video then "
+                "reuses it: Claude directs the characters to the narration and "
                 "Studio renders them in real 3D on this computer, with no pictures or AI video to pay for."
                 + (" Your videos are vertical Shorts, like the channel's." if vertical(profile) else "")}
     if pictures:
@@ -994,8 +1014,9 @@ def _animated2d(plan: Plan, original: dict):
              show="rigged and animated in code, timed to the narration")
     plan.set("look.animated2d", spec, area="Motion", label="How they are drawn",
              why="the channel's own conventions: " + (spec["art"][:160] or "flat colours, round heads, thick limbs"),
-             source="watched", show="round heads, thick limbs, flat colours" + (", outlines" if spec.get("outline") else "")
-             + (", blurred backgrounds" if spec.get("blur", 0) >= 4 else ""))
+             source="watched", show=(spec["art"][:90] if spec.get("art") else "round heads, thick limbs, flat colours"
+                                     + (", outlines" if spec.get("outline") else "")
+                                     + (", blurred backgrounds" if spec.get("blur", 0) >= 4 else "")))
     plan.set("pacing.clips_per_min", 0.0, area="Motion", label="Moving pictures",
              why="every scene is animated in code; no AI video is paid for", source="", show="off (animated in code)")
     plan.needs = [n for n in plan.needs if n not in ("style_image", "character_image")]
@@ -1343,7 +1364,13 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     _voice(plan, profile)
     _presenter(plan, profile, chosen, base_style)
     _cta(plan, profile, chosen)
-    return {"schema": SCHEMA, "router": ROUTER, "base": chosen, "base_why": why, "base_for": BASES.get(chosen, ""),
+    coded_way = way.get("engine") in ("animated2d", "animated3d")
+    base_for = BASES.get(chosen, "")
+    if coded_way:
+        # the recipe brings the workflow; the channel's own renderer draws every picture (never "a new drawn or
+        # generated picture for every line" over a style written in code)
+        base_for = (BASES_CODED.get(chosen) or "the video's workflow") + ", with every picture drawn in code"
+    return {"schema": SCHEMA, "router": ROUTER, "base": chosen, "base_why": why, "base_for": base_for,
             "route": way,
             "overrides": plan.overrides, "remove": plan.remove, "settings": plan.settings,
             "needs": list(dict.fromkeys(plan.needs)), "notes": plan.notes,
@@ -1351,6 +1378,9 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
             "questions": [q for q in ([made_question(original, other)] if offered else
                                       [medium_question(original), animation_question(original)]) if q]
                          + list(original.get("questions") or [])}
+
+
+CODED_EXTRA = "the voice is extra, and so is the channel's own music when it has music (about $0.12 a piece)"
 
 
 def cost(overrides: dict, base: str) -> dict:
@@ -1363,12 +1393,16 @@ def cost(overrides: dict, base: str) -> dict:
     presenter = ((overrides.get("look") or {}).get("avatar") or {}).get("per_min") or 0.0
     if ((overrides.get("look") or {}).get("visuals")) == "cr_animated3d":
         return {"pictures_per_min": 0.0, "clips_per_min": 0.0, "presenter_s_per_min": 0.0, "usd_per_min": 0.0,
-                "note": "rendered in 3D on this computer by the channel's own renderer; voice and music are extra"}
+                "coded": True, "plate_usd": PICTURE_USD, "plates_per_video": 6,
+                "note": "every frame is rendered in 3D on this computer; only if its animation asks for a background "
+                "picture for a place, about $0.02 each on your Kie account (up to 6 a video); " + CODED_EXTRA}
     if ((overrides.get("look") or {}).get("visuals")) == "cr_animated2d":
-        # the animation is drawn in code; a few background plates are drawn once per video
-        return {"pictures_per_min": 0.0, "clips_per_min": 0.0, "presenter_s_per_min": 0.0, "usd_per_min": 0.02,
-                "plates_per_video": 6, "note": "up to 6 background pictures a video on your Kie account (about $0.12); "
-                "the characters are animated in code; voice and music are extra"}
+        # every frame is drawn in code; only when the channel's renderer asks for a background picture for a place is
+        # one drawn on the creator's Kie account (said once, per picture: never a cost a minute)
+        return {"pictures_per_min": 0.0, "clips_per_min": 0.0, "presenter_s_per_min": 0.0, "usd_per_min": 0.0,
+                "coded": True, "plate_usd": PICTURE_USD, "plates_per_video": 6,
+                "note": "every frame is drawn in code on this computer; only if its animation asks for a background "
+                "picture for a place, about $0.02 each on your Kie account (up to 6 a video); " + CODED_EXTRA}
     usd = stills * PICTURE_USD + clips * CLIP_USD + presenter * PRESENTER_USD_S
     return {"pictures_per_min": round(stills, 1), "clips_per_min": clips, "presenter_s_per_min": presenter,
             "usd_per_min": round(usd, 2),
