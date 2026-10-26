@@ -288,12 +288,22 @@ def features_for(row: dict, overrides=None) -> dict:
     return out
 
 
+def coded_usd(row: dict, minutes: float) -> float:
+    """A style drawn by its own renderer: its background pictures plus a piece of its own music every ~35 s (the
+    catalog's coded_media), which a quote once left out ("$0.00 in all" for a video that paid ~$0.40)."""
+    coded = row.get("coded_media") if isinstance(row.get("coded_media"), dict) else {}
+    if not coded:
+        return 0.0
+    pieces = max(1, -(-int(round(float(minutes) * 60)) // max(10, int(coded.get("piece_seconds") or 35))))
+    return float(coded.get("plates_usd") or 0) + pieces * float(coded.get("music_usd_per_piece") or 0)
+
+
 def media_estimate(cat: dict, row: dict, minutes: int, features: dict) -> dict:
     prices = cat.get("prices") or {}
     per = prices.get("features") or {}
     voice = float(((prices.get("voice") or {}).get("per_min")) or 0)
     total = voice + sum(float((per.get(k) or {}).get("per_min") or 0) for k, on in features.items() if on)
-    each = total * minutes
+    each = total * minutes + coded_usd(row, minutes)
     if kind(row) == "short" and isinstance(row.get("short_cost_usd"), (int, float)):
         each = float(row["short_cost_usd"])                        # the recipe's own estimate for one Short
     return {"per_video_usd": round(each, 2), "recipe_note": one_line(row.get("cost"), 260),

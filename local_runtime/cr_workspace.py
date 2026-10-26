@@ -145,6 +145,9 @@ def install(studio, activity, *, token, home=None):
             cost = shorts.get("cost_usd") if isinstance(shorts, dict) else None
             row["short_cost_usd"] = (float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool)
                                      and 0 <= cost < 100 else None)
+            # a style drawn by its own renderer: its background pictures and its own music score, for quotes
+            import cr_animated2d
+            row["coded_media"] = cr_animated2d.media_usd(info) if isinstance(info, dict) else {}
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,

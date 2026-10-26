@@ -1073,6 +1073,23 @@ def attach(style: dict, folder, home) -> dict:
 SCORE_USD = 0.12                       # one piece of the channel's own music: two Suno takes on the creator's Kie account
 
 
+PLATES_PER_VIDEO = 4                   # places a video's casting usually designs (1 to 4)
+SCORE_PIECE_S = 35                     # the sound storyboard writes a piece of music every 25 to 45 s
+
+
+def media_usd(style: dict) -> dict:
+    """What a video in a style drawn by its own renderer pays on the creator's accounts beyond its voice, for quotes:
+    {"plates_usd": its background pictures, "music_usd_per_piece", "piece_seconds"}; {} for any other style."""
+    look = (style or {}).get("look") or {}
+    if look.get("visuals") not in PLUGINS:
+        return {}
+    found = ((look.get("animated2d") or {}).get("renderer") or {}).get("manifest") or {}
+    sound = look.get("sound") if isinstance(look.get("sound"), dict) else {}
+    scored = isinstance(sound.get("score"), dict) and sound.get("music") is not False
+    return {"plates_usd": 0.0 if (found.get("plates") or {}).get("draw") is False else round(PLATES_PER_VIDEO * PLATE_USD, 2),
+            "music_usd_per_piece": SCORE_USD if scored else 0.0, "piece_seconds": SCORE_PIECE_S}
+
+
 def cost_note(style: dict) -> str:
     """What a video in this animated style costs, as its renderer makes it: voice only when it draws every place in
     code (plates.draw false), else the voice and one background picture a place; plus its own music score when the

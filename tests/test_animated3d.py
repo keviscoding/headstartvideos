@@ -463,6 +463,24 @@ def test_a_coded_styles_cost_says_its_own_music():
     assert a2d.cost_note(three) == "Your voice only: every scene is rendered in 3D on this computer."
 
 
+def test_a_quote_counts_a_coded_styles_backdrops_and_its_own_music():
+    """A quote said "$0.00 in all" for gneef- and Lucas-style videos that paid for their own music (and Lucas for its
+    backdrops): about $0.36 and $0.40. A style drawn by its own renderer now quotes its pictures and its score."""
+    import cr_studio_tools as tools
+    gneef = {"look": {"visuals": a2d.VISUALS3D, "animated2d": {"dims": 3, "renderer": {"manifest": {"plates": {"draw": False}}}},
+                      "sound": {"music": True, "score": {"genres": ["electronic"]}}}}
+    lucas = {"look": {"visuals": a2d.VISUALS3D, "animated2d": {"dims": 3, "renderer": {"manifest": {"plates": {"draw": True}}}},
+                      "sound": {"music": True, "score": {"genres": ["orchestral"]}}}}
+    assert a2d.media_usd(gneef) == {"plates_usd": 0.0, "music_usd_per_piece": 0.12, "piece_seconds": 35}
+    assert a2d.media_usd(lucas)["plates_usd"] == 0.08 and a2d.media_usd({"look": {}}) == {}
+    cat = {"prices": {"voice": {"per_min": 0.0}, "features": {}}}
+    rows = {"gneef": {"name": "g", "coded_media": a2d.media_usd(gneef)}, "lucas": {"name": "l", "coded_media": a2d.media_usd(lucas)}}
+    assert tools.media_estimate(cat, rows["gneef"], 1, {})["per_video_usd"] == 0.24, "two pieces of music for a minute"
+    assert tools.media_estimate(cat, rows["lucas"], 1, {})["per_video_usd"] == 0.32
+    assert tools.coded_usd(rows["gneef"], 1.5) == 0.36, "a 90 s video: three pieces, as the real one paid"
+    assert tools.media_estimate(cat, {"name": "plain"}, 1, {})["per_video_usd"] == 0.0
+
+
 def test_round_files_belong_to_their_build(tmp_path):
     out = tmp_path / "renderer"
     (out / "round-1").mkdir(parents=True)
