@@ -183,3 +183,13 @@ def test_quicker_3d_review_chosen_in_create_means_one_round_even_over_the_recipe
         (j / "run_spec.json").write_text(json.dumps(spec))
         mod._add_to_timeline([], j, j, style, False, engine, 60.0)
     assert rounds == [1, 1, 3], "only a real yes counts"
+
+
+def test_claude_codes_make_videos_can_ask_for_quicker_3d_review():
+    """Both ways: the Studio page's Quicker 3D review switch and Claude Code's make_videos send the same choice."""
+    import cr_studio_tools as tools
+    row = {"name": "cr-3d", "label": "3D", "features": {"offered": ["threed"], "on": ["threed"]}}
+    quick = tools.video_payload(row, ["A title"], 2, {"threed": True}, {"quicker_3d_review": True})
+    assert quick["threed_quick"] is True
+    assert tools.video_payload(row, ["A title"], 2, {"threed": True}, {})["threed_quick"] is False
+    assert tools.video_payload(row, ["A title"], 2, {"threed": False}, {"quicker_3d_review": True})["threed_quick"] is False
