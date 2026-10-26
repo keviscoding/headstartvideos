@@ -61,7 +61,7 @@ def test_activation_says_which_check_stops_customers_without_a_finished_video(fr
 
 
 def test_the_studio_reports_only_when_connected_and_only_when_something_changed(monkeypatch):
-    monkeypatch.setattr(cr_setup_report, "_last", {"sent": None, "at": 0.0})
+    monkeypatch.setattr(cr_setup_report, "_last", {"sent": None, "at": 0.0, "wait_until": 0.0})
     sent = []
     readiness = {"ready": False, "checks": [{"key": "ffmpeg", "ready": False, "message": "Install FFmpeg in C:\\x"},
                                             {"key": "python", "ready": True}]}
@@ -77,13 +77,13 @@ def test_the_studio_reports_only_when_connected_and_only_when_something_changed(
 
 
 def test_a_failed_report_is_tried_again_and_never_troubles_setup(monkeypatch):
-    monkeypatch.setattr(cr_setup_report, "_last", {"sent": None, "at": 0.0})
+    monkeypatch.setattr(cr_setup_report, "_last", {"sent": None, "at": 0.0, "wait_until": 0.0})
     readiness = {"ready": True, "checks": []}
     def broken(payload):
         raise RuntimeError("404 from an older server")
     assert cr_setup_report.maybe_send(readiness, "v", connected=True, send=broken, now=10, background=False)
-    assert cr_setup_report.maybe_send(readiness, "v", connected=True, send=lambda p: None, now=11, background=False), \
-        "after a failure the next check sends again"
+    assert not cr_setup_report.maybe_send(readiness, "v", connected=True, send=lambda p: None, now=11,
+                                          background=False), "after a failure it waits, never troubling setup"
 
 
 @pytest.mark.parametrize("system,family", [("Darwin", "mac"), ("Windows", "windows"), ("Linux", "linux"),
@@ -111,3 +111,43 @@ def test_the_privacy_page_says_what_a_setup_report_holds():
     page = (Path(__file__).parents[1] / "webapp" / "static" / "privacy.html").read_text(encoding="utf-8")
     said = page.split("Studio setup reports")[1].split("</p>")[0]
     assert "which setup checks" in said and "never" in said
+
+
+def test_a_failed_send_waits_instead_of_trying_on_every_status_check(monkeypatch):
+    monkeypatch.setattr(cr_setup_report, "_last", {"sent": None, "at": 0.0, "wait_until": 0.0})
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(cr_setup_report.time, "time", lambda: clock["t"])
+    readiness = {"ready": False, "checks": [{"key": "node", "ready": False}]}
+    tries = []
+    def refused(payload):
+        tries.append(payload)
+        raise RuntimeError("Your plan doesn't include Studio.")
+    assert cr_setup_report.maybe_send(readiness, "v", connected=True, send=refused, now=clock["t"], background=False)
+    for step in (4, 8, 12, 600):                          # the setup page asks every 4 s
+        assert not cr_setup_report.maybe_send(readiness, "v", connected=True, send=refused, now=clock["t"] + step,
+                                              background=False)
+    clock["t"] += cr_setup_report.RETRY_AFTER_S + 1
+    assert cr_setup_report.maybe_send(readiness, "v", connected=True, send=refused, now=clock["t"], background=False)
+    assert len(tries) == 2
+
+
+def test_an_older_server_without_the_report_is_asked_again_only_after_hours(monkeypatch):
+    monkeypatch.setattr(cr_setup_report, "_last", {"sent": None, "at": 0.0, "wait_until": 0.0})
+    monkeypatch.setattr(cr_setup_report.time, "time", lambda: 1000.0)
+    def old_server(payload):
+        raise RuntimeError("Not Found")
+    readiness = {"ready": True, "checks": []}
+    assert cr_setup_report.maybe_send(readiness, "v", connected=True, send=old_server, now=1000, background=False)
+    assert not cr_setup_report.maybe_send(readiness, "v", connected=True, send=old_server,
+                                          now=1000 + cr_setup_report.RETRY_AFTER_S + 1, background=False)
+    assert cr_setup_report.maybe_send(readiness, "v", connected=True, send=old_server,
+                                      now=1000 + cr_setup_report.SEND_EVERY_S + 1, background=False)
+
+
+def test_reports_older_than_ninety_days_are_dropped(fresh_db, monkeypatch):
+    import time as _time
+    studio_setup.record(5, report(ready=False, failing=["node"]), now=_time.time() - 100 * 86400)
+    studio_setup.record(6, report(ready=False, failing=["claude"]), now=_time.time())
+    monkeypatch.setattr(studio_setup, "_ready", set())
+    studio_setup.initialize()
+    assert studio_setup.stuck([5, 6])["by_check"] == {"claude": 1}
