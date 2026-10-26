@@ -1395,6 +1395,8 @@ def install(engine):
         cr_style_prompts.install(engine)            # learned styles draw with today's storyboard prompt
         import cr_spoken
         cr_spoken.install(engine)                   # a sound cue the writer slipped into the narration isn't read aloud
+        import cr_paths
+        cr_paths.install(engine, HOME)              # Windows: a long title's file names fit the path limit
     except ImportError:
         pass
     # Native Kie motion and the history kit previously bypassed the hub.
