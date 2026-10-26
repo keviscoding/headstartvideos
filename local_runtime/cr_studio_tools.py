@@ -60,11 +60,21 @@ class Refused(RuntimeError):
 
 # ── talking to Studio ─────────────────────────────────────────────────────────────────────────────────────────
 
-def _token() -> str:
+def _runtime() -> dict:
     try:
-        return str(json.loads((HOME / ".cr-runtime.json").read_text(encoding="utf-8")).get("token") or "")
+        data = json.loads((HOME / ".cr-runtime.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return ""
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _token() -> str:
+    return str(_runtime().get("token") or "")
+
+
+def output_root():
+    """Where the running Studio's videos go (its engine's OUTPUT_ROOT: CHANNELRECIPE_OUTPUT moves it), or None."""
+    return str(_runtime().get("output") or "") or None
 
 
 def call(method: str, path: str, body=None, *, timeout: float = 60, wait_busy: float = 75):
@@ -311,14 +321,18 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
     else:
         out["expected_total_usd"] = round(media["per_video_usd"] * titles, 2)
         out["this_computer"] = "Renders on this computer, one video at a time; no machine to pay for."
-        # the disk holds each video's working folder: one that can't fit is said with the cost, not after it
+        # the disk holds each video's working folder: one that can't fit is said with the cost, not after it; the
+        # videos are made one at a time, so a batch only warns about the ones after the first
         import cr_machine
         threed = bool(features.get("threed"))
-        free = cr_machine.free_disk_gb(HOME)
-        out["disk"] = {"needs_gb": cr_machine.need_gb(minutes, titles, threed), "free_gb": free}
-        room = cr_machine.disk_problem(free, minutes, titles, threed)
+        free = cr_machine.free_disk_gb(HOME, output_root())
+        out["disk"] = {"needs_gb": cr_machine.need_gb(minutes, 1, threed),
+                       "comfortable_gb": cr_machine.comfortable_gb(minutes, titles, threed), "free_gb": free}
+        room, warning = cr_machine.disk_check(free, minutes, titles, threed)
         if room:
             out["disk"]["problem"] = room
+        elif warning:
+            out["disk"]["warning"] = warning
     if features.get("youtube") and kind(row) != "short":
         # Research footage watches YouTube videos before the video is made: how long that adds, said with the cost
         import cr_watch
@@ -353,7 +367,8 @@ def summary(q: dict) -> str:
         if q.get("short_by_usd"):
             text += f" Short by ${q['short_by_usd']:.2f}: top up at {c['topup_url']}."
         return text + watching
-    room = (" " + q["disk"]["problem"]) if (q.get("disk") or {}).get("problem") else ""
+    disk = q.get("disk") or {}
+    room = (" " + (disk.get("problem") or disk.get("warning"))) if disk.get("problem") or disk.get("warning") else ""
     return (f"{n} × {q['minutes']}-min {q['style_name']} on this computer: {media}; about "
             f"${q['expected_total_usd']:.2f} in all, plus Claude Code usage on your plan." + watching + room)
 
@@ -414,6 +429,8 @@ def computer_summary(pc) -> dict:
             "free_disk_gb": pc.get("free_disk_gb"),
             "disk_needed_gb": {"10_minute_video": pc.get("ten_minute_video_gb"),
                                "10_minute_3d_video": pc.get("ten_minute_3d_video_gb")},
+            "disk_comfortable_gb": {"10_minute_video": pc.get("ten_minute_comfortable_gb"),
+                                    "10_minute_3d_video": pc.get("ten_minute_3d_comfortable_gb")},
             "short_of": pc.get("short") or [], "notes": pc.get("notes") or [],
             "what_to_do": "Tell the creator these notes in plain words before a long video: free disk space (empty "
                           "the Bin or Recycle Bin, delete old downloads) or close other apps. Never delete their files "
