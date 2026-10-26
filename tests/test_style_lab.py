@@ -241,3 +241,103 @@ def test_a_channels_own_sounds_are_made_in_code_and_stock_slop_is_refused(home3d
     assert not shown["ok"]
     assert any('stock "braam"' in p and "stone thud" in p for p in shown["warnings"]), shown["warnings"]
     assert any("wobble" in p for p in shown["problems"]), "a sound that is nobody's can't be played"
+
+
+# ── Improve this style (the Studio dashboard): one change in the creator's words ────────────────────────────────────
+
+def _answer(code, scene):
+    return "```javascript\n" + code + "\n```\n```json\n" + json.dumps(scene) + "\n```"
+
+
+def test_improve_this_style_shows_one_change_beside_the_current_version_and_saves_it_only_when_asked(home3d, monkeypatch):
+    """The owner (2026-10-26): everything Style Lab does in Claude Code must work in the Studio dashboard too. A change
+    is written by the creator's Claude Code from their words, drawn and checked like a Lab preview, held aside next
+    to the current version, and saved as the style's next version only on their word."""
+    from PIL import Image
+    monkeypatch.setattr(a2d, "available3d", lambda home=None: True)
+    learned = home3d / "assets/styles/learned/cr_clone_box"
+    learned.mkdir(parents=True)
+    (learned / "renderer-v1.js").write_text(BOX, encoding="utf-8")
+    sha = hashlib.sha256(BOX.encode()).hexdigest()
+    _style(home3d, renderer={"file": "styles/learned/cr_clone_box/renderer-v1.js", "version": 1, "sha256": sha,
+                             "state": "passed", "overall": 6.0, "bar": 5.5})
+    folder = Path(lab.start(home3d, "cr_clone_box")["workspace"])
+    scene = {"duration": 3, "cast": {"b": {"name": "B"}}, "sets": {"s": {}}, "shots": [{"start": 0, "set": "s"}],
+             "stills": [0.5, 2.0], "actions": [{"at": 0, "who": "b", "move": "place"}], "words": [{"w": "hi", "t": 0.2}]}
+    (folder / "scene.json").write_text(json.dumps(scene))
+    (folder / "refs").mkdir(exist_ok=True)
+    for name in ("shown_0", "shown_1", "held_0"):
+        Image.new("RGB", (54, 96), (40, 80, 160)).save(folder / "refs" / f"{name}.jpg")
+    red = BOX.replace("0x88aadd", "0xaa3322")
+    asked = []
+
+    def see(prompt, images):
+        asked.append((prompt, images))
+        return _answer(red, scene) if len(asked) > 1 else "I would make it red."   # the first answer has no code
+
+    def judge(references, candidates, **kw):
+        return {"candidates": [{"overall": 7.0, "characters": 6.0}] * len(candidates)}
+    op = "op_" + "a" * 24
+    got = _chromium(lambda: lab.run_improvement(home3d, "cr_clone_box", op, "a red sky", see, judge=judge,
+                                                log=lambda m: None))
+    written = (lab.improvement_folder(home3d, "cr_clone_box", op) / "renderer.js").read_text()
+    assert got["state"] == "ready" and "0xaa3322" in written and got["sha256"] == hashlib.sha256(written.encode()).hexdigest()
+    assert len(asked) == 2 and "a red sky" in asked[0][0] and BOX.strip() in asked[0][0]
+    assert "NO RENDERER" in asked[1][0], "one more call says what was missing"
+    assert any(p.endswith(".jpg") and "/refs/shown_" in p for p in asked[0][1]), "Claude sees the channel's frames"
+    assert len(got["stills"]) == 2 and Path(got["video"]).is_file() and len(got["current"]["stills"]) == 2
+    assert got["check"]["overall"] == 7.0 and got["current"]["version"] == 1
+    style = json.loads((home3d / "styles/cr_clone_box.json").read_text())
+    assert style["look"]["animated2d"]["renderer"]["sha256"] == sha, "nothing changes before the creator decides"
+    kept = lab.keep_candidate(home3d, "cr_clone_box", op, use_new=False)
+    assert kept["state"] == "kept_old"
+    (folder / "renderer.js").write_text(BOX + "\n// my own Lab work")
+    (folder / "scene.json").write_text(json.dumps({**scene, "mine": True}))
+    shrunk = json.loads((folder / "lab.json").read_text())
+    shrunk["history"] = []                                  # pushed out by 60 later entries, or another writer
+    (folder / "lab.json").write_text(json.dumps(shrunk))
+    saved = _chromium(lambda: lab.keep_candidate(home3d, "cr_clone_box", op, use_new=True))
+    assert json.loads((folder / f"scene.before-{op}.json").read_text())["mine"] is True, "the workspace scene is kept"
+    assert saved["state"] == "saved" and saved["version"] == 2
+    record = json.loads((home3d / "styles/cr_clone_box.json").read_text())["look"]["animated2d"]["renderer"]
+    assert record["sha256"] == got["sha256"] and record["state"] == "passed" and record["version"] == 2
+    assert (folder / f"renderer.before-{op}.js").read_text().endswith("// my own Lab work"), "Lab work is kept aside"
+    assert lab.candidate(home3d, "cr_clone_box", op)["state"] == "saved"
+    # a change that never draws stops, says why, and leaves the style as it was
+    broken = BOX.replace("view.gl.render(s.world, s.camera);", "throw new Error('no sky');")
+    import cr_style_clone
+    with pytest.raises(cr_style_clone.StudyStopped, match="no sky"):
+        _chromium(lambda: lab.run_improvement(home3d, "cr_clone_box", "op_" + "b" * 24, "no sky",
+                                              lambda p, i: _answer(broken, scene), judge=judge, log=lambda m: None))
+    failed = lab.candidate(home3d, "cr_clone_box", "op_" + "b" * 24)
+    assert failed["state"] == "failed" and failed["code_kept"]
+    assert "no sky" in (lab.improvement_folder(home3d, "cr_clone_box", "op_" + "b" * 24) / "renderer.js").read_text()
+    # no time left for a fix call: none is started (its usage would be wasted), and Claude's code is kept
+    calls = []
+    with pytest.raises(cr_style_clone.StudyStopped, match="wasn't time"):
+        _chromium(lambda: lab.run_improvement(home3d, "cr_clone_box", "op_" + "c" * 24, "no sky",
+                                              lambda p, i: calls.append(p) or _answer(broken, scene), judge=judge,
+                                              log=lambda m: None, left=lambda: 10.0))
+    assert len(calls) == 1 and lab.candidate(home3d, "cr_clone_box", "op_" + "c" * 24)["code_kept"]
+    # a fix call shows Claude's own version as the code to fix, the change already in it (never "it works")
+    assert "it works" in calls[0] and "THE CREATOR ASKS: no sky" in calls[0]
+    fixing = lab._improve_prompt(folder, "no sky", broken, scene, "", fix="\nPROBLEMS\n")
+    assert "it works" not in fixing and "already makes this change" in fixing and "Fix only these problems" in fixing
+    assert json.loads((home3d / "styles/cr_clone_box.json").read_text())["look"]["animated2d"]["renderer"]["version"] == 2
+    with pytest.raises(lab.LabError):
+        lab.improvement_folder(home3d, "cr_clone_box", "../op")
+
+
+def test_lab_history_keeps_every_writers_entries(tmp_path):
+    """The 108 review: Style Lab (in Claude Code) and a change (in its worker) both write lab.json; each wrote back the
+    copy it had read, so one erased the other's previews."""
+    box = tmp_path / "style-lab" / "cr_clone_box"
+    box.mkdir(parents=True)
+    lab._write(box / "lab.json", {"dims": 3, "history": [{"kind": "preview", "sha256": "a"}]})
+    stale = json.loads((box / "lab.json").read_text())         # one writer's copy
+    lab._record(box, json.loads((box / "lab.json").read_text()), {"kind": "preview", "sha256": "b"})
+    stale["bar"] = 5.5
+    lab._record(box, stale, {"kind": "check", "sha256": "b"})
+    now = json.loads((box / "lab.json").read_text())
+    assert [h["sha256"] for h in now["history"]] == ["a", "b", "b"] and now["bar"] == 5.5
+    assert stale["history"] == now["history"], "the caller sees the history as written"

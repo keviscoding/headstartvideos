@@ -161,7 +161,9 @@ def test_page_and_catalog_integrate_without_replacing_original_api(env):
 @pytest.mark.parametrize("path,method", [("", "get"), ("/catalog", "get"), ("/preview", "post"), ("/start", "post"),
     ("/op_" + "1" * 24 + "/status", "get"), ("/op_" + "1" * 24 + "/board", "get"),
     ("/op_" + "1" * 24 + "/sync", "post"), ("/op_" + "1" * 24 + "/continue", "post"),
-    ("/op_" + "1" * 24 + "/recover", "post"), ("/op_" + "1" * 24 + "/refine", "post")])
+    ("/op_" + "1" * 24 + "/recover", "post"), ("/op_" + "1" * 24 + "/refine", "post"),
+    ("/op_" + "1" * 24 + "/improve", "post"), ("/op_" + "1" * 24 + "/improvement/save", "post"),
+    ("/op_" + "1" * 24 + "/improvement-picture/new/0", "get"), ("/op_" + "1" * 24 + "/improvement-video/new", "get")])
 def test_every_route_rejects_remote_hosts_and_origins(env, path, method):
     invoke = getattr(env.client, method)
     assert invoke("/cr-style-clone" + path, base_url="http://rebound.example:7860").status_code == 403
@@ -170,7 +172,8 @@ def test_every_route_rejects_remote_hosts_and_origins(env, path, method):
 
 
 @pytest.mark.parametrize("path", ["/preview", "/start", "/op_" + "1" * 24 + "/sync", "/op_" + "1" * 24 + "/continue", "/op_" + "1" * 24 + "/recover", "/op_" + "1" * 24 + "/refine",
-                                  "/style/cr_clone_" + "1" * 12, "/sample"])
+                                  "/style/cr_clone_" + "1" * 12, "/sample", "/op_" + "1" * 24 + "/improve",
+                                  "/op_" + "1" * 24 + "/improvement/save", "/op_" + "1" * 24 + "/improvement/keep"])
 def test_mutations_require_local_control_token(env, path):
     assert env.post("/cr-style-clone" + path, headers={}).status_code == 403
     assert env.post("/cr-style-clone" + path, headers={"X-CR-Local-Token": "wrong"}).status_code == 403
@@ -450,6 +453,40 @@ def test_stopped_refinement_is_returned_without_blind_worker_retry(refined):
     response = env.post(f"/cr-style-clone/{refined.source}/refine", {"acknowledge_costs": True})
     assert response.status_code == 200 and response.json["state"] == "failed"
     assert response.json["needs_manual_recovery"] and not env.targets and len(env.workers) == 1
+
+
+def test_improve_this_style_needs_the_tick_a_saved_coded_style_and_starts_one_worker(env):
+    """Improve this style on the study page: approved in so many words, only for a saved style written in code, one
+    worker for one change, and a change is decided only once it is drawn."""
+    import hashlib
+    import cr_animated2d as a2d
+    source = env.post("/cr-style-clone/start", env.approved()).json["operation_id"]
+    env.targets.pop()()
+    path = f"/cr-style-clone/{source}/improve"
+    for payload in ({"request": "rounder heads"}, {"request": "rounder heads", "acknowledge_costs": "true"}):
+        assert env.post(path, payload).status_code == 400
+    assert env.post(path, {"request": "rounder heads", "acknowledge_costs": True}).status_code == 409, "pictures"
+    folder, saved = clone._saved(env.home, source, env.bridge)
+    style = clone._read(env.home / "styles" / (saved["spec"]["style_id"] + ".json"))
+    code = "Kit.renderer({name: 'mine', frame() {}});"
+    (env.home / "assets/styles/learned" / style["name"]).mkdir(parents=True)
+    (env.home / "assets/styles/learned" / style["name"] / "renderer-v1.js").write_text(code)
+    style["look"] = {"visuals": a2d.VISUALS, "animated2d": {"renderer": {
+        "file": f"styles/learned/{style['name']}/renderer-v1.js", "version": 1, "state": "passed",
+        "sha256": hashlib.sha256(code.encode()).hexdigest()}}}
+    clone.republish(folder, saved, style)
+    assert env.post(path, {"request": "x", "acknowledge_costs": True}).status_code == 400
+    response = env.post(path, {"request": "rounder heads", "acknowledge_costs": True})
+    assert response.status_code == 200 and response.json["renderer_improve"] and response.json["state"] == "running"
+    assert response.json["refinement_of"] == source and len(env.targets) == 1 and env.activity.busy()
+    assert env.post(path, {"request": "calmer camera", "acknowledge_costs": True}).status_code == 409, "one at a time"
+    change = response.json["operation_id"]
+    assert env.post(f"/cr-style-clone/{change}/improvement/save").status_code == 409, "nothing drawn yet"
+    assert env.post(f"/cr-style-clone/{change}/improvement/maybe").status_code == 400
+    assert env.get(f"/cr-style-clone/{change}/improvement-picture/elsewhere/0").status_code == 400
+    assert env.get(f"/cr-style-clone/{change}/improvement-picture/new/0").status_code == 404
+    page = env.get("/cr-style-clone").get_data(as_text=True)
+    assert 'id="improve-panel"' in page and "no money" in page and "/improvement/" in page
 
 
 def test_browser_approved_reference_order_to_saved_style_and_no_script_collision(env):

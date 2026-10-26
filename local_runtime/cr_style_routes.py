@@ -75,6 +75,11 @@ def install(studio, activity, setup_status, *, token, home=None):
 
     def safe_status(operation):
         with activity.lock:
+            if operation not in live_workers:
+                try:                       # a change Studio stopped working on (it quit mid-change) never stays stuck
+                    cr_style_clone.settle_improvement(home, operation, cr_bridge)
+                except Exception:          # noqa: BLE001 - status says what it can below
+                    pass
             result = cr_style_clone.status(home, operation, cr_bridge)
             working = operation in live_workers
             busy = activity.busy()
@@ -339,6 +344,68 @@ def install(studio, activity, setup_status, *, token, home=None):
                 # Preparation is indexed by the owned source. Repeated POSTs
                 # return the same operation; stopped/completed work never starts.
                 return no_store(jsonify(start_worker(result["operation_id"])))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/<operation>/improve")
+    def cr_style_improve(operation):
+        """Improve this style: one change to a coded style's renderer in the creator's words, written by their own
+        Claude Code, drawn and checked here, and kept only if they save it."""
+        try:
+            payload = data()
+            if payload.get("acknowledge_costs") is not True:
+                raise ValueError("Approve using your own Claude account for this change first.")
+            with activity.lock:
+                if activity.busy():
+                    raise RuntimeError("Finish the current studio work before improving this style.")
+                proof = native_proof()
+                source = safe_status(operation)
+                if source["state"] != "done" or not source.get("style_ready"):
+                    raise RuntimeError("Save and reconcile this style before improving it.")
+                result = cr_style_clone.prepare_improvement(home, operation, payload.get("request"), proof, cr_bridge)
+                # one change at a time per style: a repeated POST returns the change already waiting or running
+                return no_store(jsonify(start_worker(result["operation_id"])))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/<operation>/improvement/<choice>")
+    def cr_style_improvement_choice(operation, choice):
+        """The creator's choice on a ready change: save it as the style's next renderer version, or keep the old one."""
+        try:
+            data()
+            if choice not in ("save", "keep"):
+                raise ValueError("Choose save or keep.")
+            result = cr_style_clone.keep_improvement(home, operation, cr_bridge, use_new=choice == "save")
+            if choice == "save":
+                studio.styles.load_all()
+            return no_store(jsonify(result))
+        except Exception as error:
+            return error_response(error)
+
+    @app.get("/cr-style-clone/<operation>/improvement-picture/<kind>/<int:index>")
+    def cr_style_improvement_picture(operation, kind, index):
+        """A change's test shots, the current version's or the new one's, by index (never by path)."""
+        try:
+            local_access()
+            if kind not in ("current", "new"):
+                raise ValueError("Choose the current version or the new one.")
+            pictures = cr_style_clone.improvement_pictures(home, operation, cr_bridge)[kind]
+            if not 0 <= index < len(pictures):
+                return jsonify(error="No such picture."), 404
+            return no_store(send_file(pictures[index], mimetype="image/jpeg", conditional=False))
+        except Exception as error:
+            return error_response(error)
+
+    @app.get("/cr-style-clone/<operation>/improvement-video/<kind>")
+    def cr_style_improvement_video(operation, kind):
+        try:
+            local_access()
+            if kind not in ("current", "new"):
+                raise ValueError("Choose the current version or the new one.")
+            video = cr_style_clone.improvement_pictures(home, operation, cr_bridge)[kind + "_video"]
+            if video is None:
+                return jsonify(error="No video was drawn for this version."), 404
+            return no_store(send_file(video, mimetype="video/mp4", conditional=True))
         except Exception as error:
             return error_response(error)
 
