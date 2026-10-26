@@ -171,7 +171,7 @@ def preset(studio, checks, spec):
             results.append(item("reference_workflow", "Full reference animation workflow", True))
         except RuntimeError as error:
             results.append(item("reference_workflow", "Full reference animation workflow", False, str(error)))
-    if ((info or {}).get("look") or {}).get("visuals") == "cr_animated2d":
+    if ((info or {}).get("look") or {}).get("visuals") in ("cr_animated2d", "cr_animated3d"):
         import cr_animated2d
         problem = cr_animated2d.renderer_problem(info)
         results.append(item("animated2d", "The channel's animation", not problem, problem))

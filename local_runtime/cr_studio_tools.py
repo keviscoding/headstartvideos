@@ -288,12 +288,22 @@ def features_for(row: dict, overrides=None) -> dict:
     return out
 
 
+def coded_usd(row: dict, minutes: float) -> float:
+    """A style drawn by its own renderer: its background pictures plus a piece of its own music every ~35 s (the
+    catalog's coded_media), which a quote once left out ("$0.00 in all" for a video that paid ~$0.40)."""
+    coded = row.get("coded_media") if isinstance(row.get("coded_media"), dict) else {}
+    if not coded:
+        return 0.0
+    pieces = max(1, -(-int(round(float(minutes) * 60)) // max(10, int(coded.get("piece_seconds") or 35))))
+    return float(coded.get("plates_usd") or 0) + pieces * float(coded.get("music_usd_per_piece") or 0)
+
+
 def media_estimate(cat: dict, row: dict, minutes: int, features: dict) -> dict:
     prices = cat.get("prices") or {}
     per = prices.get("features") or {}
     voice = float(((prices.get("voice") or {}).get("per_min")) or 0)
     total = voice + sum(float((per.get(k) or {}).get("per_min") or 0) for k, on in features.items() if on)
-    each = total * minutes
+    each = total * minutes + coded_usd(row, minutes)
     if kind(row) == "short" and isinstance(row.get("short_cost_usd"), (int, float)):
         each = float(row["short_cost_usd"])                        # the recipe's own estimate for one Short
     return {"per_video_usd": round(each, 2), "recipe_note": one_line(row.get("cost"), 260),
@@ -858,19 +868,22 @@ def look_progress(look_id: str) -> dict:
                    similar_styles=similar_styles(d.get("similar")),
                    **({"shorts_note": SHORTS_NOTE} if d.get("shorts") else {}),
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
-                        "with look_id, a style name, an example title and their answers. The 'medium' (3D) and "
-                        "'animation' (animated 2D characters) questions decide how the videos are made: ask them "
-                        "first, in plain words. A medium_gap (for Studio's guess; another answer can change it) is "
-                        "something Studio can't make yet: read it to the creator before anything is paid. Animated "
-                        "in code adds a few minutes of their Claude Code usage to the study (usually 3 to 10, at "
-                        "most 25: Claude writes and checks the channel's animation); its videos then cost their voice and at most a few "
-                        "background pictures. Say so before they choose. " + SIMILAR_NEXT)
+                        "with look_id, a style name, an example title and their answers. The 'made' question decides "
+                        "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
+                        "their Claude Code write the channel's own renderer during the study (usually 5 to 15 more "
+                        "minutes of their Claude usage, at most 25). Its videos then cost their voice, plus at most a "
+                        "few background pictures, and the renderer can be improved later with style_lab. Instead of "
+                        "code gives Studio's ready-made pictures or 3D engine, which won't look or move exactly like the "
+                        "channel. Say both before they choose. A medium_gap is something Studio can't make yet: read it "
+                        "to the creator before anything is paid. " + SIMILAR_NEXT)
+
     return out
 
 
-SHORTS_NOTE = ("These references are Shorts. Studio studies them like any videos, but for now the style it saves "
-               "makes regular landscape (16:9) videos, not vertical Shorts: tell the creator before the paid study "
-               "(their Shorts recipes, similar_styles kind='short', make vertical Shorts).")
+SHORTS_NOTE = ("These references are Shorts. Written in code (the default answer to 'made'), the style makes vertical "
+               "Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9) "
+               "videos for now: tell the creator before the paid study (their Shorts recipes, similar_styles "
+               "kind='short', make vertical Shorts too).")
 SIMILAR_NEXT = ("similar_styles are the styles they already have that come closest (suggestions only, never a reason not "
                 "to study): before the paid study, mention them in a line each. They can use one now (make_videos with its "
                 "id), try a few seconds of one on their topic first (style_sample: try_first.cost_usd on their own "
@@ -1279,6 +1292,19 @@ def tool_delete_style(args):
 
 # ── MCP plumbing ──────────────────────────────────────────────────────────────────────────────────────────────
 
+def tool_style_lab(args):
+    action, style = str(args.get("action") or "status"), str(args.get("style") or "")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", style):
+        raise ValueError("style: one of the creator's style ids from list_styles (kind='mine')")
+    if action == "status":
+        return call("GET", f"/cr-style-lab/{style}", timeout=30)
+    if action not in ("start", "preview", "check", "save"):
+        raise ValueError("action: start, status, preview, check or save")
+    body = {k: args[k] for k in ("fresh", "seconds") if k in args}
+    # a preview draws in a real browser on this computer (a minute or two for 3D); a check waits for the judge
+    return call("POST", f"/cr-style-lab/{style}/{action}", body, timeout=900 if action == "preview" else 300)
+
+
 def _schema(properties=None, required=()):
     return {"type": "object", "properties": properties or {}, "required": list(required), "additionalProperties": False}
 
@@ -1442,6 +1468,20 @@ TOOLS = {
                              "accept_medium": {"type": "boolean"}},
                             ["look_id", "style_name", "example_title"]),
                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
+    "style_lab": (tool_style_lab, "Work on a style's renderer (the code that draws every video in an animated 2D or "
+                  "3D style) like any code project, then plug it back in. start: a workspace folder with renderer.js, "
+                  "scene.json (the test scene), the channel's own frames (refs/) and GUIDE.md (read it first). Edit "
+                  "the files yourself, then preview: contract checks, test shots, a 5 s video and a stress sweep, on "
+                  "this computer. check: the likeness judge scores the shots against the channel's frames and its "
+                  "bar. save: the previewed renderer becomes the style's next version for every new video. No money "
+                  "is spent; show the creator the shots and the video as you go.",
+                  _schema({"action": {"type": "string", "enum": ["start", "status", "preview", "check", "save"]},
+                           "style": {"type": "string", "description": "A style id from list_styles (kind='mine')."},
+                           "fresh": {"type": "boolean", "description": "start: begin again from the saved style "
+                                                                       "(the old workspace is kept aside)."},
+                           "seconds": {"type": "number", "description": "preview: video length, 1-8 s (default 5)."}},
+                          ["action", "style"]),
+                  {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
     "delete_video": (tool_delete_video, "Delete a finished or stopped video, only when the creator asks: it moves to "
                      "Studio's trash (the finished file, its description and thumbnails, its working files) and "
                      "Recently deleted on the Studio page restores it for 30 days. Their voice library, styles and "

@@ -207,8 +207,13 @@ def hint(board: dict, t0: float) -> str:
     return "; ".join(x for x in (s.get("role"), s.get("music")) if x)
 
 
-def cues(board: dict) -> list:
-    """[(second, sound, dB)] for the mixer: risers end on their reveal, hits and drops land on it."""
+def cues(board: dict, look: dict = None) -> list:
+    """[(second, sound, dB)] for the mixer: risers end on their reveal, hits and drops land on it. A style drawn by its
+    own renderer makes its own effects (the channel's sounds, in code): Studio's stock riser, hit, sub-drop and whoosh
+    never play over it (the owner, 2026-10-26: no "generic slop sound effects... the one that goes braam"); its
+    storyboard still shapes the music with its silences and swells."""
+    if isinstance(look, dict) and look.get("visuals") in ("cr_animated2d", "cr_animated3d"):
+        return []
     return [(e["t"], e["kind"], GAIN[e["kind"]]) for e in board.get("events") or [] if e["kind"] in GAIN]
 
 
@@ -273,6 +278,6 @@ def install(engine):
         the_look = look if isinstance(look, dict) else sfx._v2_look(style) if style else {}
         total = sum(float(e[3]) for e in plan or [] if len(e) > 3)
         board = board_for(job, the_look, total, getattr(engine, "log", print))
-        return sorted(out + cues(board)) if board else out
+        return sorted(out + cues(board, the_look)) if board else out
     cues_._cr_storyboard = True
     sfx.cues = cues_

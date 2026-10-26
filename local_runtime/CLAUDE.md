@@ -136,24 +136,29 @@ Studio through its own checks, so nothing needs the Studio web page.
   how to carry on: finish without the presenter (`resume_video(id, presenter="skip")`, nothing more is paid) or try the
   presenter again after a few minutes (`presenter="again"`; read them its note, which says when that could pay twice).
   Never pick for them.
-- Cloning a style (/clone-style): the look's questions come first, and two of them decide how the videos are MADE, so
-  ask them before anything else, in plain words, with Studio's guess as the first option: `medium` (a 3D channel: how
-  its 3D is made) and `animation` (a channel that animates its drawn characters, like stick-figure fights or animated
-  shorts: animated in code, or pictures in their look with some AI-animated clips). Animated in code means the study
-  has their Claude Code write this channel's own animation renderer (its characters, moves, effects and camera) and
-  check its test shots against the channel's frames: usually 3 to 10 more minutes of Claude usage (at most 25), no
-  money. Every video then reuses it: Claude directs the characters to the narration and Studio draws them on this
-  computer, so a video costs its voice, plus a background picture for each place (about $0.02) only when its animation
-  asks for them. Say this before they choose. When the study is done, `progress(op_…)` has `animation`: its score
-  against the channel's own bar; read `what_to_tell_them` to the creator, and if they would rather have pictures, they
-  press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style` returns
-  a `medium_gap`, Studio can't make that medium yet: read it to the creator and call `clone_style` with
+- Cloning a style (/clone-style): any channel is cloned in code by default. The look's `made` question comes first:
+  ask it before anything else, in plain words. Written in code (Studio's recommendation, first) means the study has
+  their Claude Code write this channel's own renderer from its frames, whatever they show (characters, graphics, maps,
+  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames: usually 5
+  to 15 more minutes of Claude usage (at most 25), no money. Every video then reuses it: Claude directs it to the
+  narration and Studio draws every frame on their computer, so a video costs its voice (plus about $0.02 for each
+  background picture a 2D renderer asks for), vertical with the channel's captions for a Shorts channel. Instead of
+  code means Studio's ready-made pictures (AI pictures in their look, some AI-animated clips) or its fixed 3D engine:
+  ready at once, but it won't look or move exactly like the channel; only when they choose it. When the study is
+  done, `progress(op_…)` has `animation`: its score against the channel's own bar; read `what_to_tell_them` to the
+  creator. If they want it closer, improve it with them in Style Lab (below); if they would rather have pictures,
+  they press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style`
+  returns a `medium_gap`, Studio can't make that yet: read it to the creator and call `clone_style` with
   `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
+- Improving a style after it's saved (any style written in code): the `style_lab` tool and the /clone-style
+  skill's Style Lab section. They can prompt it like any code: edit its workspace files, preview, check against the
+  channel, save. Free.
 - Before the paid study, the finished look's `similar_styles` are the styles they already have that come closest. Mention
   them in a line each, as suggestions only, never as a reason not to study: they can use one now, or try a few seconds
   of one on their topic first with `style_sample` (about $0.05 on their own accounts: say so and ask first). A channel
-  that posts only Shorts is read from its Shorts tab and studied like any other; for now the style it saves makes
-  regular landscape (16:9) videos, not vertical Shorts, so say so before the study.
+  that posts only Shorts is read from its Shorts tab and studied like any other. Written in code, its videos are
+  vertical Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9)
+  videos for now, so say so before the study.
 - A learned style can be changed after it is saved, without studying again: `edit_style` shows or changes its name,
   description, creative direction (script_notes, director_notes), character and the options Create starts from. On the
   Studio page it is Style library → Edit or study again. To study it again with other videos, run the clone again
@@ -162,7 +167,8 @@ Studio through its own checks, so nothing needs the Studio web page.
 ## Making videos through ChannelRecipe tools
 
 Use ChannelRecipe's MCP production workflow and the installed studio engine. Do
-not build a substitute renderer or hardcode stock/image percentages. Keep the
+not build a substitute renderer outside Studio (a style's own renderer is changed
+in Style Lab, which plugs it back in) or hardcode stock/image percentages. Keep the
 recipe's preset, director, scene modules and visual review loops.
 
 For customization, samples, creative direction and specialist features, read

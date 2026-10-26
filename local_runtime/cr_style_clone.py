@@ -8,7 +8,7 @@ automatically, and completion synchronization submits only saved receipts.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import copy
 import hashlib
 import json
@@ -417,7 +417,9 @@ def _spec(home, supplied):
         gap = (planned.get("route") or {}).get("medium_gap") if visual_mode != "reference_only" else ""
         if gap and supplied.get("accept_medium") is not True:
             raise ValueError(gap + " Tick that you understand before starting, or wait for the update.")
-        renderer = (planned.get("route") or {}).get("engine") == "animated2d" and visual_mode != "reference_only"
+        engine = (planned.get("route") or {}).get("engine")
+        # "2d" / "3d": the study has the creator's Claude Code write the channel's renderer on that kit
+        renderer = {"animated2d": "2d", "animated3d": "3d"}.get(engine, False) if visual_mode != "reference_only" else False
     elif answers:
         raise ValueError("Look at the references before answering questions about them.")
     else:
@@ -442,7 +444,7 @@ def _spec(home, supplied):
         "label": label.strip(), "title": title.strip(), "brief": brief,
         "budget_minutes": budget, "max_calls": calls, "minutes": minutes,
         "visual_mode": visual_mode, "attempt_id": attempt_id, "accept_medium": supplied.get("accept_medium") is True,
-        **({"renderer": True} if renderer else {}),
+        **({"renderer": renderer} if renderer else {}),
         **({"look_id": look_id, "answers": dict(answers)} if look_id else {})}
 
 
@@ -479,6 +481,31 @@ def room_to_check(platform=None, free_gb=None, memory_level=None) -> str:
 
 
 _room = room_to_check                       # the check prepare() runs (tests stand in for this computer's disk)
+
+
+def _graphics_kit(folder, record, *, renders: bool, gave_up=None) -> dict:
+    """The learner's graphics kit as the study keeps it: one checked in a real browser, or, where the channel's own
+    renderer draws the pictures (renders), also one checked only in a stand-in browser because the real one was busy or
+    the Mac short of room (a Lucas the Spider study stopped there after 8 minutes of Claude work while another render
+    held the browser). Anything else stops the study; no plain preset is ever swapped in."""
+    if record and record.get("kit") and record.get("browser") is True:
+        return record
+    if renders and not (record and record.get("kit")):
+        # the owner (2026-10-26): the renderer never depends on the motion-graphics learner; the style is saved without
+        # a graphics kit and its renderer draws everything
+        return {**(record or {}), "kit": None, "no_kit": "the graphics learner wrote no kit"}
+    why = _no_browser_why(folder) if record and record.get("kit") else ""
+    if why and renders:
+        return {**record, "browser_skipped": why}
+    if why:
+        raise StudyStopped(f"Your new graphics couldn't be checked in a real browser: {why}. No plain preset was "
+                           "substituted.")
+    stop = _learner_stop(folder, *gave_up[-1]) if gave_up else ""
+    if stop:
+        raise StudyStopped(stop + ". No plain preset was substituted.")
+    stop = _last_step(folder, record)
+    raise StudyStopped("The original learner did not produce a graphics kit that passed real browser validation"
+                       + (": " + stop if stop else "") + ". No plain preset was substituted.")
 
 
 def _study_log(folder) -> str:
@@ -719,10 +746,42 @@ def status(home, operation_id, bridge):
                 result["route"]["medium_gap"] = cr_style_map.MEDIUM_GAP
         renderer = renderer_verdict(style)
         if renderer:
+            seen = renderer_pictures(home, operation_id, bridge, style=style)
+            renderer.update(shots=len(seen["shots"]), channel_frames=len(seen["channel"]))
             result["renderer"] = renderer
             if renderer.get("say"):
                 result["message"] = renderer["say"]
     return result
+
+
+def renderer_pictures(home, operation_id, bridge, *, style=None) -> dict:
+    """{"shots": [...], "channel": [...]}: the style's renderer's test shots (Style Lab's latest preview of the saved
+    version, else the study's best draft) and a few of the channel's own frames, to show side by side before a video
+    is made. Paths inside this Studio only; the page asks for them by index."""
+    folder, saved = _saved(home, operation_id, bridge)
+    spec = saved.get("spec") or {}
+    if style is None:
+        style = _read(Path(home) / "styles" / (str(spec.get("style_id") or "") + ".json"))
+    record = ((style.get("look") or {}).get("animated2d") or {}).get("renderer") or {}
+    shots = []
+    if record.get("from") == "style_lab":
+        lab = _read(Path(home) / "style-lab" / str(spec.get("style_id") or "") / "lab.json")
+        done = next((h for h in reversed(lab.get("history") or []) if h.get("kind") == "preview" and h.get("ok")
+                     and h.get("sha256") == record.get("sha256")), {})
+        shots = [Path(p) for p in done.get("stills") or []]
+    if not shots:
+        built = _read(folder / "renderer" / "build.json")
+        shots = [folder / "renderer" / p for p in built.get("stills") or []]
+    root = Path(home).resolve()
+    shots = [p for p in shots if p.is_file() and p.resolve().is_relative_to(root)][:4]
+    channel = []
+    if spec.get("look_id"):
+        try:
+            channel = [Path(p) for p in renderer_frames(folder, spec)][:3]
+        except Exception:                                   # noqa: BLE001 - the shots still show without them
+            channel = []
+    channel = [p for p in channel if p.is_file() and p.resolve().is_relative_to(root)]
+    return {"shots": shots, "channel": channel}
 
 
 def renderer_verdict(style) -> dict:
@@ -733,7 +792,7 @@ def renderer_verdict(style) -> dict:
         return {"state": "pictures", "say": "This style draws pictures in the channel's look (you chose pictures "
                 "instead of Claude's animation)."}
     look = style.get("look") or {}
-    if look.get("visuals") != "cr_animated2d":
+    if look.get("visuals") not in ("cr_animated2d", "cr_animated3d"):
         return {}
     r = (look.get("animated2d") or {}).get("renderer")
     if not isinstance(r, dict):
@@ -769,28 +828,37 @@ def use_pictures(home, operation_id, bridge):
     target = Path(home) / "styles" / (spec["style_id"] + ".json")
     style = _read(target)
     look = style.get("look") or {}
-    if look.get("visuals") != "cr_animated2d":
+    if look.get("visuals") not in ("cr_animated2d", "cr_animated3d"):
         return status(home, operation_id, bridge)
     looked = _read(cr_style_look.folder(home, spec.get("look_id") or "") / "look.json") if spec.get("look_id") else {}
-    answers = {**(spec.get("answers") or {}), "animation": cr_style_map.ANIMATED_PICTURES}
+    # the "pictures" answer, for a 2D channel's animation and a 3D channel's medium alike
+    answers = {**(spec.get("answers") or {}), "made": cr_style_map.MADE_OTHER, "animation": cr_style_map.ANIMATED_PICTURES,
+               **({"medium": cr_style_map.MEDIUM_PICTURES} if look.get("visuals") == "cr_animated3d" else {})}
     mapping = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=spec["base_style"],
                                       answers=answers)
     renderer = (look.get("animated2d") or {}).get("renderer") or {}
-    look.pop("visuals", None)
-    look.pop("animated2d", None)
+    for key in ("visuals", "animated2d", "aspect"):
+        look.pop(key, None)
     style.pop("cost", None)
     style = cr_style_map.apply(style, mapping)
     clone = style.setdefault("cr_style_clone", {})
     clone["pictures_instead"] = {"at": time.time(), "renderer": {k: renderer.get(k) for k in ("state", "overall", "bar")}}
     if isinstance(clone.get("learned_v2"), dict):
         clone["learned_v2"]["route"] = mapping.get("route") or {}
+    republish(folder, saved, style)
+    return status(home, operation_id, bridge)
+
+
+def republish(folder, saved, style):
+    """A saved style changed by the creator's own action (pictures instead, a renderer saved from Style Lab), written
+    with its study's receipt, so the study still knows the style as its own."""
+    target = Path(_studio_home(folder)) / "styles" / (saved["spec"]["style_id"] + ".json")
     _write(target, style)
-    _write(folder / "ready-style.json", style)
+    _write(Path(folder) / "ready-style.json", style)
     saved["style_sha256"] = _file_hash(target)
     if saved.get("finish_receipt"):
         saved["finish_receipt"]["artifacts"][0]["sha256"] = saved["style_sha256"]
-    _write(folder / "operation.json", saved)
-    return status(home, operation_id, bridge)
+    _write(Path(folder) / "operation.json", saved)
 
 
 def _published(home, saved):
@@ -1016,17 +1084,11 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     work.mkdir(parents=True, exist_ok=True)
     record = learned(engine, spec["title"], folder, genome, genome.get("analysis") or {},
                      clock, work, spec["base_style"], spec["minutes"])
-    if not record or not record.get("kit") or record.get("browser") is not True:
-        why = _no_browser_why(folder) if record and record.get("kit") else ""
-        if why:
-            raise StudyStopped(f"Your new graphics couldn't be checked in a real browser: {why}. No plain preset was "
-                               "substituted.")
-        stop = _learner_stop(folder, *gave_up[-1]) if gave_up else ""
-        if stop:
-            raise StudyStopped(stop + ". No plain preset was substituted.")
-        stop = _last_step(folder, record)
-        raise StudyStopped("The original learner did not produce a graphics kit that passed real browser validation"
-                           + (": " + stop if stop else "") + ". No plain preset was substituted.")
+    record = _graphics_kit(folder, record, renders=bool(spec.get("renderer")) and bool(looked),
+                           gave_up=gave_up)
+    if record.get("browser_skipped") or record.get("no_kit"):
+        log(f"  graphics: {record.get('no_kit') or 'checked in a stand-in browser (' + record['browser_skipped'] + ')'}; "
+            "this style's own renderer draws its pictures, so the study carries on")
     score = (record.get("critique") or {}).get("score")
     if spec.get("visual_mode") == "reference_only" and (isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score)):
         raise StudyStopped("The reference animation kit has not completed its visual comparison. It is saved, but it is not ready to use; no unreviewed preset was substituted.")
@@ -1038,8 +1100,9 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
                       log)
         if spec.get("renderer"):
             progress("renderer")
-            _renderer(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "renderer", prompt,
-                                                                                 images, max_tokens=32000), log)
+            with _renderer_effort():
+                _renderer(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "renderer", prompt,
+                                                                                     images, max_tokens=32000), log)
     return finish_original(engine, folder, spec, design, record, progress,
         learner=learner, designer=designer, log=log, report=clock.report())
 
@@ -1121,6 +1184,14 @@ RENDERER_CONTEXT = ("The candidates were drawn in code by an animation renderer 
                     "stand-in background where no background picture was drawn. Judge how the characters are built "
                     "and drawn, their poses and effects, the palette and the framing as this channel's; do not judge "
                     "the background.")
+RENDERER_CONTEXT_3D = ("The candidates were rendered in real 3D by a three.js renderer written for this channel. Judge how "
+                       "the characters are built (proportions, heads, faces, clothes, materials), the sets, the light, "
+                       "the palette and the framing as this channel's.")
+RENDERER_CONTEXT_PLATES = ("The candidates were rendered by a renderer written for this channel that composites its "
+                           "characters over a picture drawn for each place in the videos; here the backgrounds are plain "
+                           "stand-ins. Judge how the characters are built (proportions, heads, faces, fur, clothes, "
+                           "materials), the light on them, the lens and the framing as this channel's; do not judge the "
+                           "background.")
 
 
 def _by_video(frames: list) -> list:
@@ -1130,6 +1201,55 @@ def _by_video(frames: list) -> list:
     for p in frames:
         groups.setdefault(Path(p).stem.rsplit("_", 1)[0], []).append(p)
     return [g[k] for k in range(max((len(g) for g in groups.values()), default=0)) for g in groups.values() if k < len(g)]
+
+
+@contextmanager
+def _renderer_effort():
+    """The renderer is the hardest code Claude writes for a style: its drafts keep Claude Code's own effort (the one
+    every renderer so far was measured with), whatever effort Studio asks of its other Opus stages. cr_claude's
+    call_effort scopes that to this thread's calls only; without it (before 106) no stage asks for an effort at all."""
+    import cr_claude
+    hook = getattr(cr_claude, "call_effort", None)
+    with (hook("default") if callable(hook) else nullcontext()):
+        yield
+
+
+def renderer_frames(folder, spec) -> list:
+    """The channel's frames a renderer is built and checked against (at most 9, spread over its videos; the last one or
+    two are held out to set the bar): the look's drawn frames, filled from the study's own when the look has few."""
+    import cr_animated2d
+    import cr_style_likeness
+    frames = cr_style_likeness.frames(_studio_home(folder), spec["look_id"])
+    drawn = [p for p in frames if not cr_style_likeness.flat_graphic(p)]
+    frames = _by_video(drawn if len(drawn) >= 4 else frames)
+    if len(frames) < 9:
+        # one reference gives the look only 4 frames: the study's own frames of it (smaller) fill the frames Claude
+        # sees and the ones held out to set the bar, so the bar is still the channel's own
+        watched = [p for p in sorted((Path(folder) / "reflearn" / "ref_frames").glob("k*.jpg"))
+                   if not cr_animated2d._blank(p, 8)]
+        need = min(9 - len(frames), len(watched))
+        frames += [watched[i * len(watched) // need] for i in range(need)] if need else []
+    return frames[:9]
+
+
+def renderer_names(spec, looked) -> list:
+    """The channel's title and handle: never drawn by its renderer, though its watermark is in the frames studied."""
+    handles = [m.group(1) for u in (spec.get("reference_urls") or [spec.get("reference_url")])
+               for m in [re.search(r"youtube\.com/@([\w.\-]+)", str(u or ""))] if m]
+    names = list(dict.fromkeys([str(r.get("channel") or "") for r in looked.get("references") or []] + handles))
+    return [n for n in names if n]
+
+
+def renderer_dims(spec, looked, home) -> int:
+    """2 or 3: which kit the study's renderer is written on. A study started before the spec said "2d"/"3d" stored
+    True; its planned route says which (a 3D channel once got the 2D kit, and its drafts were flat canvas code)."""
+    said = spec.get("renderer")
+    if said is not True:
+        return 3 if said == "3d" else 2
+    import cr_style_map
+    planned = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=spec.get("base_style"),
+                                      answers=spec.get("answers") or {})
+    return 3 if (planned.get("route") or {}).get("engine") == "animated3d" else 2
 
 
 def _renderer(folder, spec, looked, see, log):
@@ -1143,30 +1263,29 @@ def _renderer(folder, spec, looked, see, log):
     home = _studio_home(folder)
     profile = cr_style_map.answer(looked["profile"], spec.get("answers") or {})
     channel = cr_animated2d.from_profile(profile)
+    three = renderer_dims(spec, looked, home) == 3
+    tall = cr_style_map.vertical(looked["profile"])
+    size = {}
+    if three:
+        size = {"dims": 3, "width": 1080 if tall else 1920, "height": 1920 if tall else 1080}
+        channel.update(medium="real 3D (three.js)", format=("vertical 1080x1920 Shorts with captions" if tall else
+                                                            "16:9 1920x1080 video"))
+    elif tall:                                              # a 2D Shorts channel is drawn vertical, as its videos are
+        size = {"width": 1080, "height": 1920}
+        channel.update(format="vertical 1080x1920 Shorts with captions")
     art = ((_read(folder / "art-checkpoint.json").get("art") or {}).get("overrides") or {}).get("look") or {}
     if art.get("character"):
         channel["cast_in_words"] = str(art["character"])[:1500]
-    frames = cr_style_likeness.frames(home, spec["look_id"])
-    drawn = [p for p in frames if not cr_style_likeness.flat_graphic(p)]
-    frames = _by_video(drawn if len(drawn) >= 4 else frames)
-    if len(frames) < 9:
-        # one reference gives the look only 4 frames: the study's own frames of it (smaller) fill the frames Claude
-        # sees and the ones held out to set the bar, so the bar is still the channel's own
-        watched = [p for p in sorted((folder / "reflearn" / "ref_frames").glob("k*.jpg"))
-                   if not cr_animated2d._blank(p, 8)]
-        need = min(9 - len(frames), len(watched))
-        frames += [watched[i * len(watched) // need] for i in range(need)] if need else []
-    # the channel's own name is never drawn, though its watermark is in the frames Claude studies
-    handles = [m.group(1) for u in (spec.get("reference_urls") or [spec.get("reference_url")])
-               for m in [re.search(r"youtube\.com/@([\w.\-]+)", str(u or ""))] if m]
-    names = list(dict.fromkeys([str(r.get("channel") or "") for r in looked.get("references") or []] + handles))
+    frames = renderer_frames(folder, spec)
+    names = renderer_names(spec, looked)
 
-    def judge(references, candidates):
+    def judge(references, candidates, plates=False):
+        context = RENDERER_CONTEXT_PLATES if plates else RENDERER_CONTEXT_3D if three else RENDERER_CONTEXT
         return cr_bridge.call("style/compare", {"references": [cr_style_likeness._b64(p) for p in references],
                                                 "candidates": [cr_style_likeness._b64(p) for p in candidates],
-                                                "context": RENDERER_CONTEXT})
-    result = cr_animated2d.build(folder, {k: channel.get(k) for k in ("sky", "floor", "blur")}, channel, see=see,
-                                 judge=judge, references=frames[:9], home=home, log=log, names=[n for n in names if n])
+                                                "context": context})
+    result = cr_animated2d.build(folder, {**{k: channel.get(k) for k in ("sky", "floor", "blur")}, **size}, channel, see=see,
+                                 judge=judge, references=frames, home=home, log=log, names=names)
     log(f"  renderer: {result.get('state')}"
         + (f", {result.get('overall')}/10 against a bar of {result.get('bar')}" if result.get("overall") is not None
            else f" ({result.get('why', '')})"))
@@ -1197,10 +1316,12 @@ def _apply_learned(folder, spec, style, log):
     if art.get("overrides"):
         cr_style_map._merge(learned, art["overrides"])
     cr_style_prompts.with_original_sound(learned)      # real clips are found only where the script marks them
-    if (mapping.get("route") or {}).get("engine") == "animated2d":
+    if (mapping.get("route") or {}).get("engine") in ("animated2d", "animated3d"):
         # the characters are animated in code: no writer's words change how the video is made
         look = learned.setdefault("look", {})
         look.update(visuals=mapping["overrides"]["look"]["visuals"], animated2d=mapping["overrides"]["look"]["animated2d"])
+        if mapping["overrides"]["look"].get("aspect"):
+            look["aspect"] = mapping["overrides"]["look"]["aspect"]
         import cr_animated2d
         if spec.get("renderer"):
             cr_animated2d.attach(learned, folder, home)
@@ -1217,10 +1338,12 @@ def _apply_learned(folder, spec, style, log):
 
 
 def _validated_assets(folder, record):
-    """Bind a completed learner record to its actual installed browser kit."""
+    """Bind a completed learner record to its actual installed browser kit ({} for a renderer style saved without one)."""
+    if record.get("no_kit") and not record.get("kit"):
+        return {}
     folder = Path(folder).resolve()
     manifest = _read(folder / "genkit/kit.json")
-    if (record.get("browser") is not True or not record.get("kit")
+    if ((record.get("browser") is not True and not record.get("browser_skipped")) or not record.get("kit")
             or manifest.get("name") != record.get("kit")
             or not isinstance(manifest.get("types"), dict) or len(manifest["types"]) < 3):
         raise RuntimeError("The completed study's validated kit is missing. Review the saved study.")
@@ -1252,7 +1375,9 @@ def finish_original(engine, folder, spec, design, record, progress, *, learner=N
     saved_style = designer.save(folder, style)
     if saved_style is not None:
         Path(saved_style).chmod(0o600)
-    if not designer.genkit(style, folder, log, invalidate=True):
+    if record.get("no_kit"):
+        (log or print)("  graphics: no graphics kit; the style's own renderer draws its pictures")
+    elif not designer.genkit(style, folder, log, invalidate=True):
         raise StudyStopped("The validated kit could not attach to this style. No default graphics were substituted.")
     # Original auto looks are hidden variants; make this an explicit selectable
     # style while retaining their actual look, prompts and durable kit manifest.

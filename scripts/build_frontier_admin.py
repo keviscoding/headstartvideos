@@ -221,6 +221,31 @@ def private_animated2d_resources(root: Path):
     return resources
 
 
+ANIMATED3D_FILES = ("core3d.js", "example3d.js", "AUTHORING.md")
+
+
+def private_animated3d_resources(root: Path):
+    """The animated 3D kit (Studio 105), shipped under animated3d/: its page runtime, example renderer and guide. The
+    3D page reads three.js from the 3D engine Studio already ships (threed/engine/vendor/three)."""
+    folder = root / "data/frontier/animated3d"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("The animated 3D kit must be an ordinary owned folder.")
+    resources = []
+    for path in sorted(p for p in folder.rglob("*") if p.is_file() or p.is_symlink()):
+        rel = path.relative_to(folder).as_posix()
+        if path.name.startswith("."):
+            continue
+        if path.is_symlink() or path.stat().st_size > 1024 * 1024 or rel not in ANIMATED3D_FILES:
+            raise ValueError("Unexpected file in the animated 3D kit: " + rel)
+        resources.append((path, "animated3d/" + rel))
+    missing = sorted(set(ANIMATED3D_FILES) - {dest.split("/", 1)[1] for _, dest in resources})
+    if resources and missing:
+        raise ValueError("The animated 3D kit is incomplete: " + ", ".join(missing))
+    return resources
+
+
 def merge_catalog(contents: bytes, root: Path = None) -> bytes:
     """The engine's static catalog (what the 3D director may build) with the designed-cast kit's kinds and look preset."""
     extra = (root or ROOT) / "data/frontier/threed" / THREED_CATALOG
@@ -662,7 +687,7 @@ def build(source: Path, target: Path, previous: Path | None = None, with_shorts:
     recipes = [r for r in private_recipe_resources(ROOT) if shorts or not r[1].startswith("styles/cr-shorts-")]
     preview_resources = (private_preview_resources(ROOT) + private_sound_resources(ROOT)
                          + recipes + (private_shorts_resources(ROOT) if shorts else []) + private_threed_resources(ROOT)
-                         + private_animated2d_resources(ROOT))
+                         + private_animated2d_resources(ROOT) + private_animated3d_resources(ROOT))
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     transformed_files = []

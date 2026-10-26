@@ -28,6 +28,7 @@ import math
 import mimetypes
 import re
 import shutil
+import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -41,6 +42,23 @@ EXAMPLE = "example-stick.js"             # the kit's own stick fights (styles fr
 EXAMPLE_OWN = "example-own.js"          # what Claude is shown: a renderer that draws everything itself
 PROMPTS = ("cast.txt", "director.txt", "build.txt", "AUTHORING.md", EXAMPLE_OWN)
 VISUALS = "cr_animated2d"
+VISUALS3D = "cr_animated3d"            # the same plugin for a 3D channel's renderer (cr_animated3d.py)
+PLUGINS = (VISUALS, VISUALS3D)
+# The 3D kit (Studio 105): the same contract, a WebGL page. Its runtime, example and guide are private like the 2D kit's;
+# the page reads three.js and Studio's own 3D engines from this Studio folder through a read-only origin, nothing else.
+KIT3D = "animated3d"
+KIT3D_FILES = ("core3d.js", "example3d.js", "AUTHORING.md")
+THREE_DIR = Path("threed") / "engine" / "vendor" / "three"
+KIT_ORIGIN = "https://kit.local"
+KIT_ROOTS = {"three": THREE_DIR, "kit": Path(KIT3D), "engine": Path("threed") / "engine",
+             "rbx": Path("shorts") / "rbx" / "r3d" / "engine"}
+KIT_TYPES = {".js": "text/javascript", ".mjs": "text/javascript", ".json": "application/json", ".png": "image/png",
+             ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".glb": "model/gltf-binary",
+             ".gltf": "model/gltf+json", ".bin": "application/octet-stream", ".ktx2": "image/ktx2",
+             ".woff2": "font/woff2", ".ttf": "font/ttf"}
+CSP3D = ("default-src 'none'; script-src 'unsafe-inline' https://kit.local; style-src 'unsafe-inline'; "
+         "img-src https://kit.local data: blob:; font-src https://kit.local data:; media-src data: blob:; "
+         "connect-src https://kit.local; worker-src 'none'; frame-src 'none'")
 SCHEMA = 1
 FPS = 30
 CHUNK_S = 60.0                         # narration a director call choreographs at once (at most)
@@ -91,6 +109,40 @@ def available(home=None) -> bool:
     return all((folder / f).is_file() for f in KIT_FILES + PROMPTS + (EXAMPLE,))
 
 
+def animated(look) -> bool:
+    """A style whose characters are animated by its own renderer (2D or 3D)."""
+    return isinstance(look, dict) and look.get("visuals") in PLUGINS
+
+
+def dims_of(spec) -> int:
+    """2 or 3: which kit a scene, a style's spec or a renderer record is drawn with."""
+    return 3 if isinstance(spec, dict) and spec.get("dims") == 3 else 2
+
+
+def available3d(home=None) -> bool:
+    """The 3D kit is installed, with the 2D kit's prompts and sounds it shares and the 3D engine's three.js."""
+    root = Path(home or HERE)
+    return available(home) and all((root / KIT3D / f).is_file() for f in KIT3D_FILES) and \
+        (root / THREE_DIR / "three.module.js").is_file()
+
+
+def _kit_file(root: Path, rel: str, html: str):
+    """(bytes, content type) of what a 3D page asks the kit origin for, or (None, "") outside the kit's own roots."""
+    rel = rel.split("?", 1)[0].split("#", 1)[0]
+    if rel == "index.html":
+        return html.encode("utf-8"), "text/html; charset=utf-8"
+    head, _, rest = rel.partition("/")
+    base = KIT_ROOTS.get(head)
+    kind = KIT_TYPES.get(Path(rest).suffix.lower())
+    if base is None or not rest or kind is None or ".." in rest.split("/"):
+        return None, ""
+    top = (root / base).resolve()
+    path = (top / rest).resolve()
+    if top not in path.parents or not path.is_file():
+        return None, ""
+    return path.read_bytes(), kind
+
+
 def kit_js(home=None) -> str:
     folder = kit_dir(home)
     return "".join(re.sub(r"if \(typeof module[^\n]*\n", "", (folder / f).read_text(encoding="utf-8")) + "\n"
@@ -106,6 +158,24 @@ def _prompt(name: str, home=None) -> str:
 
 def example(home=None) -> str:
     return _prompt(EXAMPLE, home)
+
+
+def _prompt3d(name: str, home=None) -> str:
+    path = Path(home or HERE) / KIT3D / name
+    if not path.is_file():
+        raise AnimationStopped("Studio's animated 3D kit is missing. Update Studio before making this video.")
+    return path.read_text(encoding="utf-8")
+
+
+def pace_words(spec: dict) -> str:
+    """How often the director cuts: the channel's own measured shot length, else the usual 1.5 to 4 s."""
+    shot = spec.get("shot_s") if isinstance(spec, dict) else None
+    if not isinstance(shot, (int, float)) or shot <= 0:
+        return "A new shot every 1.5 to 4 s, cut on a spoken word."
+    lo, hi = max(0.7, round(shot * 0.7, 1)), max(1.2, round(shot * 1.7, 1))
+    cuts = spec.get("cuts_per_min")
+    return (f"A new shot every {lo:g} to {hi:g} s (the channel's shots last about {shot:g} s"
+            + (f", {cuts:g} cuts a minute" if isinstance(cuts, (int, float)) else "") + "), cut on a spoken word.")
 
 
 # ── from a learned profile ──────────────────────────────────────────────────────────────────────────────────────────
@@ -190,14 +260,70 @@ def from_profile(profile: dict) -> dict:
             cast.append({"name": str(c.get("name") or "")[:40], "look": str(c["look"])[:240],
                          "role": str(c.get("role") or "character"), "color": colour_of(c["look"])})
     motion = _v((profile.get("motion") or {}).get("classes"), {}) or {}
-    return {"schema": SCHEMA, "art": str(_v((profile.get("pictures") or {}).get("art_style"), "") or "")[:400],
+    edit = profile.get("edit") or {}
+    shot_s, cuts = _v(edit.get("median_shot_s"), edit.get("median_shot_s")), _v(edit.get("cuts_per_min"), edit.get("cuts_per_min"))
+    pace = {"shot_s": round(float(shot_s), 2)} if isinstance(shot_s, (int, float)) and 0.3 <= shot_s <= 20 else {}
+    if isinstance(cuts, (int, float)) and 0 < cuts <= 120:
+        pace["cuts_per_min"] = round(float(cuts), 1)
+    return {"schema": SCHEMA, **pace, "art": str(_v((profile.get("pictures") or {}).get("art_style"), "") or "")[:400],
             "recognisable": [str(x)[:160] for x in (profile.get("recognisable") or [])][:8],
             "figure": 0.36, "blur": 5 if re.search(r"blur", low) else 2,
             "outline": {"color": "#141414", "width": 0.012} if re.search(r"\boutlin", low) else None,
             "impact_frames": True, "sky": [light[0], light[-1]], "floor": [dark[-1], dark[0]], "palette": palette[:8],
             "effects": [m.group(0) for m in re.finditer(r"(neon |glowing |energy )?(auras?|speed lines|smears?|"
                                                           r"motion blur|impact frames?|lightning|sparks|blood)", low)][:6],
-            "moving": round(float(motion.get("moving") or 0), 2), "cast": cast[:6]}
+            "moving": round(float(motion.get("moving") or 0), 2), "cast": cast[:6], **_sounds_of(profile)}
+
+
+def _sounds_of(profile: dict) -> dict:
+    """{"sounds": {kinds, on, booms_per_min}}: the effects the channel's videos were heard to play, which its renderer
+    makes in code; {} when the look heard none."""
+    sfx = (profile.get("sound") or {}).get("sfx") or {}
+    kinds = [str(k)[:60] for k in (sfx.get("kinds") or []) if str(k).strip()][:10]
+    if not kinds and not isinstance(sfx.get("booms_per_min"), (int, float)):
+        return {}
+    out = {"kinds": kinds, "on": [str(k)[:120] for k in (sfx.get("on") or [])][:6]}
+    if isinstance(sfx.get("booms_per_min"), (int, float)):
+        out["booms_per_min"] = round(float(sfx["booms_per_min"]), 2)
+    return {"sounds": out}
+
+
+# Studio's stock cues that read as generic sound design (the owner, 2026-10-26: "not use generic slop sound effects...
+# the bell sounds and the one that goes braam"): a renderer may use one only when the channel's own videos do
+GENERIC = {"braam": ("braam", "boom", "impact", "trailer"), "sub_drop": ("boom", "drop", "bass", "sub"),
+           "riser": ("riser", "rise", "build", "swell"), "sting": ("sting", "stinger", "orchestra hit"),
+           "ping": ("ping", "bell", "ding", "chime", "notification")}
+
+
+def sound_problems(code: str, names, heard: dict, out_dir: Path, *, home=None, dims: int = 2) -> list:
+    """What to tell Claude about a renderer's sound: its own sounds that can't be made, names it plays that are
+    nobody's, and Studio's stock cues this channel's videos don't use (heard: what the look heard, {"sounds": ...})."""
+    try:
+        files, problems = make_sounds(code, out_dir, home=home, dims=dims)
+    except AnimationStopped as error:
+        return [str(error)]
+    unknown = sorted(n for n in set(names) if not sound_file(str(n), files))
+    if unknown:
+        problems.append("it plays sounds that are neither its own (sounds: {...}) nor Studio's: " + ", ".join(unknown[:8]))
+    return problems + generic_sounds(set(names) - set(files), heard)
+
+
+def generic_sounds(names, spec: dict) -> list:
+    """What to tell Claude about stock cues its renderer plays that this channel's own videos don't ([] when none, or
+    when Studio heard nothing of its sound to compare with)."""
+    heard = (spec or {}).get("sounds") if isinstance((spec or {}).get("sounds"), dict) else None
+    if not heard:
+        return []
+    words = " ".join(heard.get("kinds") or []).lower()
+    booms = float(heard.get("booms_per_min") or 0)
+    out = []
+    for name in sorted(set(names) & set(GENERIC)):
+        if any(w in words for w in GENERIC[name]) or (name in ("braam", "sub_drop") and booms >= 0.5):
+            continue
+        out.append(f"it plays Studio's stock \"{name}\" sound, which this channel's own videos don't use (its sounds: "
+                   + (", ".join(heard.get("kinds") or []) or "none heard") + "): make the channel's own sounds in code "
+                   "(sounds: {...}) and play those")
+    return out
 
 
 # ── the page a renderer runs in ─────────────────────────────────────────────────────────────────────────────────────
@@ -239,8 +365,35 @@ def check_code(code: str, names=()) -> list:
     return problems
 
 
+# Words a renderer writes on the frame (or the 3D overlay), measured where they are drawn: the smallest font size on
+# screen in pixels, with the transform applied (a customer's cloned graphics had "nearly every overlay too small to
+# read at video size"). Words drawn into textures are not measured here.
+TEXT_METER = ("window.__textMin=null;window.__t=0;(function(){const P=CanvasRenderingContext2D.prototype;"
+              "for(const k of ['fillText','strokeText']){const f=P[k];P[k]=function(s){try{const c=this.canvas;"
+              "if(c&&(c.id==='c'||c.id==='o')&&String(s).trim()){const m=/(\\d+(?:\\.\\d+)?)px/.exec(this.font||'');"
+              "if(m){const t=this.getTransform();const px=parseFloat(m[1])*Math.sqrt(Math.abs(t.a*t.d-t.b*t.c));"
+              "if(px>0&&(!window.__textMin||px<window.__textMin.px))window.__textMin={px:Math.round(px*10)/10,"
+              "text:String(s).slice(0,40),t:window.__t};}}}catch(e){}return f.apply(this,arguments);};}})();")
+MIN_TEXT = 0.026                       # of the frame's short side: 28 px at 1080, the least a phone viewer can read
+
+
+def small_text(found: dict, spec: dict) -> str:
+    """What to tell Claude when its smallest words on screen are too small to read ("" when they read), from the
+    sweep's text measurement."""
+    if not isinstance(found, dict) or not found.get("px"):
+        return ""
+    need = round(MIN_TEXT * min(int(spec.get("width") or 1920), int(spec.get("height") or 1080)))
+    if float(found["px"]) >= need:
+        return ""
+    return (f"\"{found.get('text', '')}\" is drawn {found['px']:g} px tall at {float(found.get('t') or 0):g} s: too small "
+            f"to read at video size on a phone. Make every word on screen at least {need} px (labels, numbers, notes, "
+            "captions), or leave it out")
+
+
 def page(spec: dict, code: str, home=None, mode: str = "render") -> str:
     """The sandboxed page: the kit, the renderer (its own script, so its errors are its own) and the bootstrap."""
+    if dims_of(spec) == 3:
+        return _page3d(spec, code, home, mode)
     spec = json.loads(json.dumps(spec))
     for s in (spec.get("sets") or {}).values():
         img = s.get("image") if isinstance(s, dict) else None
@@ -258,7 +411,7 @@ def page(spec: dict, code: str, home=None, mode: str = "render") -> str:
             "const scene=%s;await kitLoad(scene);"
             "const ctx=document.getElementById('c').getContext('2d',{willReadFrequently:true});"
             "const R=Kit._renderer;const state=R.prepare?await R.prepare(scene,Kit):null;"
-            "window.renderFrame=(t)=>{try{ctx.save();R.frame(ctx,t,state,Kit);ctx.restore();}"
+            "window.renderFrame=(t)=>{try{window.__t=t;ctx.save();R.frame(ctx,t,state,Kit);ctx.restore();}"
             "catch(e){window.__err='at '+t.toFixed(2)+' s: '+String(e&&e.stack||e).slice(0,1500);throw e;}};"
             "window.__marks=Kit._marks;window.__ready=true;}"
             "catch(e){window.__err=String(e&&e.stack||e).slice(0,2000);window.__ready=true;}})();"
@@ -267,33 +420,91 @@ def page(spec: dict, code: str, home=None, mode: str = "render") -> str:
             f"<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">"
             "<style>html,body{margin:0;background:#000;overflow:hidden}</style></head>"
             f"<body><canvas id=c width={int(spec.get('width', 1920))} height={int(spec.get('height', 1080))}></canvas>"
-            f"<script>{catch}</script><script>{_safe_script(kit_js(home))}</script>"
+            f"<script>{catch}</script><script>{TEXT_METER}</script><script>{_safe_script(kit_js(home))}</script>"
             # the renderer in a scope of its own: its names never collide with the kit's (a renderer's own POSES
             # once stopped it loading); its line 1 stays line 1
             f"<script>(function(){{{_safe_script(code)}\n}})();</script>"
             f"<script>{boot}</script></body></html>")
 
 
+def _embed(spec: dict) -> dict:
+    spec = json.loads(json.dumps(spec))
+    for s in (spec.get("sets") or {}).values():
+        img = s.get("image") if isinstance(s, dict) else None
+        if img and not str(img).startswith("data:"):
+            p = Path(img)
+            s["image"] = "data:%s;base64,%s" % (mimetypes.guess_type(p.name)[0] or "image/jpeg",
+                                               base64.b64encode(p.read_bytes()).decode())
+    return spec
+
+
+def _page3d(spec: dict, code: str, home=None, mode: str = "render") -> str:
+    """The 3D page (served at the kit origin): three.js by import map, the 3D kit's runtime, the renderer as its own
+    module (its own scope), then the bootstrap; a WebGL canvas with a 2D overlay over it."""
+    spec = _embed(spec)
+    W, H = int(spec.get("width", 1920)), int(spec.get("height", 1080))
+    catch = ("window.__err='';window.addEventListener('error',e=>{if(!window.__err)window.__err=String(e.message||e)"
+             "+(e.lineno?' (line '+e.lineno+')':'')});")
+    imports = json.dumps({"imports": {"three": KIT_ORIGIN + "/three/three.module.js",
+                                      "three/addons/": KIT_ORIGIN + "/three/addons/"}})
+    boot = ("try{if(window.__err)throw new Error(window.__err);"
+            "if(!window.Kit)throw new Error('the 3D kit did not load');"
+            "if(!Kit._renderer)throw new Error('the renderer never called Kit.renderer({...})');"
+            "window.__manifest=Kit.manifest();"
+            "if(!%s){const scene=%s;await kitLoad(scene);"
+            "const view=kitView(%d,%d);const R=Kit._renderer;const state=R.prepare?await R.prepare(scene,Kit):null;"
+            "window.renderFrame=(t)=>{try{window.__t=t;view.overlay.clearRect(0,0,view.width,view.height);R.frame(view,t,state,Kit);}"
+            "catch(e){window.__err='at '+t.toFixed(2)+' s: '+String(e&&e.stack||e).slice(0,1500);throw e;}};"
+            "window.__marks=Kit._marks;}window.__ready=true;}"
+            "catch(e){if(!window.__err)window.__err=String(e&&e.stack||e).slice(0,2000);window.__ready=true;}"
+            % ("true" if mode == "manifest" else "false", _safe_script(json.dumps(spec)), W, H))
+    return ("<!doctype html><html><head><meta charset=utf-8>"
+            f"<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP3D}\">"
+            f"<script type=\"importmap\">{imports}</script>"
+            "<style>html,body{margin:0;background:#000;overflow:hidden}canvas{position:absolute;left:0;top:0}</style>"
+            f"</head><body><canvas id=c width={W} height={H}></canvas><canvas id=o width={W} height={H}></canvas>"
+            f"<script>{catch}</script><script>{TEXT_METER}</script>"
+            f"<script type=\"module\" src=\"{KIT_ORIGIN}/kit/core3d.js\"></script>"
+            f"<script type=\"module\">{_safe_script(code)}\n</script>"
+            f"<script type=\"module\">{boot}</script></body></html>")
+
+
+# Chromium with the GPU (WebGL), as Studio's 3D engine renders: Metal on a Mac, Chromium's own ANGLE elsewhere
+GL_ARGS = ["--enable-gpu", "--ignore-gpu-blocklist", "--force-color-profile=srgb", "--hide-scrollbars", "--mute-audio",
+           "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+           "--disable-backgrounding-occluded-windows"] + (["--use-angle=metal"] if sys.platform == "darwin" else [])
+
+
 class _Sandbox:
     """A headless Chromium page with no way out: offline, every request refused, the page's own CSP."""
 
-    def __init__(self, html: str, width: int, height: int, timeout_ms: int = 60000):
+    def __init__(self, html: str, width: int, height: int, timeout_ms: int = 60000, *, gl: bool = False, home=None):
         from playwright.sync_api import sync_playwright
         self._pw = sync_playwright().start()
+        root = Path(home or HERE)
         try:
-            self.browser = self._pw.chromium.launch(args=["--disable-gpu", "--force-color-profile=srgb",
-                                                          "--font-render-hinting=none"])
+            self.browser = self._pw.chromium.launch(args=GL_ARGS if gl else ["--disable-gpu", "--force-color-profile=srgb",
+                                                                              "--font-render-hinting=none"])
             self.context = self.browser.new_context(viewport={"width": width, "height": height}, device_scale_factor=1,
                                                     offline=True, java_script_enabled=True, accept_downloads=False)
             self.blocked = []
 
             def refuse(route):
-                self.blocked.append(route.request.url[:200])
+                url = route.request.url
+                if gl and url.startswith(KIT_ORIGIN + "/"):
+                    body, kind = _kit_file(root, url[len(KIT_ORIGIN) + 1:], html)
+                    if body is not None:                    # the kit's own files, read-only, from this Studio
+                        route.fulfill(status=200, body=body, headers={"Content-Type": kind})
+                        return
+                self.blocked.append(url[:200])
                 route.abort()
             self.context.route("**/*", refuse)
             self.page = self.context.new_page()
             self.page.set_default_timeout(timeout_ms)
-            self.page.set_content(html, wait_until="load")
+            if gl:
+                self.page.goto(KIT_ORIGIN + "/index.html", wait_until="load")
+            else:
+                self.page.set_content(html, wait_until="load")
             self.page.wait_for_function("window.__ready===true", timeout=120000)
         except BaseException:
             self.close()
@@ -327,9 +538,82 @@ class _Sandbox:
             pass
 
 
-def manifest(code: str, home=None) -> dict:
+_MAKE_SOUNDS = """async () => {
+  const R = Kit._renderer, out = {};
+  for (const [name, def] of Object.entries((R && R.sounds) || {})) {
+    if (!/^[a-z_]{1,32}$/.test(name) || !def || typeof def.make !== 'function') { out[name] = {error: 'not {seconds, make(ctx, Kit)}'}; continue; }
+    try {
+      const secs = Math.max(0.05, Math.min(4, +def.seconds || 1)), rate = 44100;
+      const ctx = new OfflineAudioContext(1, Math.round(secs * rate), rate);
+      await def.make(ctx, Kit);
+      const d = (await ctx.startRendering()).getChannelData(0);
+      let peak = 0; for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v === v && v > peak) peak = v; }
+      const g = peak > 1 ? 1 / peak : 1, pcm = new Int16Array(d.length);
+      for (let i = 0; i < d.length; i++) pcm[i] = Math.max(-32767, Math.min(32767, Math.round((d[i] || 0) * g * 32767)));
+      const b = new Uint8Array(pcm.buffer); let s = '';
+      for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+      out[name] = {pcm: btoa(s), rate, peak};
+    } catch (e) { out[name] = {error: String(e && e.message || e).slice(0, 200)}; }
+  }
+  return out;
+}"""
+
+
+def make_sounds(code: str, out_dir: Path, *, home=None, dims: int = 2) -> tuple:
+    """The renderer's own sounds (its `sounds: {name: {seconds, make(ctx, Kit)}}`), each rendered once in the sandbox
+    to out_dir/<name>.wav: ({name: path}, [problems in Claude's words])."""
+    import wave
+    out_dir = Path(out_dir)
+    box = _Sandbox(page({"duration": 1, "dims": dims} if dims == 3 else {"duration": 1}, code, home, mode="manifest"),
+                   320, 180, gl=dims == 3, home=home)
+    try:
+        err = box.error()
+        if err:
+            raise AnimationStopped("The animation renderer could not start: " + err[:400])
+        made = box.page.evaluate(_MAKE_SOUNDS) or {}
+    finally:
+        box.close()
+    files, problems = {}, []
+    for name, row in made.items():
+        if row.get("error"):
+            problems.append(f"its sound \"{name}\" could not be made: {row['error']}")
+            continue
+        if float(row.get("peak") or 0) < 0.01:
+            problems.append(f"its sound \"{name}\" came out silent")
+            continue
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{name}.wav"
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(int(row.get("rate") or 44100))
+            w.writeframes(base64.b64decode(row["pcm"]))
+        files[name] = path
+    return files, problems
+
+
+def style_sounds(code: str, style_name: str, home=None, dims: int = 2) -> dict:
+    """{sound name: "file:..." mark}: a style's own sounds, rendered once per renderer version under
+    assets/sfx/styles/<style>/<version>/ (where Studio's mixer reads "file:" marks)."""
+    if "sounds" not in str(code):
+        return {}
+    name = re.sub(r"[^a-z0-9_-]", "", str(style_name or "style").lower())[:40] or "style"
+    digest = hashlib.sha256(str(code).encode("utf-8")).hexdigest()[:10]
+    root = Path(home or HERE) / "assets"
+    folder = root / "sfx" / "styles" / name / digest
+    done = _read(folder / "sounds.json")
+    if not done:
+        files, problems = make_sounds(code, folder, home=home, dims=dims)
+        done = {"files": {k: v.name for k, v in files.items()}, "problems": problems}
+        if files or problems:
+            _write(folder / "sounds.json", done)
+    return {k: "file:" + (folder / v).relative_to(root).as_posix() for k, v in (done.get("files") or {}).items()
+            if (folder / v).is_file()}
+
+
+def manifest(code: str, home=None, dims: int = 2) -> dict:
     """What a renderer says it can draw (its Kit.renderer manifest), read in the sandbox."""
-    box = _Sandbox(page({"duration": 1}, code, home, mode="manifest"), 320, 180)
+    box = _Sandbox(page({"duration": 1, "dims": dims}, code, home, mode="manifest"), 320, 180, gl=dims == 3, home=home)
     try:
         err = box.error()
         if err:
@@ -344,7 +628,7 @@ def render_stills(spec: dict, out_dir: Path, code: str, *, home=None, prefix: st
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     W, H = int(spec.get("width", 1920)), int(spec.get("height", 1080))
-    box = _Sandbox(page(spec, code, home), W, H)
+    box = _Sandbox(page(spec, code, home), W, H, gl=dims_of(spec) == 3, home=home)
     try:
         err = box.error()
         if err:
@@ -365,19 +649,21 @@ def render_stills(spec: dict, out_dir: Path, code: str, *, home=None, prefix: st
 
 BLANK_RUN_S = 2.5                      # this long with nothing on screen, mid-film, is a fault in the renderer
 SWEEP_STEP = 0.25                      # seconds between the frames a sweep looks at
-_SPREAD = ("(t)=>{window.renderFrame(t);const c=document.getElementById('c'),o=document.createElement('canvas');"
-           "o.width=64;o.height=36;const x=o.getContext('2d');x.drawImage(c,0,0,64,36);"
+_SPREAD = ("(t)=>{window.renderFrame(t);const o=document.createElement('canvas');"
+           "o.width=64;o.height=36;const x=o.getContext('2d');"
+           "for(const id of ['c','o']){const c=document.getElementById(id);if(c)x.drawImage(c,0,0,64,36);}"
            "const d=x.getImageData(0,0,64,36).data,n=d.length/4;let s=0,q=0;"
            "for(let i=0;i<d.length;i+=4){const l=0.3*d[i]+0.59*d[i+1]+0.11*d[i+2];s+=l;q+=l*l;}"
            "const m=s/n;return Math.sqrt(Math.max(0,q/n-m*m));}")
 
 
-def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP) -> list:
+def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP, text: dict = None, marks: list = None) -> list:
     """Every step seconds of the scene drawn and measured (no pictures saved): [(t, spread)], where spread is how much
-    the frame's brightness varies (under 4: nothing on screen). The frame review before a real render."""
+    the frame's brightness varies (under 4: nothing on screen). The frame review before a real render. text: filled
+    with the smallest words drawn on screen ({px, text, t}), when given."""
     W, H = int(spec.get("width", 1920)), int(spec.get("height", 1080))
     duration = float(spec.get("duration") or 0)
-    box = _Sandbox(page(spec, code, home), W, H)
+    box = _Sandbox(page(spec, code, home), W, H, gl=dims_of(spec) == 3, home=home)
     try:
         err = box.error()
         if err:
@@ -391,6 +677,10 @@ def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP) -> list
                 raise AnimationStopped("The animation renderer stopped while drawing "
                                        + (said or str(error).splitlines()[0])[:600]) from None
             t += step
+        if text is not None:
+            text.update(box.page.evaluate("window.__textMin") or {})
+        if marks is not None:
+            marks.extend(box.page.evaluate("window.__marks") or [])
         return out
     finally:
         box.close()
@@ -425,7 +715,7 @@ def _before(scene: dict, at: float) -> str:
     return ", ".join(near[-6:]) or "nothing new"
 
 
-def render(spec: dict, out: Path, code: str, *, workers: int = 2, home=None, log=print) -> list:
+def render(spec: dict, out: Path, code: str, *, workers: int = 2, home=None, log=print, own: dict = None) -> list:
     """The scene to an mp4 (no sound) and its sound marks [(second, sound, dB)]. A frame is a pure function of its
     time, so a worker per share of the frames draws them side by side."""
     W, H = int(spec.get("width", 1920)), int(spec.get("height", 1080))
@@ -439,7 +729,7 @@ def render(spec: dict, out: Path, code: str, *, workers: int = 2, home=None, log
         for attempt in range(3):
             box = None
             try:
-                box = _Sandbox(html, W, H)
+                box = _Sandbox(html, W, H, gl=dims_of(spec) == 3, home=home)
                 err = box.error()
                 if err:
                     raise AnimationStopped("The animation renderer could not draw this video: " + err[:600])
@@ -478,11 +768,14 @@ def render(spec: dict, out: Path, code: str, *, workers: int = 2, home=None, log
         log(f"animated 2D: {n} frames in {time.time() - started:.0f} s")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return [(round(float(t), 3), sound_file(name), float(db)) for t, name, db in marks if sound_file(name)]
+    return [(round(float(t), 3), sound_file(name, own), float(db)) for t, name, db in marks if sound_file(name, own)]
 
 
-def sound_file(name: str) -> str:
-    """A sound mark as Studio's mixer names it: the kit's own recording, else one of Studio's shared cues."""
+def sound_file(name: str, own: dict = None) -> str:
+    """A sound mark as Studio's mixer names it: the style's own sound (made in code), else the kit's recording, else
+    one of Studio's shared cues."""
+    if own and name in own:
+        return own[name]
     if name in SOUND_FILES:
         return SOUNDS + name + ".mp3"
     return name if name in SHARED_CUES else ""
@@ -518,7 +811,7 @@ def _test_scene(scene: dict, spec: dict) -> dict:
     duration = max(1.0, min(8.0, float(scene.get("duration") or 6)))
     stills = [max(0.0, min(duration - 0.05, float(t))) for t in (scene.get("stills") or []) if isinstance(t, (int, float))]
     scene.update(duration=duration, stills=(stills or [duration * 0.2, duration * 0.5, duration * 0.85])[:4],
-                 width=1920, height=1080)
+                 **_size(spec))
     style = scene.setdefault("style", {})
     for k in ("sky", "floor", "blur"):
         style.setdefault(k, spec.get(k))
@@ -528,12 +821,20 @@ def _test_scene(scene: dict, spec: dict) -> dict:
     return scene
 
 
+def _size(spec: dict) -> dict:
+    """The size and kit a renderer's scenes are drawn at: the video's (1080x1920 for a Shorts channel), 2D or 3D."""
+    out = {"width": int(spec.get("width") or 1920), "height": int(spec.get("height") or 1080)}
+    if dims_of(spec) == 3:
+        out["dims"] = 3
+    return out
+
+
 def _stress_scene(scene: dict, spec: dict) -> dict:
     """The renderer's stress scene (every action and effect, up to 30 s), else its test scene, bounded."""
     raw = scene.get("stress") if isinstance(scene, dict) and isinstance(scene.get("stress"), dict) else scene
     stress = json.loads(json.dumps(raw)) if isinstance(raw, dict) else {}
     stress.pop("stress", None)
-    stress.update(duration=max(1.0, min(30.0, float(stress.get("duration") or 6))), width=1920, height=1080)
+    stress.update(duration=max(1.0, min(30.0, float(stress.get("duration") or 6))), **_size(spec))
     style = stress.setdefault("style", {})
     for k in ("sky", "floor", "blur"):
         style.setdefault(k, spec.get(k))
@@ -543,12 +844,44 @@ def _stress_scene(scene: dict, spec: dict) -> dict:
     return stress
 
 
+def split_refs(refs: list) -> tuple:
+    """(shown, held): the channel's frames Claude sees (at most 6) and the last one or two, held out to set the bar."""
+    held = refs[-2:] if len(refs) >= 7 else refs[-1:] if len(refs) >= 5 else []
+    return [r for r in refs if r not in held][:6], held
+
+
+PLATES_ON = re.compile(r"plates\s*:\s*\{[^{}]*\bdraw\s*:\s*true\b")
+
+
+def uses_plates(code: str) -> bool:
+    """The renderer composites its characters over a picture Studio draws for each place (plates: {draw: true, ...}):
+    its test shots then show a stand-in background, which the judge is told to set aside."""
+    return bool(PLATES_ON.search(str(code or "")))
+
+
 def bar_for(control) -> float:
     """The likeness a channel's renderer must reach: judged against its own frames by the same judge, a little under
     what the channel's own held-out frame scores (every channel differs; so does the judge's reading of it)."""
     if not isinstance(control, (int, float)) or control <= 0:
         return 5.5                                          # the channel's own frames score 6 to 7 with this judge
     return round(max(5.0, min(7.5, float(control) - 1.5)), 2)
+
+
+def _own_rounds(out: Path, key: str):
+    """Round files belong to the build they were written for (renderer/key): Claude's drafts for an earlier spec (a 3D
+    channel once briefed with the 2D kit) are moved aside, never reused as this build's answers. A build from before
+    the key file is known by its control.json, written before its first round."""
+    stamp = out / "key"
+    had = stamp.read_text(encoding="utf-8").strip() if stamp.is_file() else str(_read(out / "control.json").get("key") or "")
+    old = [p for p in out.iterdir() if p.name.startswith("round-")] if had != key else []
+    if old:
+        aside, n = out / f"old-{(had or 'unkeyed')[:8]}", 1
+        while aside.exists():
+            aside, n = out / f"old-{(had or 'unkeyed')[:8]}-{n}", n + 1
+        aside.mkdir()
+        for p in old:
+            p.rename(aside / p.name)
+    stamp.write_text(key, encoding="utf-8")
 
 
 def build(folder, spec: dict, channel: dict, *, see, judge, references: list, home=None, log=print,
@@ -567,13 +900,13 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
     saved = _read(out / "build.json")
     if saved.get("key") == key and saved.get("state") in ("passed", "below_bar", "failed"):
         return saved
+    _own_rounds(out, key)
     refs = [Path(r) for r in references if Path(r).is_file()]
     if len(refs) < 3:
         result = {"key": key, "state": "failed", "why": "too few reference frames to build a renderer from"}
         _write(out / "build.json", result)
         return result
-    controls = refs[-2:] if len(refs) >= 7 else refs[-1:] if len(refs) >= 5 else []
-    shown = [r for r in refs if r not in controls][:6]
+    shown, controls = split_refs(refs)
     # the bar: the same judge scores the channel's own held-out frames, on their own and once (an odd frame of the
     # channel, a host in front of a green screen, scores low; the best of two from different videos is its usual look)
     held = _read(out / "control.json")
@@ -590,11 +923,14 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
     control = max(held["scores"]) if [x for x in held.get("scores") or [] if x > 0] else None
     bar = bar_for(control)
     template = _prompt("build.txt", home)
-    guide = _prompt("AUTHORING.md", home)
-    # a neutral example (the contract, never a look to copy), and the optional fight engine in one line
-    sample = (_prompt(EXAMPLE_OWN, home) + "\n\n// ── optional: the kit's fight engine as a whole renderer (characters on "
-              "tracks, strikes and reactions, camera); a fight channel can start from it and replace its look ──\n"
-              + example(home))
+    if dims_of(spec) == 3:
+        guide, sample = _prompt3d("AUTHORING.md", home), _prompt3d("example3d.js", home)
+    else:
+        guide = _prompt("AUTHORING.md", home)
+        # a neutral example (the contract, never a look to copy), and the optional fight engine in one line
+        sample = (_prompt(EXAMPLE_OWN, home) + "\n\n// ── optional: the kit's fight engine as a whole renderer (characters "
+                  "on tracks, strikes and reactions, camera); a fight channel can start from it and replace its look ──\n"
+                  + example(home))
     deadline = time.monotonic() + minutes * 60
     rows, best, best_code, best_scene, previous, feedback, prev_stills = [], None, "", {}, "", "", []
     named = ", ".join(dict.fromkeys(str(n) for n in names or () if str(n).strip())) or "its name"
@@ -636,11 +972,15 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
                 problems.append("every test shot came out as one flat colour: nothing was drawn")
             if not problems:
                 # Studio's own frame review: the stress scene (every action and effect) drawn frame by frame
-                stress = _stress_scene(scene, spec)
+                stress, words, played = _stress_scene(scene, spec), {}, []
                 try:
-                    runs = blank_runs(sweep(stress, code, home=home), stress["duration"])
+                    runs = blank_runs(sweep(stress, code, home=home, text=words, marks=played), stress["duration"])
                 except AnimationStopped as error:
                     runs, problems = [], [f"in your stress scene: {error}"]
+                if small_text(words, stress):
+                    problems.append("in your stress scene " + small_text(words, stress))
+                problems += sound_problems(code, {m[1] for m in played}, channel, out / f"round-{r + 1}" / "sounds",
+                                           home=home, dims=dims_of(spec))
                 for a, b in runs[:3]:
                     problems.append(f"in your stress scene the picture went blank from {a:g} s to {b:g} s (after "
                                     f"{_before(stress, a)}): every action and effect must end with the picture back "
@@ -654,7 +994,8 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
             log(f"  renderer: draft {r + 1} failed: {problems[0][:160]}")
             continue
         try:
-            got = judge([str(p) for p in shown], [str(p) for p in stills])
+            got = judge([str(p) for p in shown], [str(p) for p in stills],
+                        **({"plates": True} if uses_plates(code) else {}))
         except Exception as error:                          # noqa: BLE001 - an unjudged draft is still a working one
             got = {}
             log(f"  renderer: the judge could not score draft {r + 1} ({str(error)[:120]})")
@@ -684,7 +1025,7 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
     (out / "renderer.js").write_text(best_code, encoding="utf-8")
     _write(out / "test-scene.json", _test_scene(best_scene, spec))
     try:
-        found = manifest(best_code, home)
+        found = manifest(best_code, home, dims_of(spec))
     except Exception as error:                              # noqa: BLE001 - it drew, so this is the browser's fault
         found = {}
         log(f"  renderer: its manifest could not be read ({str(error)[:120]})")
@@ -722,30 +1063,61 @@ def attach(style: dict, folder, home) -> dict:
         same = target / f"renderer-v{number}.js"
         same.write_text(code, encoding="utf-8")
     spec["renderer"] = {"file": same.relative_to(Path(home) / "assets").as_posix(), "sha256": digest,
-                        "version": int(re.sub(r"\D", "", same.stem)), "api": KIT_API, "state": built["state"],
+                        "version": int(re.sub(r"\D", "", same.stem)), "api": KIT_API, "dims": dims_of(spec),
+                        "state": built["state"],
                         "overall": built.get("overall"), "bar": built.get("bar"), "control": built.get("control"),
                         "round": built.get("round"), "manifest": built.get("manifest") or {}}
     return style
 
 
+SCORE_USD = 0.12                       # one piece of the channel's own music: two Suno takes on the creator's Kie account
+
+
+PLATES_PER_VIDEO = 4                   # places a video's casting usually designs (1 to 4)
+SCORE_PIECE_S = 35                     # the sound storyboard writes a piece of music every 25 to 45 s
+
+
+def media_usd(style: dict) -> dict:
+    """What a video in a style drawn by its own renderer pays on the creator's accounts beyond its voice, for quotes:
+    {"plates_usd": its background pictures, "music_usd_per_piece", "piece_seconds"}; {} for any other style."""
+    look = (style or {}).get("look") or {}
+    if look.get("visuals") not in PLUGINS:
+        return {}
+    found = ((look.get("animated2d") or {}).get("renderer") or {}).get("manifest") or {}
+    sound = look.get("sound") if isinstance(look.get("sound"), dict) else {}
+    scored = isinstance(sound.get("score"), dict) and sound.get("music") is not False
+    return {"plates_usd": 0.0 if (found.get("plates") or {}).get("draw") is False else round(PLATES_PER_VIDEO * PLATE_USD, 2),
+            "music_usd_per_piece": SCORE_USD if scored else 0.0, "piece_seconds": SCORE_PIECE_S}
+
+
 def cost_note(style: dict) -> str:
     """What a video in this animated style costs, as its renderer makes it: voice only when it draws every place in
-    code (plates.draw false), else the voice and one background picture a place."""
-    found = ((((style.get("look") or {}).get("animated2d") or {}).get("renderer") or {}).get("manifest") or {})
+    code (plates.draw false), else the voice and one background picture a place; plus its own music score when the
+    style has one (cr_score)."""
+    look = style.get("look") or {}
+    found = (((look.get("animated2d") or {}).get("renderer") or {}).get("manifest") or {})
+    sound = look.get("sound") if isinstance(look.get("sound"), dict) else {}
+    music = (f", plus its own music, about ${SCORE_USD:.2f} a piece (one or two a short video)"
+             if isinstance(sound.get("score"), dict) and sound.get("music") is not False else "")
     if (found.get("plates") or {}).get("draw") is False:
-        return "Your voice only: the characters and every place are drawn on this computer."
-    return ("Your voice, plus about $0.02 for each place's background picture (usually 2 to 4 a video). "
+        if dims_of(look.get("animated2d")) == 3:
+            return f"Your voice{music or ' only'}: every scene is rendered in 3D on this computer."
+        return f"Your voice{music or ' only'}: the characters and every place are drawn on this computer."
+    return (f"Your voice{music}, plus about $0.02 for each place's background picture (usually 2 to 4 a video). "
             "The characters are animated on this computer.")
 
 
 def renderer_problem(info: dict, home=None) -> str:
     """Why a style's videos can't be animated now ("" when they can), without starting a browser: for readiness."""
-    if not available(home):
-        return "This style animates its characters with Studio's animation kit, which this Studio doesn't have. Update Studio."
     spec = ((info or {}).get("look") or {}).get("animated2d") or {}
+    three = dims_of(spec) == 3
+    if not (available3d(home) if three else available(home)):
+        return ("This style renders its characters in 3D with Studio's 3D kit, which this Studio doesn't have. Update "
+                "Studio." if three else "This style animates its characters with Studio's animation kit, which this "
+                "Studio doesn't have. Update Studio.")
     saved = spec.get("renderer") if isinstance(spec.get("renderer"), dict) else None
     if not saved:
-        return ""
+        return "This style has no 3D renderer yet. Study the channel again." if three else ""
     if saved.get("state") in ("failed", "missing"):
         return ("This style's study couldn't write a working animation for the channel. Open the style's study and "
                 "choose Use pictures instead, or study the channel again.")
@@ -771,10 +1143,13 @@ def renderer_for(info: dict, home=None) -> tuple:
         if hashlib.sha256(code.encode("utf-8")).hexdigest() != saved.get("sha256"):
             raise AnimationStopped("This style's animation renderer changed on disk since it was saved. Study the style "
                                    "again; a changed renderer is never used.")
-        return code, saved.get("manifest") or manifest(code, home)
+        return code, saved.get("manifest") or manifest(code, home, dims_of(spec))
     if saved and saved.get("state") == "failed":
         raise AnimationStopped("This style's study couldn't write a working animation renderer: "
                                + str(saved.get("why") or "") + ". Switch it to pictures on the style's page.")
+    if dims_of(spec) == 3:
+        raise AnimationStopped("This style has no 3D renderer yet. Study the channel again; nothing else is drawn in "
+                               "its place.")
     code = example(home)
     return code, manifest(code, home)
 
@@ -1087,10 +1462,19 @@ def cast_and_sets(engine, script: str, job: Path, style: str, title: str = "", m
 
 
 def plate_prompt(set_: dict, spec: dict, man: dict = None) -> str:
+    """The words a place's background picture is drawn from: the renderer's own plates.prompt (its look) over the
+    place's words, framed for its kit (a 2D stage, or a backdrop 3D characters are composited over) and the video's
+    shape (a Shorts channel's plates are vertical)."""
     look = ((man or {}).get("plates") or {}).get("prompt") or spec.get("art") or "flat 2D vector animation"
-    return (f"{set_['prompt']}. A background plate for a 2D animation, in this style: {look}. "
-            "EMPTY: nobody in it, no people, no figures, no characters, no animals, no text, no logos. "
-            "Seen straight on from eye level, wide 16:9. The ground is a flat, level surface across the bottom fifth "
+    tall = int(spec.get("height") or 1080) > int(spec.get("width") or 1920)
+    shape = "tall 9:16 (vertical)" if tall else "wide 16:9"
+    empty = "EMPTY: nobody in it, no people, no figures, no characters, no animals, no text, no logos. "
+    if dims_of(spec) == 3:
+        return (f"{set_['prompt']}. A background plate that 3D characters will be composited over, in this style: "
+                f"{look}. {empty}Seen from where the characters' camera stands, {shape}, with clear ground in the lower "
+                "part of the picture for them to stand on.")
+    return (f"{set_['prompt']}. A background plate for a 2D animation, in this style: {look}. {empty}"
+            f"Seen straight on from eye level, {shape}. The ground is a flat, level surface across the bottom fifth "
             "of the picture with nothing standing on it in the middle. Simple shapes, soft depth, calm enough for "
             "characters to act in front of it.")
 
@@ -1190,6 +1574,8 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
                   .replace("[SHOTS]", ", ".join(str(s) for s in docs["shots"]) or "wide, two, close, medium")
                   .replace("[FX]", "\n".join(f"- {k}: {v}" for k, v in docs["fx"].items()) or "(none)")
                   .replace("[NOTES]", docs["notes"] or "(none)")
+                  .replace("[MEDIUM]", "3D" if dims_of(spec) == 3 else "2D").replace("[PACE]", pace_words(spec))
+                  .replace("[PLACE]", str(docs["actions"].get("place") or "{x, face: left|right}"))
                   .replace("[START]", f"{t0:.2f}").replace("[END]", f"{t1:.2f}").replace("[BEATS]", beats)
                   .replace("[PREVIOUS]", previous or "This is the opening: place everyone first.")
                   .replace("[CREATOR]", engine._extra_block() or "none"))
@@ -1199,7 +1585,7 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
     return clean_plan(_json(text), casting["cast"], casting["sets"], t0, t1, man)
 
 
-def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: list = None) -> dict:
+def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: list = None, size=None) -> dict:
     sets = {}
     for ident, s in casting["sets"].items():
         row = {k: v for k, v in s.items() if k in ("sky", "floor_colors", "prompt")}
@@ -1209,10 +1595,13 @@ def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: l
         sets[ident] = row
     style = {"figure": spec.get("figure", 0.36), "blur": spec.get("blur", 5), "outline": spec.get("outline"),
              "impact_frames": spec.get("impact_frames", True), "sky": spec.get("sky"), "floor": spec.get("floor")}
-    return {"duration": plan["duration"], "width": 1920, "height": 1080,
+    film = {"duration": plan["duration"], **_size({**spec, **({"width": size[0], "height": size[1]} if size else {})}),
             "style": {k: v for k, v in style.items() if v is not None},
             "cast": casting["cast"], "sets": sets, "shots": plan["shots"], "actions": plan["actions"], "fx": plan["fx"],
             "words": words or []}
+    if spec.get("captions"):
+        film["captions"] = True
+    return film
 
 
 def ending(plan: dict) -> str:
@@ -1262,11 +1651,13 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
     folder.mkdir(exist_ok=True)
     timeline, segments, previous = [], [], ""
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:8]
+    own = style_sounds(code, style, dims=dims_of(spec))      # the style's own effects, made in code once a version
     for index, part in enumerate(parts):
         plan = direct(engine, job, casting, spec, part, index, previous, title, man)
         previous = ending(plan)
         words = [{"w": w, "t": round(t - part[0], 3)} for _, _, _, ws in part[2] for w, t in ws]
-        film = film_spec(plan, casting, spec, plate_paths, words)
+        film = film_spec(plan, casting, spec, plate_paths, words,
+                         size=(int(getattr(engine, "VIDEO_W", 1920)), int(getattr(engine, "VIDEO_H", 1080))))
         _write(job / "animated2d" / f"film-{index:03d}.json", film)
         out = folder / f"a2d_{index:03d}_{_digest([film, code_hash])[:8]}.mp4"
         if not (out.is_file() and out.stat().st_size > 10000) or force:
@@ -1282,7 +1673,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
                     "style's page.")
             engine.step(f"Animated 2D: drawing {part[1] - part[0]:.0f} s of animation ({index + 1} of {len(parts)})")
             marks = render(film, out, code, workers=max(1, min(3, int(getattr(engine, "MOTION_WORKERS", 2)) + 1)),
-                           log=engine.log)
+                           log=engine.log, own=own)
             _write(out.with_suffix(".sfx.json"), marks)
         timeline.append(("motion", str(out), False, round(part[1] - part[0], 6)))
         segments.append((part[0], str(out), round(part[1] - part[0], 6)))
@@ -1293,6 +1684,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
     engine.step("Animated 2D: assembling the film")
     rendered = engine._render_astro_segments(timeline, job, force, white_fade=0.0, style=style)
     engine._concat_segments(rendered, job / "_visual.mp4")
+    burn_subs = burn_subs and not spec.get("captions")      # the renderer draws the channel's own captions
     engine._final_mux(job, engine._with_sound_design(job, mp3, timeline, style), srt, burn_subs,
                       add_qr=False, vignette=False, no_dust_ranges=[(0.0, total)], sub_center=False, no_sub_ranges=[])
     engine._keep_clean_visual(job, style)

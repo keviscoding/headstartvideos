@@ -20,14 +20,16 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 102         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code); older saved plans are made again
+ROUTER = 104         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: every clone is written in code unless the creator chooses Studio's ready-made pictures); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
 MEDIUM_DESIGNED = "Animated 3D characters with faces (cartoon, game or toy-like)"
 MEDIUM_FACELESS = "Faceless 3D figures in real places (reconstructions)"
 MEDIUM_OBJECTS = "3D objects, places, maps or diagrams, without people"
-MEDIUMS = (MEDIUM_DESIGNED, MEDIUM_FACELESS, MEDIUM_OBJECTS)
+# Pictures in place of 3D are only ever the creator's own choice (a 3D Shorts clone once came out as an AI-drawn town)
+MEDIUM_PICTURES = "Pictures in their 3D look, with some clips animated by AI (not real 3D)"
+MEDIUMS = (MEDIUM_DESIGNED, MEDIUM_FACELESS, MEDIUM_OBJECTS, MEDIUM_PICTURES)
 MEDIUM_GAP = ("Studio can't animate these characters in 3D yet. Your videos would be drawn pictures in their look, some "
               "of them animated by AI: close to how the channel looks, but its characters won't walk, run and act the "
               "way they do in its videos. Studio's 3D engine builds designed casts with ball heads on stick limbs; "
@@ -54,6 +56,11 @@ ANIMATION_GAP_KIND = ("Studio rigs and animates stick-figure characters, and thi
 DRAWN_2D = ("stick_figure", "drawing", "cutout", "painting")
 MOVES_ANYWAY = ("live_footage", "archival_footage", "stock_footage", "news_clip", "bodycam_cctv", "interview", "ai_video",
                 "motion_graphic", "presenter", "avatar")
+# every clone is written in code by default (the owner, 2026-10-26: "we're promising them that they can clone anything...
+# it shouldn't just resort to image video AI generation tools... remove the AI pictures route, unless they choose so")
+MADE_CODE = "Written in code: your Claude Code writes this channel's own renderer (recommended)"
+MADE_OTHER = "Instead of code: Studio's ready-made pictures (AI pictures, some AI clips) or its fixed 3D engine"
+MADES = (MADE_CODE, MADE_OTHER)
 ANIMATED_SHARE = 0.6         # of the drawn pictures' time, measured moving: their characters are animated
 ANIMATED_SURE = 0.8          # above this (or with no narrator carrying the story) Studio's guess is to animate them
 
@@ -195,6 +202,9 @@ def choose_base(profile: dict, installed) -> tuple:
     generated = fam.get("generated", 0) + fam.get("generated_motion", 0) + drawn_3d(profile)
     real = fam.get("footage", 0) + fam.get("photo", 0) + fam.get("document", 0)
     picks = []
+    if profile.get("_rendered_3d"):
+        picks.append(("stories", f"{round(fam.get('3d', 0) * 100)}% of the pictures are 3D scenes with the channel's own "
+                                 "characters, rendered in real 3D by its own renderer over a narrated story recipe"))
     if fam.get("3d", 0) >= 0.3 and designed_3d(profile):
         picks.append(("3d", f"{round(fam['3d'] * 100)}% of the pictures are 3D scenes with a designed cast, which "
                             "Studio's 3D engine builds and animates"))
@@ -697,8 +707,13 @@ def medium_question(profile) -> dict:
     fresh = {k: v for k, v in profile.items() if k not in ("_drawn_3d", "_designed_3d")}
     guess = MEDIUM_DESIGNED if drawn_3d(fresh) or designed_3d(fresh) else \
         MEDIUM_OBJECTS if isinstance(seen, dict) and float(seen.get("no_people") or 0) > 0.5 else MEDIUM_FACELESS
+    import cr_animated2d
+    rebuilt = (" Characters with faces: during the study your Claude Code writes this channel's own 3D renderer and "
+               "checks it against the channel (usually 5 to 15 more minutes of Claude usage); every video is then "
+               "rendered in real 3D and costs only its voice." if cr_animated2d.available3d() else "")
     return {"id": "medium", "ask": f"How are this channel's 3D pictures made? ({round(share * 100)}% of its pictures "
-            "are 3D.) Studio's guess is first: change it if it's wrong, because it decides how your videos are made.",
+            "are 3D.) Studio's guess is first: change it if it's wrong, because it decides how your videos are made."
+            + rebuilt,
             "options": [guess] + [m for m in MEDIUMS if m != guess]}
 
 
@@ -791,14 +806,85 @@ def _animated_route(profile, animation: str) -> dict:
             "or are animated by AI (the channel's characters move in small ways under its narrator)."}
 
 
+def coded_route(profile) -> dict:
+    """Any channel's pictures written in code, on the creator's word: its own renderer, which their Claude Code writes
+    during the study from the channel's frames (three.js when 20%+ of its pictures are 3D and the 3D kit is here, else
+    2D); {} when this Studio has neither kit."""
+    import cr_animated2d
+    three = _families(profile).get("3d", 0) >= 0.2 and cr_animated2d.available3d()
+    if not three and not cr_animated2d.available():
+        return {}
+    return {"engine": "animated3d" if three else "animated2d", "coded": True,
+            "why": "written in code: during the study your Claude Code writes this channel's own renderer ("
+                   + ("in real 3D with three.js" if three else "drawn in 2D") + ") from its frames, whatever they show "
+                   "(characters, graphics, maps, text, effects, camera), and checks its test shots against the "
+                   "channel's own frames (usually 5 to 15 more minutes of Claude usage, at most 25). Every video then "
+                   "reuses it: Claude directs it to the narration and Studio draws every frame on this computer, so a "
+                   "video costs its voice" + (" and nothing else" if three else ", plus about $0.02 for each background "
+                   "picture when its renderer asks for them")
+                   + (". Your videos are vertical Shorts with its captions, like the channel's" if vertical(profile) else "")
+                   + "."}
+
+
+def made_question(profile, other: dict) -> dict:
+    """How the videos are made, asked of every channel: written in code (Studio's recommendation, first) or, instead,
+    Studio's ready-made way for it (other), said honestly; {} where this Studio has no kit to write code on."""
+    coded = coded_route(profile)
+    if not coded:
+        return {}
+    fam = _families(profile)
+    footage = fam.get("footage", 0) + fam.get("photo", 0) + fam.get("document", 0) >= 0.3
+    instead = {"drawn": "AI pictures drawn in their 3D look, some animated by AI",
+               "designed": "Studio's designed-cast 3D engine (round-headed characters)",
+               "threed": "Studio's own 3D engine (faceless mannequin figures)"}.get(
+        other.get("engine"), "AI pictures in their look, some animated by AI"
+        + (", with real clips where the script asks for them" if footage else ""))
+    said = coded["why"][0].upper() + coded["why"][1:]
+    return {"id": "made", "ask": "How should your videos be made? Studio recommends code, first. " + said
+            + (" Its renderer draws every scene: real footage isn't part of a style written in code." if footage else "")
+            + f" Or, instead of code: {instead}. That's ready at once, but the videos won't look or move exactly like "
+            "the channel's.",
+            "options": list(MADES)}
+
+
+def vertical(profile) -> bool:
+    """A Shorts channel: most of the look's frames are portrait (measured from the frames themselves)."""
+    return float(_v(_get(profile, "format", "vertical"), 0) or 0) >= 0.5
+
+
+def rendered_3d(profile, medium: str = "") -> bool:
+    """A 3D channel whose characters Claude's own 3D renderer rebuilds (the 3D kit is installed): its 3D has people
+    with faces (cartoon, game, toy-like, designed), and the creator didn't choose pictures or a mannequin answer."""
+    if _families(profile).get("3d", 0) < 0.2 or medium in (MEDIUM_PICTURES, MEDIUM_FACELESS, MEDIUM_OBJECTS):
+        return False
+    import cr_animated2d
+    if not cr_animated2d.available3d():
+        return False
+    fresh = {k: v for k, v in profile.items() if k not in ("_drawn_3d", "_designed_3d")}
+    return medium == MEDIUM_DESIGNED or bool(designed_3d(fresh) or drawn_3d(fresh))
+
+
 def route(profile, chosen: str = "", drawn=None, told: bool = False, designed=None, by_hand: bool = False,
-          animation: str = "") -> dict:
+          animation: str = "", rendered: bool = False, pictures: bool = False) -> dict:
     """How this channel's pictures are made: {"engine": "designed" | "drawn" | "threed" | "animated2d" | "pictures", "why",
     "warning"?, "medium_gap"?}. drawn / designed: the shares decided by the creator's answer (told) or by plan_style,
     else from the profile; by_hand: a designed cast the 3D engine builds, drawn because the creator picked a picture
     recipe (no gate, a pointer to the 3D recipe); animation: the creator's answer about animated 2D characters."""
     share = _families(profile).get("3d", 0)
     fresh ={k: v for k, v in profile.items() if k not in ("_drawn_3d", "_designed_3d")}
+    if rendered:
+        art = re.split(r"[.(;]", str(_v(_get(profile, "pictures", "art_style"), "") or ""))[0].strip(" ,")[:110]
+        return {"engine": "animated3d", "why": f"{round(share * 100)}% of the pictures are 3D scenes with the channel's "
+                "own characters" + (f" ({art[0].lower() + art[1:]})" if art else "") + ". During the study your Claude "
+                "Code writes this channel's 3D renderer in code (its characters, sets, light and camera, in three.js) "
+                "and checks its test shots against the channel's own frames (usually 5 to 15 more minutes of Claude "
+                "usage, at most 25). Every video then reuses it: Claude directs the characters to the narration and "
+                "Studio renders them in real 3D on this computer, with no pictures or AI video to pay for."
+                + (" Your videos are vertical Shorts, like the channel's." if vertical(profile) else "")}
+    if pictures:
+        return {"engine": "drawn", "why": "you chose pictures: every scene is drawn as a picture in their 3D look, and "
+                "some are animated by AI. Nothing in it is real 3D, so the characters won't move the way they do in "
+                "the channel's videos."}
     if designed is None:
         designed = designed_3d(fresh)
     if drawn is None:
@@ -897,6 +983,11 @@ def _animated2d(plan: Plan, original: dict):
     animation conventions; the cast and places are designed for each video from its script."""
     import cr_animated2d
     spec = cr_animated2d.from_profile(original)
+    if vertical(original):
+        spec.update(width=1080, height=1920, captions=True)
+        plan.set("look.aspect", "9:16", area="Look", label="Format",
+                 why="the references are vertical Shorts (measured from their frames)", source="measured",
+                 show="vertical 1080x1920, captions drawn the channel's way")
     plan.set("look.visuals", cr_animated2d.VISUALS, area="Motion", label="Animated characters",
              why="the references' drawn characters walk, fight and act; Studio rigs them as puppets and animates them "
                  "in code (" + cr_animated2d.fits(original)[1] + ")", source="measured,watched",
@@ -909,6 +1000,31 @@ def _animated2d(plan: Plan, original: dict):
              why="every scene is animated in code; no AI video is paid for", source="", show="off (animated in code)")
     plan.needs = [n for n in plan.needs if n not in ("style_image", "character_image")]
     plan.needs.append("plates")
+
+
+def _animated3d(plan: Plan, original: dict):
+    """A 3D channel whose characters Claude's own 3D renderer rebuilds (cr_animated3d): the channel's conventions, its
+    video size (vertical for a Shorts channel, which also draws its captions), voice and sound only."""
+    import cr_animated2d
+    spec = cr_animated2d.from_profile(original)
+    tall = vertical(original)
+    spec.update(dims=3, width=1080 if tall else 1920, height=1920 if tall else 1080)
+    if tall:
+        spec["captions"] = True
+    plan.set("look.visuals", cr_animated2d.VISUALS3D, area="Motion", label="Rendered 3D characters",
+             why="the references are 3D scenes with the channel's own characters; your Claude Code writes the "
+                 "channel's 3D renderer during the study and Studio renders every video in real 3D",
+             source="measured,watched", show="rendered in real 3D, timed to the narration")
+    plan.set("look.animated2d", spec, area="Motion", label="How they are built",
+             why="the channel's own conventions: " + (spec["art"][:160] or "its 3D characters and sets"),
+             source="watched", show=(spec["art"][:90] or "the channel's 3D look"))
+    if tall:
+        plan.set("look.aspect", "9:16", area="Look", label="Format",
+                 why="the references are vertical Shorts (measured from their frames)", source="measured",
+                 show="vertical 1080x1920, captions drawn the channel's way")
+    plan.set("pacing.clips_per_min", 0.0, area="Motion", label="Moving pictures",
+             why="every scene is rendered in 3D; no AI video is paid for", source="", show="off (rendered in 3D)")
+    plan.needs = [n for n in plan.needs if n not in ("style_image", "character_image")]
 
 
 def _designed_cast(plan: Plan, profile: dict, base: str, original: dict):
@@ -965,6 +1081,11 @@ def _sound(plan: Plan, profile: dict):
     level = music.get("level")
     bed = music.get("bed_in_pauses_db")
     snd = {}
+    # music heard in the references whose level couldn't be measured (a Short's quiet bed under constant speech):
+    # still the channel's own score, never a stock library this Studio may not reach (@gneef's clone had no music)
+    heard = level is None and (str(_v(music, "") or "").lower() not in ("", "none", "no music")
+                               and float(music.get("share") or 0) > 0
+                               or any(g and g.lower() != "none" for g in music.get("genres") or []))
     if level == "none":
         snd.update(music=False)
         why = "the references' pauses have no music (measured)"
@@ -983,9 +1104,13 @@ def _sound(plan: Plan, profile: dict):
         rel = round(_clamp(at + 4, -38, -4), 1)
         snd.update(music=True, music_rel_db=rel, duck_db=-6.0 if level == "score" else -8.0)
         why = f"music in the pauses about {abs(bed or 0):.0f} dB under the voice (measured)"
+    elif heard:
+        rel = {"quiet": -22.0, "moderate": -16.0, "loud": -10.0}.get(str(music.get("under_voice") or ""), -18.0)
+        snd.update(music=True, music_rel_db=rel, duck_db=-6.0)
+        why = f"music heard under the voice in the references ({music.get('under_voice') or 'level not measured'})"
     else:
         why = "music level couldn't be measured; the recipe's own level is kept"
-    if level in ("score", "bed", "quiet"):
+    if level in ("score", "bed", "quiet") or heard:
         # music written for each video on the creator's Kie account, in the channel's own sound (cr_score)
         snd["score"] = {"genres": [g for g in (music.get("genres") or []) if g and g.lower() != "none"][:2],
                         "moods": [m for m in (music.get("moods") or [])][:5],
@@ -1146,11 +1271,39 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
         designed, looked = (shown, 0.0) if builds else (0.0, shown)
     else:
         designed, looked = designed_3d(profile), drawn_3d(profile)
-    by_hand = bool(designed) and bool(base) and base not in ("3d", "nocturne")
+    renders = base not in ("3d", "nocturne") and rendered_3d(profile, medium)
+    # "stories" carries Claude's renderer (the recipe the look recommends): passing it back is not a picture recipe
+    # picked by hand (a designed cast was once drawn as AI pictures because the study passed the recommended base)
+    by_hand = bool(designed) and bool(base) and base not in ("3d", "nocturne") and not (renders and base == "stories")
     if by_hand:                                   # the creator picked a picture recipe: drawn, by their choice
         designed, looked = 0.0, designed
+    rendered = not by_hand and renders
+    pictures = medium == MEDIUM_PICTURES and _families(profile).get("3d", 0) >= 0.2
+    if pictures:
+        designed, looked = 0.0, _families(profile).get("3d", 0)
+    animation = str((answers or {}).get("animation") or "")
     way = route(profile, base or "", drawn=looked, told=told, designed=designed, by_hand=by_hand,
-                animation=str((answers or {}).get("animation") or ""))
+                animation=animation, rendered=rendered, pictures=pictures)
+    # written in code unless the creator chose otherwise (or picked a 3D recipe by hand): no prediction of what Claude
+    # can't build. Studio's ready-made way (other) is what they get instead, never a silent fallback.
+    share = _families(profile).get("3d", 0)
+    drawn_instead = share >= 0.2 and not designed and bool(looked)
+    other = way if way.get("engine") not in ("animated2d", "animated3d") else \
+        route(profile, base or "", drawn=looked, told=told, designed=designed, by_hand=by_hand,
+              animation=ANIMATED_PICTURES, rendered=False, pictures=pictures or drawn_instead)
+    instead = (str((answers or {}).get("made") or "") == MADE_OTHER or medium == MEDIUM_PICTURES
+               or animation == ANIMATED_PICTURES)
+    coded = {} if base in ("3d", "nocturne") else coded_route(original)
+    offered = bool(coded)
+    if coded and instead:
+        way, rendered = other, False
+        if pictures or drawn_instead:
+            designed, looked = 0.0, share
+    elif coded:
+        way, rendered = coded, coded["engine"] == "animated3d"
+        designed, looked = 0.0, 0.0
+    if rendered:                                  # Claude's renderer draws the 3D: neither the kit's cast nor pictures
+        designed, looked = 0.0, 0.0
     if answers:
         profile = answer(profile, answers)
         if str(answers.get("host") or "").startswith("Yes, I'll upload"):
@@ -1159,6 +1312,7 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
         profile = dict(profile)
     profile["_drawn_3d"] = 0.0 if base in ("3d", "nocturne") else looked
     profile["_designed_3d"] = designed
+    profile["_rendered_3d"] = rendered
     profile["_drawn_why"] = (("you said its 3D characters have faces, which Studio's 3D engine can't make yet" if told
                               else threed_rebuildable(original)[1]) if looked else "")
     chosen, why = (base, "chosen by you") if base else choose_base(profile, styles)
@@ -1166,11 +1320,13 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
         raise ValueError(f"The {chosen} recipe isn't installed here.")
     base_style = styles[chosen]
     plan = Plan()
-    plan.animated2d = way.get("engine") == "animated2d"
+    plan.animated2d = way.get("engine") in ("animated2d", "animated3d")
     _pictures(plan, profile, chosen, base_style)
     _storyboard(plan, profile, chosen)
     _pace(plan, profile, chosen)
-    if plan.animated2d:
+    if way.get("engine") == "animated3d":
+        _animated3d(plan, profile)
+    elif plan.animated2d:
         _animated2d(plan, profile)                # as the creator answered (the picture style they chose)
     else:
         _motion(plan, profile, chosen, minutes_hint)
@@ -1188,7 +1344,8 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
             "overrides": plan.overrides, "remove": plan.remove, "settings": plan.settings,
             "needs": list(dict.fromkeys(plan.needs)), "notes": plan.notes,
             "cost": cost(plan.overrides, chosen),
-            "questions": [q for q in [medium_question(original), animation_question(original)] if q]
+            "questions": [q for q in ([made_question(original, other)] if offered else
+                                      [medium_question(original), animation_question(original)]) if q]
                          + list(original.get("questions") or [])}
 
 
@@ -1200,6 +1357,9 @@ def cost(overrides: dict, base: str) -> dict:
                                          else 0.0)
     clips = pacing.get("clips_per_min") or 0.0
     presenter = ((overrides.get("look") or {}).get("avatar") or {}).get("per_min") or 0.0
+    if ((overrides.get("look") or {}).get("visuals")) == "cr_animated3d":
+        return {"pictures_per_min": 0.0, "clips_per_min": 0.0, "presenter_s_per_min": 0.0, "usd_per_min": 0.0,
+                "note": "rendered in 3D on this computer by the channel's own renderer; voice and music are extra"}
     if ((overrides.get("look") or {}).get("visuals")) == "cr_animated2d":
         # the animation is drawn in code; a few background plates are drawn once per video
         return {"pictures_per_min": 0.0, "clips_per_min": 0.0, "presenter_s_per_min": 0.0, "usd_per_min": 0.02,

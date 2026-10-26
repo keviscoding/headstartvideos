@@ -215,6 +215,14 @@ def worker_options(home) -> dict:
     return options
 
 
+def video_size(studio, style) -> dict:
+    """The engine's VIDEO_W/VIDEO_H for a style that makes vertical Shorts (look.aspect "9:16", a 3D Shorts channel's
+    own renderer): 1080x1920. {} for every other style, which keeps the engine's 1920x1080."""
+    styles = getattr(getattr(studio, "styles", None), "STYLES", None) or {}
+    look = ((styles.get(style) or {}) if isinstance(styles, dict) else {}).get("look") or {}
+    return {"VIDEO_W": "1080", "VIDEO_H": "1920"} if look.get("aspect") == "9:16" else {}
+
+
 class VideoWorkers:
     def __init__(self, studio, home, *, popen=None, stop=None, awake=None):
         self.studio, self.home = studio, Path(home)
@@ -257,6 +265,7 @@ class VideoWorkers:
         command = [sys.executable, str(self.home / "cr_worker.py"), "--project", project_id,
                    "--", str(self.home / "app.py"), "--cr-video", run_id]
         options = worker_options(self.home)
+        options["env"].update(video_size(self.studio, spec.get("style")))
         log_path = folder / "worker.log"
         log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         with os.fdopen(log_fd, "ab") as log:

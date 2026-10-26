@@ -1714,6 +1714,8 @@ def create_app():
     cr_3d_routes.install(studio, activity, setup_status)
     import cr_style_routes
     cr_style_routes.install(studio, activity, setup_status, token=token, home=HOME)
+    import cr_style_lab
+    cr_style_lab.install(studio, token, HOME)                    # Style Lab: a style's renderer worked on in Claude Code
     import cr_ranking_routes
     cr_ranking_routes.install(studio, token=token, home=HOME)
     import cr_ranking_edit
