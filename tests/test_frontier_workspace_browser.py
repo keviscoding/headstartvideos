@@ -118,13 +118,23 @@ def workspace(browser):
 
     @app.get("/cr-voices")
     def voice_list():
+        if env.mode == "voice_ids":                            # a voice model with no list (a voice ID on Atlas Cloud)
+            return jsonify(connected=True, provider="atlas", provider_label="Atlas Cloud", model="elevenlabs/v3/text-to-speech",
+                           model_label="ElevenLabs V3", voice=env.voice, default_voice="JBFqnCBsd6RMkjVDRZzb",
+                           voices=[], groups={}, note="", previews=[])
         return jsonify(connected=True, provider="kie", provider_label="Kie.ai", model="google/gemini-3-8-flash-tts",
                        model_label="Gemini 3.8 Flash", voice=env.voice, default_voice="Kore",
-                       voices=["Bodi", "Kore", "Charon", "Sulafat"], previews=[])
+                       voices=["Bodi", "Kore", "Charon", "Sulafat"], previews=[],
+                       groups={"Bodi": "Tutor", "Kore": "Commercial voiceover", "Charon": "Call center", "Sulafat": "Tutor"},
+                       note="Kie narrates with Gemini voices. For ElevenLabs voices, add your own ElevenLabs key.")
 
     @app.post("/cr-voices/preview")
     def voice_preview():
-        return jsonify(url="/cr-voices/sample/" + request.json["voice"])
+        if env.mode == "no_free_samples" and request.json.get("confirm_paid") is not True:
+            return jsonify(needs_paid=True, voice=request.json["voice"], cost_usd=0.01,
+                           message="Free sample unavailable: make one with your Kie.ai balance (about $0.01)?")
+        return jsonify(url="/cr-voices/sample/" + request.json["voice"],
+                       paid=env.mode == "no_free_samples")
 
     @app.get("/cr-voices/sample/<name>")
     def voice_sample(name):
@@ -589,8 +599,10 @@ def test_choose_a_narration_voice_after_hearing_it(workspace):
     page.wait_for_selector("#crw-voices[open] .crw-voice-row")
     rows = page.locator(".crw-voice-row strong").all_inner_texts()
     assert rows[0] == "Kore", "the current voice comes first"
-    assert "Informative voice" in page.inner_text("#crw-voices-list"), "known voices say what they sound like"
-    assert "tiny amount" in page.inner_text("#crw-voices-note"), "paid previews are disclosed"
+    assert "Informative · Call center" in page.inner_text("#crw-voices-list"), "voices say what they sound like"
+    note = page.inner_text("#crw-voices-note")
+    assert note.startswith("Kie narrates with Gemini voices.") and "your own ElevenLabs key" in note
+    assert "free" in note and "tiny amount" not in note, "Gemini previews are ChannelRecipe's free samples"
     page.fill("#crw-voices-search", "warm")
     assert page.locator(".crw-voice-row strong").all_inner_texts() == ["Sulafat"]
     page.fill("#crw-voices-search", "")
@@ -601,6 +613,43 @@ def test_choose_a_narration_voice_after_hearing_it(workspace):
     page.wait_for_function("document.getElementById('crw-narration-name').textContent === 'Charon'")
     assert workspace.voice == "Charon"
     assert "Charon" in page.inner_text("#crw-voices-status")
+
+
+def test_a_paid_voice_sample_is_made_only_after_the_creator_says_yes_to_its_cost(workspace):
+    """channelrecipe.com's free samples couldn't be fetched: the dialog names the cost and waits for a yes, voice by
+    voice; another voice clicked meanwhile pays nothing (review of 1f91260, blocker 1)."""
+    env, page = workspace, workspace.page
+    env.mode = "no_free_samples"
+    env.open()
+    page.click("#crw-voice-open")
+    page.wait_for_selector("#crw-voices[open] .crw-voice-row")
+    page.click("button[aria-label='Preview Charon']")
+    page.wait_for_selector("[data-paid-sample='Charon']")
+    assert "Free sample unavailable: make one with your Kie.ai balance (about $0.01)?" in page.inner_text("#crw-voices-status")
+    page.click("button[aria-label='Preview Sulafat']")
+    page.wait_for_selector("[data-paid-sample='Sulafat']")
+    previews = [p["body"] for p in env.posts if p["path"] == "/cr-voices/preview"]
+    assert previews == [{"voice": "Charon"}, {"voice": "Sulafat"}], "no yes, no paid sample"
+    page.click("[data-paid-sample='Sulafat']")
+    page.wait_for_function("document.getElementById('crw-voices-audio').src.endsWith('/cr-voices/sample/Sulafat')")
+    assert [p["body"] for p in env.posts if p["path"] == "/cr-voices/preview"][-1] == {"voice": "Sulafat", "confirm_paid": True}
+
+
+def test_choose_voice_never_sends_a_connected_creator_to_setup(workspace):
+    """Alex (Studio 104): Choose voice with a voice model that has no list sent him back to the setup page. A model
+    without a list now takes a voice ID in the dialog itself."""
+    env, page = workspace, workspace.page
+    env.mode, env.voice = "voice_ids", "JBFqnCBsd6RMkjVDRZzb"
+    env.open()
+    page.click("#crw-voice-open")
+    page.wait_for_selector("#crw-voices[open] #crw-voices-id")
+    assert page.url.endswith("/") or "/cr-setup" not in page.url
+    assert "paste a voice ID" in page.inner_text("#crw-voices-note") and page.locator("#crw-voices-search").is_hidden()
+    page.fill("#crw-voices-id", "pNInz6obpgDQGcFmaJgB")
+    page.locator("#crw-voices-list button", has_text="Use").click()
+    page.wait_for_function("document.getElementById('crw-narration-name').textContent === 'pNInz6obpgDQGcFmaJgB'")
+    assert {"path": "/cr-voices/select", "body": {"voice": "pNInz6obpgDQGcFmaJgB"}} in env.posts
+    assert "/cr-setup" not in page.url
 
 
 def test_copy_diagnostics_for_support(workspace):

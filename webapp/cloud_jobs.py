@@ -84,6 +84,7 @@ def initialize():
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "cloud_jobs")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS cloud_jobs (
                 id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, slug TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL DEFAULT '', machine TEXT NOT NULL, status TEXT NOT NULL,
@@ -691,7 +692,7 @@ def make_router(access) -> APIRouter:
             raise HTTPException(400, "Send an Anthropic Messages request.")
         if not isinstance(body, dict) or not body.get("messages"):
             raise HTTPException(400, "Send an Anthropic Messages request.")
-        out = relay_response(j, body)
+        out = await run_in_threadpool(relay_response, j, body)          # it records the question: a database write
         return await out.respond() if isinstance(out, _PlainRelay) else out
 
     return router

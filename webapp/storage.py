@@ -259,6 +259,25 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
         raise _friendly_spaces_error(e) from e
 
 
+def store_private_file(local_path: str, key: str, content_type: str | None = None) -> str:
+    """Persist a local file under `key` WITHOUT public-read and return the key, for presigned_get_url and the cooks'
+    authenticated fetch (fetch_to_local). The file is streamed, never read whole (a clips bundle can be large).
+    Without Spaces (local development) it stays where it is: its /api/files path, as store_file returns."""
+    if not content_type:
+        content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
+    if not is_remote():
+        return f"/api/files/{os.path.relpath(local_path, str(ROOT))}"
+    key = (key or "").lstrip("/")
+    try:
+        with open(local_path, "rb") as body:
+            _make_client().put_object(Bucket=_spaces_creds()[2], Key=key, Body=body, ContentType=content_type)
+        print(f"[storage] Spaces ok (private) key={key!r} size={os.path.getsize(local_path)}")
+        return key
+    except Exception as e:
+        print(f"[storage] private Spaces upload failed key={key!r} {spaces_fingerprint()} err={e}")
+        raise _friendly_spaces_error(e) from e
+
+
 def probe_spaces_write() -> None:
     """Upload a tiny public object to verify credentials + public-read."""
     if not is_remote():

@@ -173,6 +173,7 @@ def initialize():
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "style_watch")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS style_watch_jobs (
                 id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, video_id TEXT NOT NULL,
                 start_s INTEGER NOT NULL, end_s INTEGER NOT NULL, prompt_version INTEGER NOT NULL,

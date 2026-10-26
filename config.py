@@ -133,8 +133,32 @@ COOK_ABANDON_QUEUED_SECONDS = max(300, int(os.getenv("COOK_ABANDON_QUEUED_SECOND
 COOK_SWEEP_INTERVAL_SECONDS = max(15, int(os.getenv("COOK_SWEEP_INTERVAL_SECONDS", "60")))
 # Cap parallel Atlas TTS calls on the web dyno (each can take 30–90s).
 MAX_CONCURRENT_VOICEOVERS = max(1, int(os.getenv("MAX_CONCURRENT_VOICEOVERS", "2")))
-# Threadpool size for sync FastAPI routes (voiceover/thumbnail/Gemini).
+# Worker threads for asyncio.to_thread (the background loops, progress streams, the Stripe webhook).
 WEB_THREADPOOL_SIZE = max(8, int(os.getenv("WEB_THREADPOOL_SIZE", "32")))
+
+
+def _container_memory_bytes() -> int:
+    """This container's memory limit (cgroup v2, then v1), else the machine's RAM, else 2 GB."""
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw = f.read().strip()
+        except OSError:
+            continue
+        if raw.isdigit() and 0 < int(raw) < (1 << 50):         # "max" or a huge number means no limit
+            return int(raw)
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, ValueError, OSError):
+        return 2 << 30
+
+
+# Threads for FastAPI's plain-def routes and sync dependencies (AnyIO's limiter, 40 by default and shared by the whole
+# site). Nearly every route is a plain def so the event loop never blocks; a thread waiting on Stripe, Fly or the
+# database costs little memory, so the limit follows the container's memory: 1 per 20 MB, between 40 and 200 (a 2 GB
+# container gets about 100).
+WEB_SYNC_THREADS = max(8, int(os.getenv("WEB_SYNC_THREADS", "0") or 0)
+                       or min(200, max(40, _container_memory_bytes() // (20 << 20))))
 # Fallback queue ETA when we lack recent render_events (minutes).
 EST_MINUTES_PER_COOK = float(os.getenv("EST_MINUTES_PER_COOK", "7"))
 # Per-user concurrent video cooks (plan-based). Pack stills don't count.

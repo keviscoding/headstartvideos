@@ -94,7 +94,7 @@ def run_cook_job(
     from webapp.database import (
         create_video,
         log_render_event,
-        refund_credits,
+        refund_cook_credits_once,
         update_cook_job,
     )
     from webapp import storage
@@ -557,14 +557,11 @@ def run_cook_job(
             "error_class": err_class,
         })
         if user_id and job.get("credit_deducted"):
-            amt = job_credits_charged(job)
-            refund_credits(user_id, amt)
+            # At most once: a cancel on the website (either container) or the sweeper may have refunded it already.
+            amt = refund_cook_credits_once(job_id)
             job["credit_deducted"] = False
-            try:
-                update_cook_job(job_id, credit_deducted=False)
-            except Exception:
-                pass
-            print(f"[cook] Auto-refunded {amt} credit(s) for user {user_id} after build failure")
+            if amt:
+                print(f"[cook] Auto-refunded {amt} credit(s) for user {user_id} after build failure")
 
 
 def _run_storyboard_pack_job(
@@ -1209,7 +1206,7 @@ def _run_storyboard_animate_job(
     """On-site Seedance I2V for each pack still, then stitch + captions → MP4."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    from webapp.database import update_cook_job, refund_credits
+    from webapp.database import update_cook_job, refund_cook_credits_once
     from webapp import storage
     import config
 
@@ -1260,10 +1257,11 @@ def _run_storyboard_animate_job(
                 print(f"[sb-animate] persist progress failed: {e}")
 
     def _refund():
+        # At most once (the cook's credit_deducted flag): a cancel on the website may have refunded it already.
         if user_id and credits_charged > 0:
             try:
-                refund_credits(int(user_id), credits_charged)
-                print(f"[sb-animate] refunded {credits_charged} credit(s) for {job_id}")
+                if refund_cook_credits_once(job_id):
+                    print(f"[sb-animate] refunded {credits_charged} credit(s) for {job_id}")
             except Exception as re:
                 print(f"[sb-animate] refund failed: {re}")
 
@@ -1547,7 +1545,7 @@ def _run_ranking_countdown_job(
     cancel_check: Callable[[], bool] | None = None,
 ) -> None:
     """Download ranking clips from Spaces, assemble 9:16 short on Fly/web."""
-    from webapp.database import update_cook_job, create_video, refund_credits
+    from webapp.database import update_cook_job, create_video, refund_cook_credits_once
     from webapp import storage
     from webapp.storage import fetch_to_local
     from core.ranking_pipeline import run_ranking_pipeline
@@ -1609,9 +1607,10 @@ def _run_ranking_countdown_job(
                 print(f"[ranking] persist progress failed: {e}")
 
     def _refund():
+        # At most once (the cook's credit_deducted flag): a cancel on the website may have refunded it already.
         if credits_charged > 0 and user_id:
             try:
-                refund_credits(int(user_id), credits_charged)
+                refund_cook_credits_once(job_id)
             except Exception as e:
                 print(f"[ranking] refund failed: {e}")
 

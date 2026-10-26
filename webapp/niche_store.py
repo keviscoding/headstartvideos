@@ -17,6 +17,7 @@ class NicheStore:
     def ensure_schema():
         pk = "BIGSERIAL PRIMARY KEY" if db.IS_PG else "INTEGER PRIMARY KEY AUTOINCREMENT"
         with db._conn() as conn:
+            db.schema_lock(conn, "niche_store")         # every container and niche machine runs this: one at a time
             cur = conn.cursor()
             for sql in [
                 """CREATE TABLE IF NOT EXISTS niche_discovery_lease (

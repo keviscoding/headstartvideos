@@ -50,6 +50,7 @@ def initialize() -> None:
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "lifecycle_email")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS lifecycle_emails (
                 user_id INTEGER NOT NULL, kind TEXT NOT NULL, sent_at DOUBLE PRECISION NOT NULL,
                 PRIMARY KEY (user_id, kind))""")

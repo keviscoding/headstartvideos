@@ -215,14 +215,166 @@ def profile(task=None):
         return {**images, "tasks": ["images"]}
     voice = settings.get("narration") or {}
     if task == "narration" and voice.get("provider") in ("kie", "atlas", "original"):
-        return {**voice, "tasks": ["narration"]} if voice["provider"] != "original" else {}
+        return kie_narration({**voice, "tasks": ["narration"]}) if voice["provider"] != "original" else {}
     cfg = settings.get("media_hub") or {}
     if task == "images" and "images" not in cfg.get("tasks", []):
         # Repair only a Kie image provider already selected by the native engine.
         # A Kie voice key alone must never replace another image provider.
         if _native_images and _native_images() == "kie":
             return {"provider": "kie", "tasks": ["images"], "model": os.getenv("KIE_IMAGE_MODEL", "google/nano-banana")}
+    if task == "narration" and cfg.get("provider") == "kie" and "narration" in cfg.get("tasks", []):
+        return kie_narration(cfg)
     return cfg if cfg.get("provider") in ("kie", "atlas") else {}
+
+
+# ── Kie narrates with Gemini voices only ─────────────────────────────────────────────────────────────────────────────
+# Kie's ElevenLabs voices kept failing: a customer's video stopped on "Internal Error" three times in a row
+# (2026-10-25), they failed all day on 2026-10-19, and Choose voice had no list for them. The owner, 2026-10-26: "We
+# should never use that turbo model again ... Kie will just make them use the Gemini voice models ... If they don't
+# want that, they can just add their ElevenLabs key." So Kie's narration is its Gemini TTS, and ElevenLabs (any model)
+# is the creator's own key (Setup's ElevenLabs card, its voice library in Choose voice). A saved Kie ElevenLabs choice
+# (its model, or an ElevenLabs voice name or id) is read as the Gemini voice of the same kind, never a stop.
+KIE_NOTE = "Kie narrates with Gemini voices. For ElevenLabs voices, add your own ElevenLabs key."
+GEMINI_STAND_INS = {"male": "Charon", "female": "Kore"}          # Charon: informative; Kore: firm
+# Women's voices among Kie's ElevenLabs list and ElevenLabs' own default voices (names and ids); every other voice,
+# Kie's default James included, was a man's or unknown, and is read by Charon.
+ELEVEN_FEMALE = frozenset(v.casefold() for v in (
+    "Arabella", "Z3R5wn05IrDiVCyEkUrK", "Kuon", "B8gJV1IhpuegLxdpXFOE", "Monika Sogam", "2zRM7PkgwBPiau2jvVXc",
+    "Adeline", "5l5f8iK3YPeGga21rQIX", "Eve", "BZgkqPqms7Kj9ulSkVzn", "Anika", "Sm1seazb4gs7RSlUVw7c",
+    "Laura", "FGY2WhTYpPnrIDTdsKH5", "Brittney", "kPzsL2i3teMYv0FxEYQ6", "Bella", "hpp4J3VqNfWAUOO0d1Us",
+    "Hope", "uYXf8XasLslADfZ2MB4u", "iCrDUkL56s3C8sCRl7wb", "Cassidy", "56AoDkrOh6qfVPDXZ7Pt",
+    "Addison", "eR40ATw9ArzDf9h3v7t7", "Jessica Anne Bogart", "g6xIsTj2HwM6VR4iXFCw", "flHkNRp1BlvT73UL6gyz",
+    "Lucy", "lcMyyd2HUfFzxdCaC4Ta", "Tiffany", "6aDn1KB0hjpdcocrUkmq", "Emma", "pPdl9cQBQq4p6mRkZy2Z",
+    "Aria", "TC0Zp7WVFzhA8zpTlRqV", "9BWtsMINqrJLrRacOk9x", "Ana Rita", "wJqPPQ618aTW29mptyoc",
+    "Rachel", "Rachel M", "aD6riP1btT197c6dACmy", "21m00Tcm4TlvDq8ikWAM", "Jean", "eVItLK1UvXctxuaRV2Oq",
+    "Britney", "esy0r39YPLQjOczyOib8", "Allison", "1wGbFxmAM3Fgw63G1zZJ", "Sarah", "EXAVITQu4vr4xnSDxMaL",
+    "Charlotte", "XB0fDUnXU5powFXDhCwa", "Alice", "Xb7hH8MSUJpSbSDYk0k2", "Matilda", "XrExE9yKIg1WjnnlVkGX",
+    "Jessica", "cgSgspJ2msm6clMCkdW9", "Lily", "pFZP5JQG7iQjIQuC4Bku", "Serena", "pMsXgVXv3BLzUgSXRplE"))
+# names for the note, for the ids Kie's ElevenLabs list used most (its default first)
+ELEVEN_NAMES = {"EkK5I93UQWFDigLMpZcX": "James", "TX3LPaxmHKxFdv7VOQHJ": "Liam", "N2lVS1w4EtoT3dr4eOWO": "Callum",
+                "nPczCjzI2devNBz1zQrb": "Brian", "pNInz6obpgDQGcFmaJgB": "Adam", "JBFqnCBsd6RMkjVDRZzb": "George",
+                "FGY2WhTYpPnrIDTdsKH5": "Laura", "TC0Zp7WVFzhA8zpTlRqV": "Aria", "hpp4J3VqNfWAUOO0d1Us": "Bella",
+                "21m00Tcm4TlvDq8ikWAM": "Rachel", "EXAVITQu4vr4xnSDxMaL": "Sarah"}
+
+
+def retired_kie_model(model) -> bool:
+    """A Kie narration model Studio no longer uses: any of Kie's ElevenLabs ones."""
+    return str(model or "").strip().lower().startswith("elevenlabs/")
+
+
+def gemini_stand_in(voice) -> str:
+    """The Gemini voice that reads for a saved ElevenLabs voice: a woman's for a woman's, otherwise a man's."""
+    v = str(voice or "").strip().casefold()
+    return GEMINI_STAND_INS["female" if v and (v in ELEVEN_FEMALE or ELEVEN_NAMES.get(str(voice), "").casefold()
+                                                in ELEVEN_FEMALE) else "male"]
+
+
+def kie_narration(cfg: dict) -> dict:
+    """A Kie narration choice as Kie can read it today: a Gemini model and one of its voices. A saved Kie ElevenLabs
+    model, or a voice Gemini doesn't have, becomes the Gemini default of the same kind, with `moved_from` saying what
+    it was (for the one plain note). Any other account is returned as it is."""
+    if not isinstance(cfg, dict) or cfg.get("provider") != "kie":
+        return cfg
+    old_model = str(cfg.get("model") or "")
+    try:
+        model = narration_model("kie", cfg.get("model"))
+    except AccountStop:
+        return cfg                                   # an unknown model: the checks that read it say so, as before
+    names = model.get("voice_names") or []
+    voice = str(cfg.get("voice") or "").strip()
+    retired = retired_kie_model(old_model)
+    same = next((n for n in names if n.casefold() == voice.casefold()), "") if voice else ""   # " kore": Kore
+    if not retired:
+        if not voice or not names:
+            return cfg
+        if same:                                     # a Gemini name (padded or in another case): nothing moved, no note
+            return cfg if same == cfg.get("voice") else {**cfg, "voice": same}
+    new_voice = same or (gemini_stand_in(voice) if voice or retired else model["default_voice"])
+    out = {**cfg, "voice": new_voice}
+    if "model" in cfg or retired:
+        out["model"] = model["id"]
+    out["moved_from"] = {"model": old_model, "voice": voice,
+                         "label": ELEVEN_NAMES.get(voice) or (voice if voice and len(voice) < 16 else "")}
+    return out
+
+
+def kie_move_note(cfg: dict) -> str:
+    """The one plain line for a voice choice kie_narration moved to Gemini, "" when nothing moved."""
+    moved = (cfg or {}).get("moved_from") if isinstance(cfg, dict) else None
+    if not moved:
+        return ""
+    was = f"Your voice {moved['label']}" if moved.get("label") else "Your ElevenLabs voice"
+    return (f"Kie now narrates with Gemini voices only: its ElevenLabs voices kept failing. {was} is now read by "
+            f"the Gemini voice {cfg.get('voice')}. Pick another in Create, Choose voice. For ElevenLabs voices, add "
+            "your own ElevenLabs key in Setup & accounts.")
+
+
+def _replace_settings(data: dict) -> None:
+    """.cr-connection.json written whole or not at all: a private temp file in the same folder, then os.replace,
+    tried again for a moment when Windows briefly holds the file (PermissionError [WinError 5]). A failed replace
+    leaves the old file exactly as it was and no temp file behind."""
+    import tempfile
+    path = Path(cr_bridge.SETTINGS)
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".", suffix=".tmp")
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())                  # on disk before the rename: a power cut never leaves it empty
+        try:
+            temporary.chmod(0o600)
+        except OSError:
+            pass
+        for attempt in range(8):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == 7:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def migrate_saved_voice() -> str:
+    """Once, at Studio's start: a Kie narration choice saved as ElevenLabs (narration or the media account's voice)
+    is saved as its Gemini voice, and the note is kept until the creator picks a voice. Returns the note, or "".
+
+    Only those two entries' voice and model change and voice_notice is added: every other key of .cr-connection.json
+    is written back exactly as read (read and written under the settings lock, the file replaced atomically). Running
+    it again changes nothing. A file it can't replace stays as it was, and profile() reads the move the same way.
+    A video being made never sees the switch: Studio updates and restarts only while idle, so a video either finished
+    its narration before (audio.mp3 and subs.srt are kept and nothing is made again) or narrates wholly after."""
+    lock = getattr(cr_bridge, "_lock", None) or threading.RLock()
+    with lock:
+        try:
+            settings = json.loads(Path(cr_bridge.SETTINGS).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ""                                          # no settings yet (or unreadable): nothing to move
+        if not isinstance(settings, dict):
+            return ""
+        note, changed = "", False
+        for key in ("narration", "media_hub"):
+            saved = settings.get(key)
+            if not isinstance(saved, dict) or saved.get("provider") != "kie":
+                continue
+            if key == "media_hub" and "narration" not in (saved.get("tasks") or []):
+                continue
+            moved = kie_narration(saved)
+            if not moved.get("moved_from"):
+                continue
+            settings[key] = {k: v for k, v in moved.items() if k != "moved_from"}
+            note, changed = note or kie_move_note(moved), True
+        if not changed:
+            return ""
+        settings["voice_notice"] = note
+        try:
+            _replace_settings(settings)
+        except OSError:
+            return ""                                          # kept as it was; profile() still reads it as Gemini
+        return note
 
 
 def active(task):
@@ -242,6 +394,8 @@ def account(task=None):
 
 def narration_model(provider, model=None):
     info = PROVIDERS[provider]
+    if provider == "kie" and retired_kie_model(model):
+        model = None                                 # Kie's ElevenLabs voices: its Gemini voices now (kie_narration)
     model = model or info["models"]["narration"]
     for choice in info.get("narration_models", []):
         if choice["id"] == model:
@@ -453,6 +607,18 @@ def _run_once(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     provider, key = account(task)
     dest = Path(dest)
     model = model or PROVIDERS[provider]["models"][task]
+    if provider == "kie" and task == "narration" and retired_kie_model(model):
+        # never a new task on Kie's ElevenLabs (kie_narration): the same words, read by the Gemini voice of its kind
+        inputs = inputs if isinstance(inputs, dict) else {}
+        words = str(inputs.get("text") or " ".join(str((t or {}).get("text") or "")
+                                                   for t in inputs.get("dialogue_turns") or [])).strip()
+        if not words:
+            raise AccountStop("There is no narration text to record.")
+        gemini = narration_model("kie")
+        voice = inputs.get("voice") or next((s.get("voice_name") for s in inputs.get("speakers") or []), "")
+        inputs = narration_input(words, voice if voice in (gemini.get("voice_names") or []) else gemini_stand_in(voice),
+                                 gemini["id"])
+        model = gemini["id"]
     payload = {"model": model, "input": inputs} if provider == "kie" else {"model": model, **inputs}
     # Scope to wallet as well as provider, without recording the key itself.
     def logical(value):
@@ -775,13 +941,15 @@ def job_voice(job) -> dict:
         return {}
     if choice.get("provider") == "kie":
         try:
-            model = narration_model("kie", choice.get("model"))
+            moved = kie_narration({"provider": "kie", "model": choice.get("model"), "voice": choice.get("voice")})
+            model = narration_model("kie", moved.get("model"))
         except AccountStop:
             return {}
-        voice = str(choice.get("voice") or model["default_voice"])
+        voice = str(moved.get("voice") or model["default_voice"])
         if model.get("voice_names") and voice not in model["voice_names"]:
             voice = model["default_voice"]
-        return {"provider": "kie", "model": model["id"], "voice": voice, "tasks": ["narration"]}
+        return {"provider": "kie", "model": model["id"], "voice": voice, "tasks": ["narration"],
+                **({"moved_from": moved["moved_from"]} if moved.get("moved_from") else {})}
     if choice.get("provider") == "original":
         return {"provider": "original"}
     if choice.get("provider") == "own" and str(choice.get("file") or "").strip():
@@ -808,8 +976,16 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
     voice = cfg.get("voice") or model["default_voice"]
     if model.get("voice_names") and voice not in model["voice_names"]:
         raise AccountStop("Choose a voice name supported by your narration model in Setup & accounts.")
+    if cfg.get("moved_from"):
+        engine.log(kie_move_note(cfg))               # a saved Kie ElevenLabs voice, read by its Gemini voice
     folder = Path(mp3).parent / (Path(mp3).stem + "-hub-voice")
     folder.mkdir(parents=True, exist_ok=True)
+    if any(p.suffix != "." + model["format"] for p in folder.glob("part-*.*") if p.suffix in (".mp3", ".wav")):
+        # a Resume after the voice model changed (Kie's ElevenLabs became Gemini): every part is made again in this
+        # voice, so a video never mixes two voices; the old parts stay unused (each part is a short paid task)
+        engine.log(f"Narration: its earlier voice parts were made with another voice model; all of it is read again by "
+                   f"{voice} so the video keeps one voice (each part is a small charge on your "
+                   f"{PROVIDERS[provider]['label']} balance).")
     parts = []
     _routing.narration = chosen                      # run() pays with the chosen account, not Setup's narration one
     try:

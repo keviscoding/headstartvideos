@@ -551,6 +551,12 @@ def create_app():
     from flask import Response, g, has_request_context, jsonify, request
     cr_bridge.install(studio.mv)
     cr_media.install(studio.mv)
+    try:
+        if cr_media.migrate_saved_voice():          # a saved Kie ElevenLabs voice: its Gemini voice now, with a note
+            print("Narration: Kie now reads with Gemini voices; your saved ElevenLabs voice was moved (see Setup).",
+                  flush=True)
+    except Exception:                                # noqa: BLE001 - profile() reads it the same way meanwhile
+        pass
     cr_capabilities.install(studio)
     cr_render.install(studio.mv)
     import cr_style_delivery
@@ -717,6 +723,10 @@ def create_app():
                                "model": voice.get("model") or (cr_media.PROVIDERS[voice["provider"]]["models"]["narration"] if voice else ""),
                                "connected": bool(cr_media.active("narration") and voice and
                                                  os.getenv(cr_media.PROVIDERS[voice["provider"]]["key_env"]))}
+        if voice.get("provider") == "kie":
+            # Kie reads with Gemini voices only; a saved ElevenLabs voice moved to Gemini says so once, plainly
+            checks["narration"]["note"] = (cfg.get("voice_notice") or cr_media.kie_move_note(voice)
+                                           or cr_media.KIE_NOTE)
         if not checks["narration"]["connected"] and override.get("provider") == "original" and \
                 os.getenv("ELEVENLABS_API_KEY", "").strip():
             # Setup's ElevenLabs card: narration on the creator's own ElevenLabs key is connected (it read as not
@@ -1179,11 +1189,14 @@ def create_app():
                 cfg.pop("narration", None)
             else:
                 cfg["narration"] = {"provider": "original"}
+            cfg.pop("voice_notice", None)
             cr_bridge.save_settings(cfg)
             return jsonify(saved=True, message="Narration uses " +
                            ("the model account choices above." if provider == "inherit" else "your individual voice settings."))
         info = cr_media.PROVIDERS[provider]
         model_id = str(data.get("model", "")).strip() or info["models"]["narration"]
+        if provider == "kie" and cr_media.retired_kie_model(model_id):
+            model_id = info["models"]["narration"]      # Kie reads with Gemini voices only (cr_media.kie_narration)
         try:
             model = cr_media.narration_model(provider, model_id)
         except cr_media.AccountStop as error:
@@ -1201,12 +1214,14 @@ def create_app():
             if supplied:
                 write_provider(info["key_env"], key)
             cfg["narration"] = {"provider": provider, "model": model_id, "voice": voice or model["default_voice"]}
+            cfg.pop("voice_notice", None)
             cr_bridge.save_settings(cfg)
         except cr_media.AccountStop as error:
             return jsonify(error=str(error)), 400
         except Exception:
             return jsonify(error="This voice account could not be connected. Check its API key and access, then try again."), 400
         return jsonify(saved=True, message="Narration now uses " + info["label"] +
+                       (" with Gemini voices" if provider == "kie" else "") +
                        ". Voice generation is charged to that account. Your writing and other media choices are unchanged.")
 
     # The creator's own ElevenLabs account for narration: Eleven v4, ElevenLabs' newest and most expressive model,
@@ -1265,6 +1280,9 @@ def create_app():
     # play a short preview (made once with the creator's own account, then
     # kept), and choose one without touching keys or accounts.
     VOICE_SAMPLE = "Every great story starts with a single question. Here is what really happened."
+    # one short line on Kie's Gemini TTS (billed by the token, from $0.35 a million; a credit is about $0.005): an upper
+    # bound the creator is shown before a paid sample is made
+    PREVIEW_COST_USD = 0.01
     VOICE_NAME = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
 
     def narration_in_use():
@@ -1278,7 +1296,29 @@ def create_app():
 
     def preview_file(model, voice):
         folder = HOME / "output" / ".cr-voice-previews" / model["id"].replace("/", "_")
-        return folder / (voice + "." + model.get("format", "mp3"))
+        made = folder / (voice + "." + model.get("format", "mp3"))
+        hosted = folder / (voice + ".mp3")                      # ChannelRecipe's own sample, kept on first play
+        return hosted if not made.is_file() and hosted.is_file() else made
+
+    def hosted_sample(model, voice, target):
+        """ChannelRecipe's free sample of a Gemini voice (channelrecipe.com/static/voices, the same files the account's
+        voice_samples list): fetched once and kept, so a preview costs nothing on the creator's balance."""
+        import requests
+        if not model["id"].startswith("google/gemini-"):
+            return None
+        base = str(cr_bridge.load_settings().get("url") or "https://channelrecipe.com").rstrip("/")
+        if not base.startswith("https://"):
+            return None
+        try:
+            r = requests.get(f"{base}/static/voices/{model['id'].split('/')[-1]}/{voice}.mp3", timeout=(8, 30))
+        except requests.RequestException:
+            return None
+        if r.status_code != 200 or len(r.content) < 2000 or not r.headers.get("content-type", "").startswith("audio"):
+            return None
+        out = target.with_suffix(".mp3")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(r.content)
+        return out
 
     @studio.app.get("/cr-voices")
     def voices_list():
@@ -1290,10 +1330,14 @@ def create_app():
             return jsonify(connected=False, voices=[], previews=[])
         model, provider = current["model"], current["provider"]
         names = list(model.get("voice_names") or [])
+        note = ""
+        if provider == "kie":
+            note = (cr_bridge.load_settings().get("voice_notice") or cr_media.kie_move_note(cr_media.profile("narration"))
+                    or cr_media.KIE_NOTE)
         return jsonify(connected=True, provider=provider, provider_label=cr_media.PROVIDERS[provider]["label"],
                        model=model["id"], model_label=model.get("label", model["id"]), voice=current["voice"],
-                       default_voice=model["default_voice"], voices=names,
-                       previews=[name for name in names if preview_file(model, name).is_file()])
+                       default_voice=model["default_voice"], voices=names, groups=model.get("voice_groups") or {},
+                       note=note, previews=[name for name in names if preview_file(model, name).is_file()])
 
     @studio.app.post("/cr-voices/select")
     def voices_select():
@@ -1316,12 +1360,18 @@ def create_app():
             cfg["media_hub"] = {**cfg["media_hub"], "voice": voice}
         else:
             return jsonify(error="Choose your narration account in Setup & accounts first."), 409
+        if current["provider"] == "kie":
+            for slot in ("narration", "media_hub"):             # a voice moved from ElevenLabs: its model goes too
+                if (cfg.get(slot) or {}).get("provider") == "kie" and cr_media.retired_kie_model(cfg[slot].get("model")):
+                    cfg[slot] = {**cfg[slot], "model": current["model"]["id"]}
+        cfg.pop("voice_notice", None)                           # the creator chose: the note has done its job
         cr_bridge.save_settings(cfg)
         return jsonify(saved=True, voice=voice, message="Your next videos use the " + voice + " voice.")
 
     @studio.app.post("/cr-voices/preview")
     def voices_preview():
-        voice = str((request.get_json(silent=True) or {}).get("voice", "")).strip()
+        data = request.get_json(silent=True) or {}
+        voice = str(data.get("voice", "")).strip()
         try:
             current = narration_in_use()
             if not current:
@@ -1330,17 +1380,25 @@ def create_app():
             names = model.get("voice_names") or []
             if not VOICE_NAME.fullmatch(voice) or (names and voice not in names):
                 return jsonify(error="Choose a voice from the list."), 400
-            target = preview_file(model, voice)
-            if not target.is_file():
+            target, paid = preview_file(model, voice), False
+            if not target.is_file() and hosted_sample(model, voice, target) is None:
+                # No free sample of this voice could be fetched (channelrecipe.com unreachable or slow): a short line
+                # with the creator's own balance, only after they say yes to its cost, then kept and replayed free.
+                label = cr_media.PROVIDERS[current["provider"]]["label"]
+                if data.get("confirm_paid") is not True:
+                    return jsonify(needs_paid=True, voice=voice, cost_usd=PREVIEW_COST_USD,
+                                   message=f"Free sample unavailable: make one with your {label} balance (about "
+                                           f"${PREVIEW_COST_USD:.2f})?")
                 target.parent.mkdir(parents=True, exist_ok=True)
                 cr_media.run("narration", cr_media.narration_input(VOICE_SAMPLE, voice, model["id"]), target,
                              model=model["id"], log=studio.app.logger.info, timeout_s=180)
+                paid = True
         except cr_media.AccountStop as error:
             return jsonify(error=str(error)), 409
         except Exception:
             studio.app.logger.exception("Voice preview failed")
             return jsonify(error="That preview couldn't be made right now. Try again in a moment."), 502
-        return jsonify(url="/cr-voices/sample/" + voice)
+        return jsonify(url="/cr-voices/sample/" + voice, paid=paid)
 
     @studio.app.get("/cr-voices/sample/<voice>")
     def voices_sample(voice):
@@ -1376,6 +1434,13 @@ def create_app():
             return jsonify(error="Choose a model account, its tasks and a complete API key."), 400
         if not cfg.get("key") or not cfg.get("costs_accepted"):
             return jsonify(error="Connect CR and review the spending agreement first."), 409
+        if provider == "kie" and "narration" in tasks and voice:
+            names = cr_media.narration_model("kie").get("voice_names") or []
+            voice = next((n for n in names if n.casefold() == voice.casefold()), "")
+            if not voice:
+                return jsonify(error="Kie narrates with Gemini voices: type one of its voice names, such as Charon or "
+                                     "Kore, or leave the voice blank. For ElevenLabs voices, add your own ElevenLabs "
+                                     "key."), 400
         try:
             info = cr_media.PROVIDERS[provider]
             if data.get("use_for_brain") is True:
@@ -1389,6 +1454,7 @@ def create_app():
                 check_media_account(provider, key)
             write_provider(info["key_env"], key)
             cfg["media_hub"] = {"provider": provider, "tasks": sorted(set(tasks)), "voice": voice or info["default_voice"]}
+            cfg.pop("voice_notice", None)
             if data.get("use_for_brain") is True:
                 cfg["brain_mode"]="channelrecipe"
                 cfg.pop("setup_proof",None)

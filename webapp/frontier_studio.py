@@ -16,9 +16,11 @@ import re
 import secrets
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Literal
 
+import httpx
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -34,15 +36,15 @@ from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.105"
+VERSION = "5.3-admin.106"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.105.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.106.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104", "5.3-admin.105")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104", "5.3-admin.105", "5.3-admin.106")
 # Releases that may also START or RESUME a video: every release from MIN_SUPPORTED_RELEASE to the newest. A new release
 # never forces an update (2026-10-24: with "the newest two", five releases in one night made creators stop their work
 # to update, twice). Raise the minimum only on purpose, when older Studios can no longer work with this server, and say
@@ -52,7 +54,10 @@ SUPPORTED_RELEASES = APPROVED_RELEASES[APPROVED_RELEASES.index(MIN_SUPPORTED_REL
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 BRANDED_WORKFLOW_VERSION = "channelrecipe-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-NATIVE_STAGE_LIMIT = 2
+# Claude stages one project may run at once. The 3D engine directs and reviews three sections side by side; at 2 the third
+# waited for a slot (about 20 of a customer's 116-minute 2-minute 3D video, 2026-10-25). Studios up to 105 cap
+# themselves at 2, so raising this changes nothing for them; Studio 106 asks for 3.
+NATIVE_STAGE_LIMIT = 3
 # A Studio update reads the release in many byte ranges with one link, and storage is in San Francisco: from Europe
 # a slow connection outlived a 10-minute link and every retry was refused ("the update keeps getting interrupted").
 DOWNLOAD_LINK_SECONDS = 3600
@@ -1241,6 +1246,32 @@ MEDIA_UPLOAD_PATHS = ("/api/file-stream-upload", "/api/file-base64-upload")
 MEDIA_UPLOAD_PARALLEL, MEDIA_UPLOAD_MAX_BYTES = 4, 200 * 1024 * 1024
 
 
+# One HTTP client for every relayed download in this process (one per event loop: a client belongs to the loop it
+# runs on). Built per relay, each one made a fresh TLS context on the event loop (about 9 ms: twenty parallel fetches
+# held the loop 0.2 s) and a new connection to Kie's host; shared, both are reused. Closed when the server stops.
+_relay_clients: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def relay_client():
+    """The shared HTTP client for relayed downloads from Kie's file host (tests swap in a stand-in transport)."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    client = _relay_clients.get(loop)
+    if client is None or client.is_closed:
+        client = _relay_clients[loop] = httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0, pool=10.0),
+            limits=httpx.Limits(max_connections=256, max_keepalive_connections=32))
+    return client
+
+
+async def close_relay_client() -> None:
+    """At shutdown: close this event loop's shared relay client (its connections to Kie's host)."""
+    import asyncio
+    client = _relay_clients.pop(asyncio.get_running_loop(), None)
+    if client is not None:
+        await client.aclose()
+
+
 def studio_access(session_user):
     """FastAPI dependency: a Studio plan, by web session or by the Studio's account key."""
     def access(request: Request):
@@ -1427,57 +1458,70 @@ def make_router(session_user, *, prefix="/api/frontier"):
     # a creator's provider cut every connection to aiquickdraw.com during the handshake while this site worked
     # (local_runtime/cr_relay.py). Only Kie's file hosts, only for a Studio account, at most MEDIA_RELAY_PARALLEL at a
     # time per account and MEDIA_RELAY_MAX_BYTES a file.
+    #
+    # Streamed with async httpx, so a relay holds no worker thread: not while it waits for one of its account's slots
+    # (up to a minute), not while Kie's host connects and answers, not while a file trickles through. With a thread per
+    # relay (requests), one Studio fetching twenty files at once held twenty of the threads every plain-def route on
+    # the site shares.
     MEDIA_RELAY_SUFFIXES = ("aiquickdraw.com", "redpandaai.co")
     MEDIA_RELAY_PARALLEL, MEDIA_RELAY_MAX_BYTES = 6, 600 * 1024 * 1024
     relay_slots: dict = {}
     relay_lock = threading.Lock()
 
     @router.get("/media-relay")
-    def media_relay(request: Request, url: str = "", user=Depends(access)):
+    async def media_relay(request: Request, url: str = "", user=Depends(access)):
+        import asyncio
         from urllib.parse import urlsplit
         parts = urlsplit(url)
         host = (parts.hostname or "").lower()
         if (parts.scheme != "https" or parts.port not in (None, 443) or parts.username or parts.password
                 or not any(host == s or host.endswith("." + s) for s in MEDIA_RELAY_SUFFIXES)):
             raise HTTPException(400, "Only Kie's generated files can be fetched this way.")
-        with relay_lock:
-            slot = relay_slots.setdefault(user["id"], threading.BoundedSemaphore(MEDIA_RELAY_PARALLEL))
-        if not slot.acquire(timeout=60):
-            raise HTTPException(429, "Too many files at once. Try again in a moment.")
-        headers = {"User-Agent": "ChannelRecipe-Studio-relay"}
+        slot = relay_slots.setdefault(user["id"], asyncio.Semaphore(MEDIA_RELAY_PARALLEL))
+        try:
+            await asyncio.wait_for(slot.acquire(), timeout=60)
+        except asyncio.TimeoutError:
+            raise HTTPException(429, "Too many files at once. Try again in a moment.") from None
+        # the file's own bytes (identity): its length and byte ranges are passed on as Kie's host states them
+        headers = {"User-Agent": "ChannelRecipe-Studio-relay", "Accept-Encoding": "identity"}
         wanted = request.headers.get("range") or ""
         if re.fullmatch(r"bytes=\d+-\d*", wanted):
             headers["Range"] = wanted
+        client = relay_client()
+        upstream = None
         try:
-            upstream = requests.get(url, headers=headers, stream=True, timeout=(10, 120), allow_redirects=False)
-        except requests.RequestException:
+            upstream = await client.send(client.build_request("GET", url, headers=headers), stream=True,
+                                         follow_redirects=False)
+            if upstream.status_code not in (200, 206):
+                raise HTTPException(502 if upstream.status_code >= 500 else 404,
+                                    f"Kie's file host answered {upstream.status_code} for this file.")
+            size = int(upstream.headers.get("Content-Length") or 0)
+            if size > MEDIA_RELAY_MAX_BYTES:
+                raise HTTPException(413, "This file is larger than the relay's limit.")
+        except BaseException as error:
+            if upstream is not None:
+                await upstream.aclose()
             slot.release()
-            raise HTTPException(502, "Kie's file host didn't answer. Try again shortly.")
-        if upstream.status_code not in (200, 206):
-            upstream.close()
-            slot.release()
-            raise HTTPException(502 if upstream.status_code >= 500 else 404,
-                                f"Kie's file host answered {upstream.status_code} for this file.")
-        size = int(upstream.headers.get("Content-Length") or 0)
-        if size > MEDIA_RELAY_MAX_BYTES:
-            upstream.close()
-            slot.release()
-            raise HTTPException(413, "This file is larger than the relay's limit.")
+            if isinstance(error, httpx.HTTPError):
+                raise HTTPException(502, "Kie's file host didn't answer. Try again shortly.") from None
+            raise
         out = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        # a host that encodes anyway: the decoded file goes out, so its encoded length can't
+        encoded = upstream.headers.get("Content-Encoding", "identity").lower() != "identity"
         for name in ("Content-Length", "Content-Range", "Content-Type", "Accept-Ranges"):
-            if upstream.headers.get(name):
+            if upstream.headers.get(name) and not (encoded and name == "Content-Length"):
                 out[name] = upstream.headers[name]
 
-        def chunks():
+        async def chunks():
             sent = 0
             try:
-                for chunk in upstream.iter_content(1 << 20):
+                async for chunk in upstream.aiter_bytes(1 << 20):
                     sent += len(chunk)
                     if sent > MEDIA_RELAY_MAX_BYTES:
                         break
                     yield chunk
             finally:
-                upstream.close()
+                await upstream.aclose()                         # the connection goes back to the shared client
                 slot.release()
         return StreamingResponse(chunks(), status_code=upstream.status_code, headers=out,
                                  media_type=upstream.headers.get("Content-Type") or "application/octet-stream")
