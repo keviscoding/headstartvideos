@@ -766,8 +766,13 @@ def test_voice_picker_lists_previews_once_and_saves_the_choice(runtime, timeline
         Path(dest).write_bytes(b"ID3 sample")
 
     monkeypatch.setattr(cr_studio.cr_media, "run", run)
+    import requests
+
+    def unreachable(*a, **k):                                  # channelrecipe.com's free sample can't be reached
+        raise requests.ConnectionError("offline")
+    monkeypatch.setattr(requests, "get", unreachable)
     first = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"})
-    assert first.status_code == 200 and first.json["url"] == "/cr-voices/sample/Charon"
+    assert first.status_code == 200 and first.json["url"] == "/cr-voices/sample/Charon" and first.json["paid"] is True
     assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"}).status_code == 200
     assert made == [("narration", "Charon")], "each voice's sample is paid for once"
     sample = r.client.get("/cr-voices/sample/Charon", headers=r.headers)
@@ -782,6 +787,70 @@ def test_voice_picker_lists_previews_once_and_saves_the_choice(runtime, timeline
     assert r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Kore"}).status_code == 409
     original = timeline.spawned.pop()
     original.target(*original.args)
+
+
+def test_voice_previews_use_channelrecipes_free_sample_first(runtime, monkeypatch):
+    """Kie narrates with Gemini voices (owner, 2026-10-26). Each of its 70 voices has a free sample on
+    channelrecipe.com: a preview fetches it once and keeps it, and the creator's Kie balance is never used for it."""
+    r = runtime
+    r.cfg["media_hub"] = {"provider": "kie", "tasks": ["narration"], "voice": "Kore"}
+    monkeypatch.setattr(cr_studio.cr_media, "profile", lambda task=None: dict(r.cfg["media_hub"]) if task == "narration" else {})
+    monkeypatch.setattr(cr_studio.cr_media, "active", lambda task: task == "narration")
+    monkeypatch.setattr(cr_studio.cr_media, "run", lambda *a, **k: pytest.fail("a free sample is never paid for"))
+    import requests
+    fetched = []
+
+    def get(url, **kwargs):
+        fetched.append(url)
+        return SimpleNamespace(status_code=200, content=b"ID3" + b"x" * 4000, headers={"content-type": "audio/mpeg"})
+    monkeypatch.setattr(requests, "get", get)
+    listed = r.client.get("/cr-voices", headers=r.headers).json
+    assert len(listed["voices"]) == 70 and listed["groups"]["Charon"] == "Call center"
+    assert listed["note"].startswith("Kie narrates with Gemini voices.") and "your own ElevenLabs key" in listed["note"]
+    first = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Puck"})
+    assert first.status_code == 200 and first.json == {"url": "/cr-voices/sample/Puck", "paid": False}
+    assert fetched == ["https://channelrecipe.com/static/voices/gemini-3-8-flash-tts/Puck.mp3"]
+    r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Puck"})
+    assert len(fetched) == 1, "kept after the first play"
+    sample = r.client.get("/cr-voices/sample/Puck", headers=r.headers)
+    assert sample.status_code == 200 and sample.data.startswith(b"ID3") and sample.mimetype == "audio/mpeg"
+    assert "Puck" in r.client.get("/cr-voices", headers=r.headers).json["previews"]
+
+
+def test_kie_narration_is_gemini_in_setup_and_choose_voice(runtime, monkeypatch):
+    """Kie narrates with Gemini voices only (owner, 2026-10-26). Setup says so; a moved ElevenLabs voice says so once,
+    until the creator picks a voice; saves never keep a Kie ElevenLabs model or voice."""
+    import cr_media
+    r = runtime
+    monkeypatch.setenv("KIE_API_KEY", "k" * 30)
+    r.cfg.update(narration={"provider": "kie", "model": "elevenlabs/text-to-speech-turbo-2-5", "voice": "EkK5I93UQWFDigLMpZcX"})
+    real = cr_media.kie_narration
+    monkeypatch.setattr(cr_studio.cr_media, "profile",
+                        lambda task=None: real({**r.cfg["narration"], "tasks": ["narration"]}) if task == "narration" else {})
+    monkeypatch.setattr(cr_studio.cr_media, "active", lambda task: task == "narration")
+    monkeypatch.setattr(cr_studio.cr_network, "status", lambda *a, **k: {})
+    monkeypatch.setattr(cr_studio, "channelrecipe_answers", lambda *a: True)
+    status = r.client.get("/cr-status", headers=r.headers).json["narration"]
+    assert status["voice"] == "Charon" and status["model"] == "google/gemini-3-8-flash-tts"
+    assert status["note"].startswith("Kie now narrates with Gemini voices only") and "James" in status["note"]
+    listed = r.client.get("/cr-voices", headers=r.headers).json
+    assert listed["voice"] == "Charon" and len(listed["voices"]) == 70 and "James" in listed["note"]
+    chosen = r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Puck"})
+    assert chosen.status_code == 200 and "voice_notice" not in r.cfg
+    assert r.cfg["narration"] == {"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "Puck"}
+    assert r.client.get("/cr-status", headers=r.headers).json["narration"]["note"] == cr_media.KIE_NOTE
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: SimpleNamespace(status_code=200, json=lambda: {"code": 200, "data": 10}))
+    # an old setup page (or Claude Code) asking for the Turbo model gets Gemini; an ElevenLabs id is refused plainly
+    saved = r.client.post("/cr-voice", headers=r.headers, json={"provider": "kie", "model": "elevenlabs/text-to-speech-turbo-2-5"})
+    assert saved.status_code == 200 and "Gemini voices" in saved.json["message"]
+    assert r.cfg["narration"] == {"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "Kore"}
+    refused = r.client.post("/cr-hub", headers=r.headers, json={"provider": "kie", "key": "k" * 30, "tasks": ["narration"],
+                                                                "voice": "EkK5I93UQWFDigLMpZcX"})
+    assert refused.status_code == 400 and "Kie narrates with Gemini voices" in refused.json["error"]
+    assert r.client.post("/cr-hub", headers=r.headers, json={"provider": "kie", "key": "k" * 30, "tasks": ["narration"],
+                                                             "voice": "charon"}).status_code == 200
+    assert r.cfg["media_hub"]["voice"] == "Charon"
 
 
 def test_copy_diagnostics_explains_setup_without_secrets(runtime):

@@ -80,7 +80,6 @@ def test_selected_account_missing_key_does_not_fall_back_to_another_ready_provid
 
 @pytest.mark.parametrize("values,expected", [
     ({"narration": {"provider": "kie", "model": "unsupported"}}, "supported voice model"),
-    ({"narration": {"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "Unknown"}}, "supported by your narration"),
     ({"costs_accepted": False, "narration": {"provider": "kie"}}, "spending agreement"),
 ])
 def test_invalid_voice_and_missing_spending_agreement_stay_unavailable(studio, monkeypatch, values, expected):
@@ -89,6 +88,17 @@ def test_invalid_voice_and_missing_spending_agreement_stay_unavailable(studio, m
     result = studio.features.capabilities()
     assert not result["base"]["voice"]["ok"]
     assert expected in result["base"]["voice"]["why"]
+
+
+@pytest.mark.parametrize("narration", [
+    {"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "Unknown"},
+    {"provider": "kie", "model": "elevenlabs/text-to-speech-turbo-2-5", "voice": "EkK5I93UQWFDigLMpZcX"}])
+def test_a_voice_kie_no_longer_has_is_read_by_its_gemini_stand_in(studio, monkeypatch, narration):
+    """Kie narrates with Gemini voices only (owner, 2026-10-26): a saved voice or model Kie's Gemini doesn't have
+    (an ElevenLabs one, from before) is read by the Gemini voice of its kind, never a blocked Create."""
+    monkeypatch.setenv("KIE_API_KEY", "kie-test-key")
+    settings(narration=narration)
+    assert studio.features.capabilities()["base"]["voice"]["ok"]
 
 
 def test_original_narration_and_unselected_media_preserve_native_capabilities(studio, monkeypatch):

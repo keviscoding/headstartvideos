@@ -556,8 +556,8 @@ def install(studio, activity, *, token, home=None):
             for key, (voice, words) in GEMINI_VOICES.items():
                 rows.append({"id": key, "label": f"Gemini voice through Kie ({words})", "ready": kie and not kie_empty,
                              "note": ("Your Kie balance ran out: top it up first." if kie_empty else
-                                      "The same Kie account, a different voice service: it often works while Kie's "
-                                      "ElevenLabs voices are down." if kie else "Needs a Kie.ai key in Setup & accounts.")})
+                                      f"The same Kie account, read by the Gemini voice {voice}." if kie
+                                      else "Needs a Kie.ai key in Setup & accounts.")})
         rows.append({"id": "elevenlabs", "label": "Your own ElevenLabs account", "ready": eleven,
                      "note": "Skips Kie: ElevenLabs reads it directly, charged to your ElevenLabs plan." if eleven
                      else "Add your ElevenLabs key in Setup & accounts first (paste it there, never in a chat).",

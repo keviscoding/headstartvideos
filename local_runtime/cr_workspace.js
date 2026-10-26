@@ -886,7 +886,7 @@
       const [catalog,setup]=await Promise.all([api('/cr-workspace/catalog'),api('/cr-status?cached=1')]);state.catalog=catalog;state.setup=setup;
       if(setup.cached)api('/cr-status').then(fresh=>{state.setup=fresh;gate();autoVerify();checkForUpdate();}).catch(()=>{});
       text('crw-release',setup.local_version?`Studio ${setup.local_version.replace(/^5\.3-admin\./,'')}`:'');
-      const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label||providerName(narration.provider),narration.model_label||friendlyModel(narration.model)].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');
+      const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label||providerName(narration.provider),narration.model_label||friendlyModel(narration.model)].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');text('crw-narration-note',narration.note||'');hide('crw-narration-note',!narration.note);
       const initial=findRecipe(boot.preset?.style||draft.recipe)||findRecipe('documentary')||rows()[0]; if(!initial)throw new Error('No visual recipes are installed. Update this studio from your ChannelRecipe account.');
       if(boot.preset?.features)state.featureDrafts[initial.name]=boot.preset.features;
       selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();checkForUpdate();autoVerify();refreshCloud();
@@ -954,15 +954,28 @@
   const VOICE_STYLES = {Zephyr:'Bright',Puck:'Upbeat',Charon:'Informative',Kore:'Firm',Fenrir:'Excitable',Leda:'Youthful',Orus:'Firm',Aoede:'Breezy',Callirrhoe:'Easy-going',Autonoe:'Bright',Enceladus:'Breathy',Iapetus:'Clear',Umbriel:'Easy-going',Algieba:'Smooth',Despina:'Smooth',Erinome:'Clear',Algenib:'Gravelly',Rasalgethi:'Informative',Laomedeia:'Upbeat',Achernar:'Soft',Alnilam:'Firm',Schedar:'Even',Gacrux:'Mature',Pulcherrima:'Forward',Achird:'Friendly',Zubenelgenubi:'Casual',Vindemiatrix:'Gentle',Sadachbia:'Lively',Sadaltager:'Knowledgeable',Sulafat:'Warm'};
   const voices = {data: null, previews: new Set(), playing: null};
   function sharedSample(name) {const samples = state.setup?.account?.voice_samples?.[voices.data?.model] || {}; return samples[name] || '';}
+  // What a voice sounds like: its tone (the classic Gemini voices) and the use case Kie files it under.
+  const voiceAbout = name => [VOICE_STYLES[name], voices.data?.groups?.[name]].filter(Boolean).join(' · ');
+  // A voice model with no list to browse (a voice ID on that account): typed here, never a trip to Setup.
+  function renderVoiceId() {
+    const list = $('crw-voices-list'), row = el('div', 'crw-voice-row'), input = el('input');
+    list.replaceChildren(); input.type = 'text'; input.maxLength = 100; input.id = 'crw-voices-id';
+    input.placeholder = 'Paste a voice ID, or leave it for ' + (voices.data.default_voice || 'the default voice');
+    input.setAttribute('aria-label', 'Voice ID'); input.value = voices.data.voice || '';
+    const use = el('button', 'crw-primary-button', 'Use'); use.type = 'button';
+    use.addEventListener('click', () => chooseVoice(input.value.trim() || voices.data.default_voice, use));
+    row.append(input, use); list.append(row);
+  }
   function renderVoices() {
     const list = $('crw-voices-list'), query = $('crw-voices-search').value.trim().toLowerCase(), data = voices.data;
+    if (!data.voices.length) {renderVoiceId(); return;}
     list.replaceChildren();
-    const names = data.voices.filter(name => !query || name.toLowerCase().includes(query) || (VOICE_STYLES[name] || '').toLowerCase().includes(query));
+    const names = data.voices.filter(name => !query || name.toLowerCase().includes(query) || voiceAbout(name).toLowerCase().includes(query));
     const ordered = [data.voice, ...names.filter(name => name !== data.voice && VOICE_STYLES[name]), ...names.filter(name => name !== data.voice && !VOICE_STYLES[name])].filter(name => names.includes(name));
     for (const name of ordered) {
       const row = el('div', 'crw-voice-row' + (name === data.voice ? ' is-current' : '')); row.setAttribute('role', 'listitem');
       const play = el('button', 'crw-secondary-button crw-voice-play', '▶'); play.type = 'button'; play.setAttribute('aria-label', 'Preview ' + name); play.addEventListener('click', () => previewVoice(name, play));
-      const copy = el('div'); copy.append(el('strong', '', name), el('span', '', VOICE_STYLES[name] ? VOICE_STYLES[name] + ' voice' : 'Gemini voice'));
+      const copy = el('div'); copy.append(el('strong', '', name), el('span', '', voiceAbout(name) || 'Gemini voice'));
       row.append(play, copy);
       if (name === data.voice) row.append(el('span', 'crw-voice-badge', 'Selected'));
       else {const use = el('button', 'crw-primary-button', 'Use'); use.type = 'button'; use.addEventListener('click', () => chooseVoice(name, use)); row.append(use);}
@@ -1013,7 +1026,7 @@
     text('crw-voices-status', ''); $('crw-voices-search').value = '';
     try {voices.data = await api('/cr-voices?style=' + encodeURIComponent(state.selected?.name || ''));} catch (e) {error(e.message); return;}
     if (!voices.data.connected) {error('Connect a voice account in Setup & accounts first.'); return;}
-    $('crw-voices-sources').hidden = !voices.data.library;
+    $('crw-voices-sources').hidden = !voices.data.library; $('crw-voices-search').hidden = false;
     if (voices.data.library) {
       if (!voices.data.style) {error('Choose a recipe first, then its voice.'); return;}
       text('crw-voices-sub', `ElevenLabs · for ${state.selected?.label || state.selected?.name || 'this recipe'}`);
@@ -1021,20 +1034,25 @@
       library.source = 'mine'; chooseGroup('[data-voice-source]', 'voiceSource', 'mine');
       $('crw-voices').showModal(); $('crw-voices-search').focus(); await loadLibrary(); return;
     }
-    if (!voices.data.voices.length) {location.href = '/cr-setup'; return;}
     voices.previews = new Set(voices.data.previews || []);
-    text('crw-voices-sub', `${voices.data.model_label} on ${voices.data.provider_label} · ${voices.data.voices.length} voices`);
+    const listed = voices.data.voices.length, gemini = /^google\/gemini-/.test(voices.data.model || '');
+    $('crw-voices-search').hidden = !listed;
+    text('crw-voices-sub', `${voices.data.model_label} on ${voices.data.provider_label}` + (listed ? ` · ${listed} voices` : ''));
     const shared = Object.keys(state.setup?.account?.voice_samples?.[voices.data.model] || {}).length;
-    text('crw-voices-note', shared ? 'Press ▶ to hear a voice.' : `Press ▶ to hear a voice. The first play of each voice makes a short sample with your ${voices.data.provider_label} account (a tiny amount of your balance); after that it replays free.`);
-    renderVoices(); $('crw-voices').showModal(); $('crw-voices-search').focus();
+    const hear = !listed ? `This voice model has no list to browse: paste a voice ID from your ${voices.data.provider_label} account.`
+      : shared || gemini ? 'Press ▶ to hear a voice (free: ChannelRecipe\'s own sample of each voice).'
+      : `Press ▶ to hear a voice. The first play of each voice makes a short sample with your ${voices.data.provider_label} account (a tiny amount of your balance); after that it replays free.`;
+    text('crw-voices-note', [voices.data.note, hear].filter(Boolean).join(' '));
+    renderVoices(); $('crw-voices').showModal(); (listed ? $('crw-voices-search') : $('crw-voices-id'))?.focus();
   }
   async function previewVoice(name, button) {
     const audio = $('crw-voices-audio');
     if (voices.playing === name && !audio.paused) {audio.pause(); return;}
     let url = sharedSample(name) || (voices.previews.has(name) ? '/cr-voices/sample/' + encodeURIComponent(name) : '');
     if (!url) {
-      button.classList.add('is-loading'); button.disabled = true; text('crw-voices-status', `Making a short ${name} sample…`);
-      try {url = (await api('/cr-voices/preview', {method: 'POST', body: {voice: name}})).url; voices.previews.add(name); text('crw-voices-status', '');}
+      button.classList.add('is-loading'); button.disabled = true; text('crw-voices-status', `Getting a short ${name} sample…`);
+      try {const made = await api('/cr-voices/preview', {method: 'POST', body: {voice: name}}); url = made.url; voices.previews.add(name);
+        text('crw-voices-status', made.paid ? `Made a short ${name} sample with your ${voices.data.provider_label} balance (a tiny amount); it replays free from now on.` : '');}
       catch (e) {text('crw-voices-status', e.message); return;}
       finally {button.classList.remove('is-loading'); button.disabled = false;}
     }
