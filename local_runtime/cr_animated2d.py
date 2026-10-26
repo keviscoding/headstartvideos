@@ -314,6 +314,31 @@ def check_code(code: str, names=()) -> list:
     return problems
 
 
+# Words a renderer writes on the frame (or the 3D overlay), measured where they are drawn: the smallest font size on
+# screen in pixels, with the transform applied (a customer's cloned graphics had "nearly every overlay too small to
+# read at video size"). Words drawn into textures are not measured here.
+TEXT_METER = ("window.__textMin=null;window.__t=0;(function(){const P=CanvasRenderingContext2D.prototype;"
+              "for(const k of ['fillText','strokeText']){const f=P[k];P[k]=function(s){try{const c=this.canvas;"
+              "if(c&&(c.id==='c'||c.id==='o')&&String(s).trim()){const m=/(\\d+(?:\\.\\d+)?)px/.exec(this.font||'');"
+              "if(m){const t=this.getTransform();const px=parseFloat(m[1])*Math.sqrt(Math.abs(t.a*t.d-t.b*t.c));"
+              "if(px>0&&(!window.__textMin||px<window.__textMin.px))window.__textMin={px:Math.round(px*10)/10,"
+              "text:String(s).slice(0,40),t:window.__t};}}}catch(e){}return f.apply(this,arguments);};}})();")
+MIN_TEXT = 0.026                       # of the frame's short side: 28 px at 1080, the least a phone viewer can read
+
+
+def small_text(found: dict, spec: dict) -> str:
+    """What to tell Claude when its smallest words on screen are too small to read ("" when they read), from the
+    sweep's text measurement."""
+    if not isinstance(found, dict) or not found.get("px"):
+        return ""
+    need = round(MIN_TEXT * min(int(spec.get("width") or 1920), int(spec.get("height") or 1080)))
+    if float(found["px"]) >= need:
+        return ""
+    return (f"\"{found.get('text', '')}\" is drawn {found['px']:g} px tall at {float(found.get('t') or 0):g} s: too small "
+            f"to read at video size on a phone. Make every word on screen at least {need} px (labels, numbers, notes, "
+            "captions), or leave it out")
+
+
 def page(spec: dict, code: str, home=None, mode: str = "render") -> str:
     """The sandboxed page: the kit, the renderer (its own script, so its errors are its own) and the bootstrap."""
     if dims_of(spec) == 3:
@@ -335,7 +360,7 @@ def page(spec: dict, code: str, home=None, mode: str = "render") -> str:
             "const scene=%s;await kitLoad(scene);"
             "const ctx=document.getElementById('c').getContext('2d',{willReadFrequently:true});"
             "const R=Kit._renderer;const state=R.prepare?await R.prepare(scene,Kit):null;"
-            "window.renderFrame=(t)=>{try{ctx.save();R.frame(ctx,t,state,Kit);ctx.restore();}"
+            "window.renderFrame=(t)=>{try{window.__t=t;ctx.save();R.frame(ctx,t,state,Kit);ctx.restore();}"
             "catch(e){window.__err='at '+t.toFixed(2)+' s: '+String(e&&e.stack||e).slice(0,1500);throw e;}};"
             "window.__marks=Kit._marks;window.__ready=true;}"
             "catch(e){window.__err=String(e&&e.stack||e).slice(0,2000);window.__ready=true;}})();"
@@ -344,7 +369,7 @@ def page(spec: dict, code: str, home=None, mode: str = "render") -> str:
             f"<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">"
             "<style>html,body{margin:0;background:#000;overflow:hidden}</style></head>"
             f"<body><canvas id=c width={int(spec.get('width', 1920))} height={int(spec.get('height', 1080))}></canvas>"
-            f"<script>{catch}</script><script>{_safe_script(kit_js(home))}</script>"
+            f"<script>{catch}</script><script>{TEXT_METER}</script><script>{_safe_script(kit_js(home))}</script>"
             # the renderer in a scope of its own: its names never collide with the kit's (a renderer's own POSES
             # once stopped it loading); its line 1 stays line 1
             f"<script>(function(){{{_safe_script(code)}\n}})();</script>"
@@ -377,7 +402,7 @@ def _page3d(spec: dict, code: str, home=None, mode: str = "render") -> str:
             "window.__manifest=Kit.manifest();"
             "if(!%s){const scene=%s;await kitLoad(scene);"
             "const view=kitView(%d,%d);const R=Kit._renderer;const state=R.prepare?await R.prepare(scene,Kit):null;"
-            "window.renderFrame=(t)=>{try{view.overlay.clearRect(0,0,view.width,view.height);R.frame(view,t,state,Kit);}"
+            "window.renderFrame=(t)=>{try{window.__t=t;view.overlay.clearRect(0,0,view.width,view.height);R.frame(view,t,state,Kit);}"
             "catch(e){window.__err='at '+t.toFixed(2)+' s: '+String(e&&e.stack||e).slice(0,1500);throw e;}};"
             "window.__marks=Kit._marks;}window.__ready=true;}"
             "catch(e){if(!window.__err)window.__err=String(e&&e.stack||e).slice(0,2000);window.__ready=true;}"
@@ -387,7 +412,7 @@ def _page3d(spec: dict, code: str, home=None, mode: str = "render") -> str:
             f"<script type=\"importmap\">{imports}</script>"
             "<style>html,body{margin:0;background:#000;overflow:hidden}canvas{position:absolute;left:0;top:0}</style>"
             f"</head><body><canvas id=c width={W} height={H}></canvas><canvas id=o width={W} height={H}></canvas>"
-            f"<script>{catch}</script>"
+            f"<script>{catch}</script><script>{TEXT_METER}</script>"
             f"<script type=\"module\" src=\"{KIT_ORIGIN}/kit/core3d.js\"></script>"
             f"<script type=\"module\">{_safe_script(code)}\n</script>"
             f"<script type=\"module\">{boot}</script></body></html>")
@@ -508,9 +533,10 @@ _SPREAD = ("(t)=>{window.renderFrame(t);const o=document.createElement('canvas')
            "const m=s/n;return Math.sqrt(Math.max(0,q/n-m*m));}")
 
 
-def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP) -> list:
+def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP, text: dict = None) -> list:
     """Every step seconds of the scene drawn and measured (no pictures saved): [(t, spread)], where spread is how much
-    the frame's brightness varies (under 4: nothing on screen). The frame review before a real render."""
+    the frame's brightness varies (under 4: nothing on screen). The frame review before a real render. text: filled
+    with the smallest words drawn on screen ({px, text, t}), when given."""
     W, H = int(spec.get("width", 1920)), int(spec.get("height", 1080))
     duration = float(spec.get("duration") or 0)
     box = _Sandbox(page(spec, code, home), W, H, gl=dims_of(spec) == 3, home=home)
@@ -527,6 +553,8 @@ def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP) -> list
                 raise AnimationStopped("The animation renderer stopped while drawing "
                                        + (said or str(error).splitlines()[0])[:600]) from None
             t += step
+        if text is not None:
+            text.update(box.page.evaluate("window.__textMin") or {})
         return out
     finally:
         box.close()
@@ -806,11 +834,13 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
                 problems.append("every test shot came out as one flat colour: nothing was drawn")
             if not problems:
                 # Studio's own frame review: the stress scene (every action and effect) drawn frame by frame
-                stress = _stress_scene(scene, spec)
+                stress, words = _stress_scene(scene, spec), {}
                 try:
-                    runs = blank_runs(sweep(stress, code, home=home), stress["duration"])
+                    runs = blank_runs(sweep(stress, code, home=home, text=words), stress["duration"])
                 except AnimationStopped as error:
                     runs, problems = [], [f"in your stress scene: {error}"]
+                if small_text(words, stress):
+                    problems.append("in your stress scene " + small_text(words, stress))
                 for a, b in runs[:3]:
                     problems.append(f"in your stress scene the picture went blank from {a:g} s to {b:g} s (after "
                                     f"{_before(stress, a)}): every action and effect must end with the picture back "

@@ -133,3 +133,26 @@ def test_a_renderer_that_keeps_state_between_frames_or_draws_2d_code_is_refused(
     shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=1))
     assert not shown["ok"] and any("fillRect" in p for p in shown["problems"]), "the first gneef study's mistake"
     assert json.loads((folder / "lab.json").read_text())["history"][-1]["ok"] is False
+
+
+def test_words_too_small_to_read_at_video_size_are_a_problem_claude_fixes(home3d, monkeypatch):
+    """A customer's cloned style: "nearly every overlay is too small to read at video size". Words a renderer writes on
+    screen are measured where they are drawn, and too small ones are a problem to fix before saving."""
+    monkeypatch.setattr(a2d, "available3d", lambda home=None: True)
+    _style(home3d)
+    folder = Path(lab.start(home3d, "cr_clone_box")["workspace"])
+    (folder / "scene.json").write_text(json.dumps({"duration": 3, "cast": {}, "sets": {"s": {}}, "captions": True,
+                                                   "shots": [{"start": 0, "set": "s"}], "stills": [1.0],
+                                                   "words": [{"w": "hello", "t": 0.2}]}))
+    tiny = BOX.replace("Kit.caption(view.overlay, Kit.wordsAt(t, 1));",
+                       "Kit.caption(view.overlay, Kit.wordsAt(t, 1)); view.overlay.font = '9px Arial'; "
+                       "view.overlay.fillText('source: NASA', 20, 40);")
+    (folder / "renderer.js").write_text(tiny)
+    shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=1))
+    assert not shown["ok"] and shown["smallest_text"]["text"] == "source: NASA"
+    assert any("too small to read" in p and "at least 14 px" in p for p in shown["problems"]), shown["problems"]
+    (folder / "renderer.js").write_text(BOX)
+    shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=1))
+    assert shown["ok"] and shown["smallest_text"]["px"] >= 14, "the captions read"
+    assert a2d.small_text({"px": 30, "text": "x"}, {"width": 1080, "height": 1920}) == ""
+    assert "at least 28 px" in a2d.small_text({"px": 20, "text": "x", "t": 1}, {"width": 1080, "height": 1920})

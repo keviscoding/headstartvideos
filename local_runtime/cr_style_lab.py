@@ -377,8 +377,11 @@ def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
             marks = a2d.render(clip, out / "preview.mp4", code, workers=2, home=home, log=lambda m: None)
             entry["video"] = str(out / "preview.mp4")
             entry["sounds"] = [[t, Path(name).stem, db] for t, name, db in marks][:40]
-            stress = a2d._stress_scene(scene, spec)
-            runs = a2d.blank_runs(a2d.sweep(stress, code, home=home), stress["duration"])
+            stress, words = a2d._stress_scene(scene, spec), {}
+            runs = a2d.blank_runs(a2d.sweep(stress, code, home=home, text=words), stress["duration"])
+            entry["smallest_text"] = words or None
+            if a2d.small_text(words, stress):
+                problems.append(a2d.small_text(words, stress))
             for a, b in runs[:3]:
                 problems.append(f"in the stress scene the picture went blank from {a:g} s to {b:g} s (after "
                                 f"{a2d._before(stress, a)}): every effect must end with the picture back")
