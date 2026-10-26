@@ -333,6 +333,30 @@ def test_a_designed_cast_keeps_its_renderer_on_the_recipe_the_look_recommended(h
     assert clone._spec(home, payload)["renderer"] == "3d"
 
 
+def test_a_renderer_study_carries_on_when_its_graphics_browser_was_busy(tmp_path):
+    """Lucas the Spider's first study stopped after 8 minutes of Claude work: another render held the graphics browser,
+    so its graphics kit was checked in a stand-in browser. Where the channel's own renderer draws the pictures, that no
+    longer stops the study; on any other route it still does, with the reason."""
+    import cr_style_clone as clone
+    (tmp_path / "study.log").write_text("  learn: validate \u2014 DOM mock (the render lock is held (another render)): "
+                                        "9/9 types ok\n")
+    mock = {"kit": "macro_garden", "browser": False, "wants": {}}
+    kept = clone._graphics_kit(tmp_path, mock, renders=True)
+    assert kept["kit"] == "macro_garden" and "another video" in kept["browser_skipped"]
+    with pytest.raises(clone.StudyStopped, match="another video was using the graphics browser"):
+        clone._graphics_kit(tmp_path, mock, renders=False)
+    with pytest.raises(clone.StudyStopped, match="did not produce a graphics kit"):
+        clone._graphics_kit(tmp_path, {"kit": None}, renders=True)
+    real = {"kit": "macro_garden", "browser": True}
+    assert clone._graphics_kit(tmp_path, real, renders=False) is real
+    (tmp_path / "genkit").mkdir()
+    (tmp_path / "genkit/kit.json").write_text(json.dumps({"name": "macro_garden", "types": {"a": 1, "b": 2, "c": 3}}))
+    (tmp_path / "genkit/kit.js").write_text("// kit")
+    assert "genkit/kit.js" in clone._validated_assets(tmp_path, kept)
+    with pytest.raises(RuntimeError):
+        clone._validated_assets(tmp_path, mock)
+
+
 def test_round_files_belong_to_their_build(tmp_path):
     out = tmp_path / "renderer"
     (out / "round-1").mkdir(parents=True)

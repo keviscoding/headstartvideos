@@ -395,6 +395,22 @@ def room_to_check(platform=None, free_gb=None, memory_level=None) -> str:
 _room = room_to_check                       # the check prepare() runs (tests stand in for this computer's disk)
 
 
+def _graphics_kit(folder, record, *, renders: bool) -> dict:
+    """The learner's graphics kit as the study keeps it: one checked in a real browser, or, where the channel's own
+    renderer draws the pictures (renders), also one checked only in a stand-in browser because the real one was busy or
+    the Mac short of room (a Lucas the Spider study stopped there after 8 minutes of Claude work while another render
+    held the browser). Anything else stops the study; no plain preset is ever swapped in."""
+    if record and record.get("kit") and record.get("browser") is True:
+        return record
+    why = _no_browser_why(folder) if record and record.get("kit") else ""
+    if why and renders:
+        return {**record, "browser_skipped": why}
+    if why:
+        raise StudyStopped(f"Your new graphics couldn't be checked in a real browser: {why}. Your references "
+                           "are saved; no plain preset was substituted.")
+    raise StudyStopped("The original learner did not produce a graphics kit that passed real browser validation. Your study is saved; no plain preset was substituted.")
+
+
 def _no_browser_why(folder) -> str:
     """Why the graphics check had no real browser, from the study's own log, in plain words; "" when unknown."""
     try:
@@ -833,12 +849,10 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     work.mkdir(parents=True, exist_ok=True)
     record = learned(engine, spec["title"], folder, genome, genome.get("analysis") or {},
                      clock, work, spec["base_style"], spec["minutes"])
-    if not record or not record.get("kit") or record.get("browser") is not True:
-        why = _no_browser_why(folder) if record and record.get("kit") else ""
-        if why:
-            raise StudyStopped(f"Your new graphics couldn't be checked in a real browser: {why}. Your references "
-                               "are saved; no plain preset was substituted.")
-        raise StudyStopped("The original learner did not produce a graphics kit that passed real browser validation. Your study is saved; no plain preset was substituted.")
+    record = _graphics_kit(folder, record, renders=bool(spec.get("renderer")) and bool(looked))
+    if record.get("browser_skipped"):
+        log(f"  graphics: checked in a stand-in browser ({record['browser_skipped']}); this style's own renderer "
+            "draws its pictures, so the study carries on")
     score = (record.get("critique") or {}).get("score")
     if spec.get("visual_mode") == "reference_only" and (isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score)):
         raise StudyStopped("The reference animation kit has not completed its visual comparison. It is saved, but it is not ready to use; no unreviewed preset was substituted.")
@@ -1073,7 +1087,7 @@ def _validated_assets(folder, record):
     """Bind a completed learner record to its actual installed browser kit."""
     folder = Path(folder).resolve()
     manifest = _read(folder / "genkit/kit.json")
-    if (record.get("browser") is not True or not record.get("kit")
+    if ((record.get("browser") is not True and not record.get("browser_skipped")) or not record.get("kit")
             or manifest.get("name") != record.get("kit")
             or not isinstance(manifest.get("types"), dict) or len(manifest["types"]) < 3):
         raise RuntimeError("The completed study's validated kit is missing. Review the saved study.")
