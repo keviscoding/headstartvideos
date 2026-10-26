@@ -85,7 +85,8 @@ def test_running_cancel_stops_owned_group_and_preserves_uncertain_native_receipt
     runner = threading.Thread(target=manager.run, args=(spec(), PROJECT))
     runner.start()
     deadline = time.monotonic() + 5
-    while not ready.exists() and time.monotonic() < deadline:
+    # the file appears before the child's process id is in it: wait for the id (a busy machine lost this race)
+    while not (ready.exists() and ready.read_text().strip()) and time.monotonic() < deadline:
         time.sleep(0.01)
     assert ready.exists()
     assert manager.info("selected")["can_cancel"]

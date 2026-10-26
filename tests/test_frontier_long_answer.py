@@ -72,3 +72,43 @@ def test_a_failed_run_is_not_mistaken_for_a_usage_limit_by_the_streams_rate_limi
     with pytest.raises(cr_claude.ClaudeStageStopped) as stopped:
         runtime(tmp_path, monkeypatch, invoke).run(ARGS, input="Review", text=True)
     assert "usage limit" not in str(stopped.value)
+
+
+def test_a_long_prompt_bullet_is_not_mistaken_for_a_file(tmp_path):
+    """A style study's watch step: "- Fonts: only these bundled faces..." made macOS raise File name too long
+    (Errno 63) and the vision call failed every time (a customer's report, Studio 104)."""
+    picture = tmp_path / "frame.png"
+    picture.write_bytes(b"png")
+    prompt = "\n".join(["Look at these:", "- " + str(picture), "- Fonts: only these bundled faces " + "x" * 1200,
+                        "- " + "\0bad"])
+    hashes = cr_claude._read_inputs(prompt, ["/fake/claude", "-p", "--tools", "Read"])
+    assert [h[0] for h in hashes] == [str(picture.resolve())], "the real picture counts, the bullets don't crash it"
+
+
+def test_a_long_text_answer_continued_past_the_output_limit_reaches_the_engine_whole(tmp_path, monkeypatch):
+    """A style study's graphics kit asks for 32k tokens of plain text: Claude Code went on in a second message and
+    only the last part came back, so kit.json and the start of kit.js were lost."""
+    seen = []
+    def invoke(command, **kw):
+        seen.append(command)
+        return SimpleNamespace(returncode=0, stderr="", stdout=stream(
+            {"type": "system", "subtype": "init"}, said('=== kit.json ===\n{"a": 1}\n=== kit.js ===\nfunction f(', "m1"),
+            GO_ON, said(") { return 1 }", "m2"),
+            {"type": "result", "subtype": "success", "is_error": False, "result": ") { return 1 }",
+             "usage": {"output_tokens": 9}}))
+    text_call = ["/fake/claude", "-p", "--model", "opus", "--tools", ""]
+    out = runtime(tmp_path, monkeypatch, invoke).run(text_call, input="Build the kit", text=True)
+    assert out.stdout == '=== kit.json ===\n{"a": 1}\n=== kit.js ===\nfunction f() { return 1 }'
+    stage = [c for c in seen if c[1:] != ["--help"]][0]
+    assert cr_claude._option(stage, "--output-format") == "stream-json", "read as a stream to join the parts"
+
+
+def test_a_short_text_answer_is_left_as_plain_text(tmp_path, monkeypatch):
+    seen = []
+    def invoke(command, **kw):
+        seen.append(command)
+        return SimpleNamespace(returncode=0, stderr="", stdout="Just the answer.")
+    out = runtime(tmp_path, monkeypatch, invoke, maximum=4000).run(["/fake/claude", "-p", "--model", "opus"],
+                                                                   input="Name it", text=True)
+    assert out.stdout == "Just the answer."
+    assert "stream-json" not in [c for c in seen if c[1:] != ["--help"]][0]
