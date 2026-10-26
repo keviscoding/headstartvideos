@@ -346,6 +346,11 @@ async def _startup_tasks():
     except Exception as e:
         print(f"[db] cleanup_expired failed: {e}")
 
+    try:                                   # made once here, so two workers' first stopped videos never race to make it
+        _studio_failures.initialize()
+    except Exception as e:
+        print(f"[studio-failures] table not ready: {type(e).__name__}")
+
     try:                                   # Ranking clip watches a deploy stranded are picked up before anyone polls
         _studio_ranking.start_supervisor()
     except Exception as e:
@@ -564,6 +569,12 @@ def require_admin(request: Request) -> dict:
 # The admins' Showcase: the newest Studio videos, private, with signed download links (webapp/showcase.py).
 from webapp import showcase as _showcase
 app.include_router(_showcase.make_router(require_admin))
+# Why customers' Studio videos stop: counts only (webapp/studio_failures.py).
+from webapp import studio_failures as _studio_failures
+app.include_router(_studio_failures.make_router(require_admin))
+# How far new customers get: setup, first video started, first video finished (webapp/milestones.py).
+from webapp import milestones as _milestones
+app.include_router(_milestones.make_router(require_admin))
 
 
 # ChannelRecipe Studio for subscribers. The router checks both web sessions

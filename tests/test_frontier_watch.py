@@ -377,3 +377,173 @@ def test_a_watch_never_waits_longer_than_five_minutes_a_try():
     assert watch._watch_timeout(60) == (15, 60), "a shorter wait the engine asked for stands"
     assert watch._watch_timeout((10, 1200)) == (10, 300)
     assert watch._watch_timeout(None) == (15, 300)
+
+
+# ── the footage budget (a customer's 10-minute video spent 22 extra hours watching YouTube clips, 2026-10-25) ──────
+
+FAKE_YOUTUBE = r'''
+import threading, time
+from pathlib import Path
+WATCHER, NEEDS, SPARES = "gemini", 20, 20
+CALLS, ACTIVE, PEAK, FAIL = [], [0], [0], set()
+LOCK = threading.Lock()
+def _safe(v): return v
+def settings(engine, style): return {"watcher": WATCHER}
+def analyst(prefer=None): return WATCHER
+def plan_focus(engine, title, needs, videos, work): return {v["id"]: None for v in videos}
+def shots(vid, work, spans=None, cfg=None):
+    cat = Path(work) / "catalog" / f"{vid}.json"
+    if cat.exists():                    # the engine's own cache: a video watched before is read back
+        return {"shots": []}
+    with LOCK:
+        ACTIVE[0] += 1
+        PEAK[0] = max(PEAK[0], ACTIVE[0])
+    try:
+        time.sleep(0.02)
+        CALLS.append(vid)
+        if vid in FAIL:
+            raise RuntimeError("the watcher said no")
+        cat.parent.mkdir(parents=True, exist_ok=True)
+        cat.write_text("{}", encoding="utf-8")
+        return {"shots": []}
+    finally:
+        with LOCK:
+            ACTIVE[0] -= 1
+def fetch_clips(engine, script, job, style, force, title=""):
+    # the engine's flow: every stretch's candidates, the watch plan, its own loop, then spares for thin stretches
+    ydir = Path(job) / "youtube"
+    needs = [{"w": i, "videos": [f"v{i:02d}_{k}" for k in range(6)]} for i in range(NEEDS)]
+    vids = list(dict.fromkeys(v for x in needs for v in x["videos"]))
+    focus = plan_focus(engine, title, needs, [{"id": v} for v in vids], ydir)
+    first = list(dict.fromkeys(v for x in needs for v in x["videos"]))
+    watched = {}
+    for v in first:
+        try:
+            watched[v] = shots(v, ydir, focus.get(v), cfg={})
+        except Exception as e:
+            engine.log(f"  {v}: not watched - {e}")
+    more = [v for x in needs for v in x.get("spare", [])][:SPARES]
+    plan_focus(engine, title, needs, [{"id": v} for v in more], ydir)
+    for v in more:
+        try:
+            watched[v] = shots(v, ydir, None, cfg={})
+        except Exception as e:
+            engine.log(f"  {v}: not watched - {e}")
+    return needs, sorted(watched)
+'''
+
+
+@pytest.fixture
+def footage(tmp_path):
+    import types
+    module = types.ModuleType("fake_youtube")
+    exec(compile(FAKE_YOUTUBE, "fake_youtube", "exec"), module.__dict__)
+    watch._install_budget(module)
+    engine = SimpleNamespace(lines=[], STYLE_WPM={})
+    engine.log = engine.lines.append
+    return module, engine, tmp_path / "job"
+
+
+def test_a_video_watches_a_budget_scaled_to_its_length():
+    ten = watch.budget(10)
+    assert (ten["videos"], ten["stop_minutes"]) == (50, 40)
+    assert ten["typical_minutes"] == [22, 44] and ten["most_minutes"] == 50
+    assert watch.budget(0.5)["videos"] == 24 and watch.budget(0.5)["stop_minutes"] == 20, "a floor for short videos"
+    assert watch.budget(60)["videos"] == 150 and watch.budget(60)["stop_minutes"] == 120, "and a ceiling"
+    text = watch.estimate_text(10)
+    assert "about 22 to 44 minutes" in text and "up to 50 YouTube videos" in text and "after 40 minutes" in text
+
+
+def test_the_budget_goes_to_every_stretch_before_any_stretch_watches_more():
+    needs = [{"videos": ["a1", "a2", "a3"]}, {"videos": ["b1", "b2", "b3"], "spare": ["b9"]}, {"videos": ["c1"]}]
+    chosen = watch.trim(needs, 4, free=["a3"])
+    assert chosen == ["a1", "b1", "c1", "a2"], "every stretch's best first, then the seconds"
+    assert needs[0]["videos"] == ["a1", "a2", "a3"], "a video watched before costs nothing and stays"
+    assert needs[1]["videos"] == ["b1"] and needs[1]["spare"] == ["b2", "b3", "b9"]
+    assert needs[2]["videos"] == ["c1"] and needs[2]["spare"] == []
+
+
+def test_a_ten_minute_video_watches_at_most_its_budget_side_by_side_and_says_how_far_it_is(footage):
+    module, engine, job = footage
+    module.FAIL.add("v03_0")
+    needs, watched = module.fetch_clips(engine, "word " * 1500, job, "documentary", False)      # 10 minutes
+    assert len(module.CALLS) == 50, "120 candidates and 20 spares found; the budget is 50 videos"
+    assert all(f"v{i:02d}_0" in module.CALLS and f"v{i:02d}_1" in module.CALLS for i in range(20)), \
+        "every stretch got its two best videos"
+    assert module.CALLS.count("v03_0") == 1, "a video that failed is not watched again in the same search"
+    assert module.PEAK[0] > 3, "watched more at once than the engine's own loop"
+    assert any("watching 42 of the 120 new videos found" in line for line in engine.lines)
+    assert any(re.search(r"watched 50 of 50 videos", line) for line in engine.lines), engine.lines
+    assert sum("footage budget is used" in line for line in engine.lines) == 12, "the spares past the budget"
+    assert "50 video(s) watched" in engine.lines[-1]
+    # Resume: what it watched is in its catalog, read back for nothing, and still counts against its budget
+    module.CALLS.clear()
+    module.fetch_clips(engine, "word " * 1500, job, "documentary", False)
+    assert len(module.CALLS) <= 1, "49 watched before: one more at most"
+
+
+def test_each_video_keeps_its_own_footage_budget(footage):
+    """Two videos searching at once in one Studio (a Short beside a long video, a preview) never share a budget: a
+    watch for one is counted against that one only, and a watch outside any search is never refused."""
+    import threading
+    module, engine, job = footage
+    other = job.parent / "other-job"
+    done = []
+    one = threading.Thread(target=lambda: done.append(module.fetch_clips(engine, "word " * 1500, job, "doc", False)))
+    two = threading.Thread(target=lambda: done.append(module.fetch_clips(engine, "word " * 1500, other, "doc", False)))
+    one.start(); two.start(); one.join(); two.join()
+    assert len(done) == 2 and len(module.CALLS) == 100, "50 each: each video's own budget, in full"
+    assert sum("footage budget is used" in line for line in engine.lines) == 24
+    assert watch._budget == {}, "nothing left behind when the searches end"
+    module.CALLS.clear()
+    module.shots("loose", job.parent / "preview" / "youtube")
+    assert module.CALLS == ["loose"]
+
+
+def test_watching_stops_when_the_video_s_watching_time_is_used(footage, monkeypatch):
+    module, engine, job = footage
+    clock = iter([0.0] + [10_000.0] * 1000)
+    monkeypatch.setattr(watch, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    module.fetch_clips(engine, "word " * 1500, job, "documentary", False)
+    assert module.CALLS == [], "past its watching time the video goes on with what it has"
+    assert any("footage budget is used" in line for line in engine.lines)
+
+
+def test_a_watch_that_never_answers_counts_toward_kie_s_breaker(tmp_path):
+    """A watch that timed out went past youtube._KIE_DOWN (only error answers counted), so a stuck Kie watcher cost five
+    minutes on every video. Three in a row now take Kie out of the rest of the search, as three errors did."""
+    import types
+    source = Path(os.environ.get("FRONTIER_TEST_ENGINE_DIR", Path.home() / "Downloads/ChannelRecipe studio")) / "youtube.py"
+    if not source.is_file():
+        pytest.skip("Owner's private watcher source is required; it is not published with these tests.")
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    nodes = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "_KIE_DOWN"
+                                                                        for t in n.targets)]
+    nodes += [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("_chat_log", "_kie_upload", "_kie_log")]
+
+    class Timeout(Exception):
+        pass
+    sent = []
+
+    def post(url, **kwargs):
+        sent.append(url)
+        if "files" in kwargs:
+            return SimpleNamespace(status_code=200, ok=True, raise_for_status=lambda: None, text="",
+                                   json=lambda: {"code": 200, "data": {"downloadUrl": "https://files.example/w.mp4"}})
+        raise Timeout("read timed out")
+    requests = SimpleNamespace(post=post, exceptions=SimpleNamespace(Timeout=Timeout, ConnectionError=ConnectionError))
+    module = types.ModuleType("fixture_youtube")
+    module.__dict__.update(Path=Path, json=json, requests=requests, time=SimpleNamespace(sleep=lambda _: None,
+                           monotonic=lambda: 0.0), _env=lambda name: "fixture-no-real-key",
+                           _low_copy=lambda vid, work, span: tmp_path / "w.mp4", _watch_copy=lambda p: p)
+    (tmp_path / "w.mp4").write_bytes(b"fixture")
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), module.__dict__)
+    watch.install(module)
+    for _ in range(3):
+        with pytest.raises(Timeout):
+            module._kie_log("vid", "prompt", tmp_path)
+    assert module._KIE_DOWN["fails"] == 3
+    before = len(sent)
+    with pytest.raises(RuntimeError, match="three videos in a row"):
+        module._kie_log("vid", "prompt", tmp_path)
+    assert len(sent) == before, "the rest of the search goes on without Kie, at once"

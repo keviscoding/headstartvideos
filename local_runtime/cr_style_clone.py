@@ -29,6 +29,7 @@ HOME = Path(__file__).resolve().parent
 STUDY_GUIDANCE = HOME / "cr-style-study-brief.txt"
 MAX_REFERENCES = 3
 MAX_REFERENCE_S = 24 * 3600
+SHORT_LINK_S = 180                      # the longest a Short runs
 PREVIEW_LIMIT = 8
 PHASES = {
     "prepared": (0, "Your approved reference study is ready to start."),
@@ -42,6 +43,28 @@ PHASES = {
     "publish": (94, "Saving your validated style in the studio's preset library."),
     "complete": (100, "Your learned style is saved and ready to use."),
 }
+
+
+# the failure record's step (cr_failure) for each phase a study can stop in
+PHASE_STEPS = {"prepared": "setup", "design": "script", "research": "youtube", "watch": "study", "build": "graphics",
+               "validate": "render", "art": "pictures", "renderer": "graphics", "publish": "save"}
+_STAGE_CATEGORIES = {"timeout": "timeout", "usage_limit": "usage_limit", "cancelled": "cancelled",
+                     "authentication_required": "auth"}
+
+
+def _failure_record(home, saved, error, step=""):
+    """Why this study stopped, privacy-safe (cr_failure): sent with its stopped finish so ChannelRecipe can count it."""
+    try:
+        import cr_failure
+        native = _native_failure(home, saved)
+        spec = saved.get("spec") or {}
+        return cr_failure.from_exception(error, step=step or PHASE_STEPS.get(saved.get("phase"), "study"),
+                                         source="style_study", recipe=spec.get("base_style", ""),
+                                         titles=[spec.get("title"), spec.get("label"), spec.get("name")],
+                                         category=_STAGE_CATEGORIES.get(native, ""),
+                                         provider="claude" if native else "")
+    except Exception:                                           # noqa: BLE001 - the stop itself is what matters
+        return None
 
 
 class StudyStopped(BaseException):
@@ -134,7 +157,9 @@ def normalize_url(value):
         if not re.fullmatch(r"[a-zA-Z0-9_-]{11}", video):
             raise ValueError("This YouTube video link is incomplete.")
         return "https://www.youtube.com/watch?v=" + video
+    tab = "videos"
     if len(parts) > 1 and parts[-1] in {"videos", "featured", "shorts"}:
+        tab = "shorts" if parts[-1] == "shorts" else "videos"        # a channel's Shorts tab, pasted, is studied as is
         parts = parts[:-1]
     if len(parts) == 1 and re.fullmatch(r"@[\w.\-]{3,80}", parts[0]):
         channel = quote(parts[0], safe="@._-")
@@ -143,14 +168,16 @@ def normalize_url(value):
         channel = "/".join(parts)
     else:
         raise ValueError("Use a YouTube video link or a channel's public page.")
-    return "https://www.youtube.com/" + channel + "/videos"
+    return "https://www.youtube.com/" + channel + "/" + tab
 
 
 # Plain-language reasons for yt-dlp failures (matched on its error text).
 _YT_FAILURES = (
     ("confirm you", "YouTube is asking this computer to confirm it isn't a bot. Wait a few minutes and try again, or try another network."),
     ("not a bot", "YouTube is asking this computer to confirm it isn't a bot. Wait a few minutes and try again, or try another network."),
-    ("does not have a videos tab", "This channel has no long videos to learn from. Use a channel or video with videos over a minute long."),
+    # a channel without one of these tabs is read from the other (preview); both missing means YouTube lists nothing
+    ("does not have a videos tab", "YouTube lists no regular videos on this channel. Paste its Shorts page (youtube.com/@name/shorts) or one of its video links."),
+    ("does not have a shorts tab", "YouTube lists no videos or Shorts on this channel (it may only have live streams or posts). Paste one of its video links instead."),
     ("does not exist", "That YouTube channel or video doesn't exist. Check the link."),
     ("http error 404", "That YouTube page doesn't exist. Check the link."),
     ("private video", "That video is private. Use a public video or channel."),
@@ -179,6 +206,16 @@ def _ytdlp_command():
     return [found] + ipv4 if found else []
 
 
+class NoTab(RuntimeError):
+    """YouTube has no such tab on this channel (a Shorts-only channel has no videos tab): preview reads the other."""
+
+
+def _is_short(item) -> bool:
+    """A YouTube Short: listed from a channel's Shorts tab (its link says so), or a vertical video YouTube calls one."""
+    return ("/shorts/" in str(item.get("url") or item.get("webpage_url") or "") or item.get("media_type") == "short"
+            or (int(item.get("height") or 0) > int(item.get("width") or 0) > 0))
+
+
 def list_videos(url, limit, timeout=90, *, run=subprocess.run):
     """Public videos of a channel or one video, as yt-dlp lists them. Says why when it can't."""
     command = _ytdlp_command()
@@ -201,7 +238,8 @@ def list_videos(url, limit, timeout=90, *, run=subprocess.run):
             if isinstance(item, dict) and item.get("id"):
                 rows.append({"id": item["id"], "title": str(item.get("title") or ""),
                              "views": int(item.get("view_count") or 0), "duration": float(item.get("duration") or 0),
-                             "channel": str(item.get("channel") or item.get("uploader") or item.get("playlist_channel") or "")})
+                             "channel": str(item.get("channel") or item.get("uploader") or item.get("playlist_channel") or ""),
+                             "short": _is_short(item)})
         return rows, done.stderr or ""
 
     rows, error = attempt()
@@ -218,12 +256,16 @@ def list_videos(url, limit, timeout=90, *, run=subprocess.run):
     lowered = error.lower()
     for sign, message in _YT_FAILURES:
         if sign in lowered:
-            raise RuntimeError(message + " No model request was made.")
+            raise (NoTab if sign.endswith(" tab") else RuntimeError)(message + " No model request was made.")
     detail = next((line.strip() for line in reversed(error.splitlines()) if line.strip()), "")
     if detail:
         raise RuntimeError("YouTube could not list this reference (" + detail.removeprefix("ERROR: ")[:180]
                            + "). Try another public link; no model request was made.")
     raise RuntimeError("YouTube didn't list any videos for this link. Try another public link; no model request was made.")
+
+
+def _listed(canonical, limit, learner):
+    return learner._flat(canonical, limit, 90) if learner is not None else list_videos(canonical, limit)
 
 
 def preview(home, url, *, learner=None):
@@ -232,7 +274,17 @@ def preview(home, url, *, learner=None):
     direct_id = (parse_qs(urlsplit(canonical).query).get("v") or [None])[0]
     limit = 1 if direct_id else PREVIEW_LIMIT
     candidates = []
-    rows = learner._flat(canonical, limit, 90) if learner is not None else list_videos(canonical, limit)
+    try:
+        rows = _listed(canonical, limit, learner)
+    except NoTab:
+        rows = []
+    tab = "" if direct_id else canonical.rsplit("/", 1)[-1]
+    if not rows and tab in ("videos", "shorts"):
+        # A channel that posts only Shorts (@gneef) has no videos tab, and one without Shorts no Shorts tab: the
+        # other is read, and its own answer is said when it has none either.
+        canonical = canonical[:-len(tab)] + ("shorts" if tab == "videos" else "videos")
+        rows = _listed(canonical, limit, learner)
+    shorts_tab = canonical.endswith("/shorts")
     for row in rows:
         identifier = row.get("id")
         if not isinstance(identifier, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{11}", identifier):
@@ -240,19 +292,52 @@ def preview(home, url, *, learner=None):
         if direct_id and identifier != direct_id or any(r["id"] == identifier for r in candidates):
             continue
         duration = max(0.0, float(row.get("duration") or 0))
+        # A Short is studied like any video (its whole length is looked at); YouTube's Shorts list gives no length.
+        short = shorts_tab or bool(row.get("short"))
+        if short:
+            eligible = duration <= MAX_REFERENCE_S
+        elif direct_id and 0 < duration < SHORT_LINK_S:
+            eligible = True     # a Short pasted as its own link isn't always listed as one: studied whatever its length
+        else:
+            eligible = 60 <= duration <= MAX_REFERENCE_S
         candidates.append({"id": identifier, "url": "https://www.youtube.com/watch?v=" + identifier,
             "title": str(row.get("title") or "Untitled reference")[:300],
             "channel": str(row.get("channel") or "")[:160],
             "views": max(0, int(row.get("views") or 0)), "duration_seconds": duration,
             # a look samples a few minutes of each reference, so marathon recaps (manhwa channels post 5 to 12
             # hour videos) can be studied too
-            "eligible": 60 <= duration <= MAX_REFERENCE_S,
-            "eligibility_note": "" if 60 <= duration <= MAX_REFERENCE_S else "Choose a reference between one minute and 24 hours with a known duration."})
+            "eligible": eligible, **({"short": True} if short else {}),
+            "eligibility_note": "" if eligible else "Choose a reference between one minute and 24 hours with a known duration."})
         if len(candidates) == PREVIEW_LIMIT:
             break
     if not candidates:
         raise RuntimeError("YouTube could not list this reference. Try another public link; no model request was made.")
     result = {"reference_url": canonical, "candidates": candidates, "no_model_requests": True}
+    identifier = "pv_" + _hash(result)
+    _write(_folder(home) / ".previews" / (identifier + ".json"), {**result, "created_at": time.time()})
+    return {**result, "preview_id": identifier}
+
+
+def preview_many(home, urls, *, preview=None):
+    """One saved preview of one to three YouTube channels or videos, so the look and the study can take references
+    from all of them and learn one combined style (each candidate keeps its channel's number, `source`). Lists only:
+    no model is asked."""
+    preview = preview or globals()["preview"]
+    urls = [str(u).strip() for u in urls or [] if str(u).strip()] if isinstance(urls, list) else []
+    if not 1 <= len(urls) <= MAX_REFERENCES or len(set(urls)) != len(urls):
+        raise ValueError("Give one to three different YouTube channels or videos.")
+    if len(urls) == 1:
+        return preview(home, urls[0])
+    sources, candidates, seen = [], [], set()
+    for number, url in enumerate(urls):
+        got = preview(home, url)
+        sources.append(got["reference_url"])
+        for row in got.get("candidates") or []:
+            if row["id"] not in seen:
+                seen.add(row["id"])
+                candidates.append({**row, "source": number})
+    result = {"reference_url": sources[0], "reference_urls": sources, "candidates": candidates,
+              "no_model_requests": True, "combined": True}
     identifier = "pv_" + _hash(result)
     _write(_folder(home) / ".previews" / (identifier + ".json"), {**result, "created_at": time.time()})
     return {**result, "preview_id": identifier}
@@ -349,7 +434,10 @@ def _spec(home, supplied):
         raise ValueError("Choose an example film length between one and sixty minutes.")
     references = [{**rows[x], "duration": rows[x]["duration_seconds"], "named": True, "ratio": 0,
                    "median": 0, "rank": 0} for x in selected]
+    sources = saved.get("reference_urls") if isinstance(saved.get("reference_urls"), list) else []
     return {"preview_id": preview_id, "reference_url": saved["reference_url"], "references": references,
+        # the channels a combined style mixes (preview_many), so a new attempt can list them all again
+        **({"reference_urls": [str(u) for u in sources[:MAX_REFERENCES]]} if len(sources) > 1 else {}),
         "base_style": base, "base_sha256": _file_hash(base_path), "name": requested_name,
         "label": label.strip(), "title": title.strip(), "brief": brief,
         "budget_minutes": budget, "max_calls": calls, "minutes": minutes,
@@ -393,12 +481,16 @@ def room_to_check(platform=None, free_gb=None, memory_level=None) -> str:
 _room = room_to_check                       # the check prepare() runs (tests stand in for this computer's disk)
 
 
-def _no_browser_why(folder) -> str:
-    """Why the graphics check had no real browser, from the study's own log, in plain words; "" when unknown."""
+def _study_log(folder) -> str:
     try:
-        text = (Path(folder) / "study.log").read_text(encoding="utf-8")[-20000:]
+        return (Path(folder) / "study.log").read_text(encoding="utf-8", errors="replace")[-20000:]
     except OSError:
         return ""
+
+
+def _no_browser_why(folder) -> str:
+    """Why the graphics check had no real browser, from the study's own log, in plain words; "" when unknown."""
+    text = _study_log(folder)
     gate = re.findall(r"DOM mock \(Mac gate: memory level (\d+) \(needs ([\d.]+)\), (\d+) GB free \(needs ([\d.]+)\)\)",
                       text)
     if gate:
@@ -409,6 +501,87 @@ def _no_browser_why(folder) -> str:
         return "your Mac was short of memory at that moment. Close other apps, then start the study again"
     if re.search(r"DOM mock \(the render lock is held", text):
         return "another video was using the graphics browser at that moment. Start the study again when it has finished"
+    if re.search(r"DOM mock \(Chromium failed", text):
+        return ("Studio's graphics browser couldn't start on this computer. Press Fix it next to the graphics browser "
+                "on the setup page (in Claude Code: fix_graphics_browser), then start the study again")
+    return ""
+
+
+# Where the original learner gave up without a kit (its own reason, as it hands it to its library fallback, which a
+# study switches off), told with what the study's log says happened in that step and what the creator can do.
+# A Claude failure inside a step is classified (cr_claude.failure_info), never quoted: its text is the provider's.
+def _claude_why(detail: str) -> str:
+    import cr_claude
+    code, message = cr_claude.failure_info(detail)
+    return message if code != "cli_failed" else "Claude's answer came back empty"
+
+
+def _download_why(text: str) -> str:
+    """Why the references couldn't be downloaded on this computer to look at their frames, with what to do."""
+    lost = re.findall(r"learn: watch — not downloaded: (.+)", text)
+    detail = lost[-1].strip() if lost else ""
+    low = detail.lower()
+    if re.search(r"not a bot|sign in to confirm|bot check|cookies", low):
+        return ("YouTube asked this computer to confirm it isn't a bot, so Studio couldn't download the reference "
+                "videos to look at their frames. Wait an hour, or switch to another network (a phone hotspot works)")
+    if "not installed" in low:
+        return ("Studio's YouTube helper is missing, so it couldn't download the reference videos. Ask Claude Code to "
+                "repair your Studio")
+    if "timed out" in low:
+        return "YouTube was too slow sending the reference videos to this computer. Check your internet connection"
+    if detail:
+        said = next((message for sign, message in _YT_FAILURES if sign in low), "")
+        return ("Studio couldn't download the reference videos to look at their frames ("
+                + (said.rstrip(".") if said else "YouTube said: " + detail.removeprefix("yt-dlp: ")[:160]) + ")")
+    if "section(s) downloaded" in text:
+        return ("Studio downloaded the reference videos but couldn't read their frames. Run the check on the setup "
+                "page (it tests FFmpeg)")
+    return ("Studio couldn't download the reference videos to look at their frames. Check your internet connection, "
+            "or choose other videos")
+
+
+def _last_step(folder, record) -> str:
+    """For a stop the learner gave no reason for: what its graphics check said, or the last step its log records."""
+    text = _study_log(folder)
+    if record and record.get("kit"):
+        checked = re.findall(r"learn: validate \u2014 DOM mock \(([^\n]+?)\): \d+/\d+ types ok", text)
+        if checked:
+            return "its graphics were checked without a real browser (" + checked[-1][:160] + ")"
+    steps = [line.strip() for line in text.splitlines() if "learn: " in line and " call failed" not in line]
+    return ("the last step in its log was \"" + steps[-1].split("learn: ", 1)[1][:160] + "\"") if steps else ""
+
+
+def _learner_stop(folder, why: str, left=None) -> str:
+    """The creator's words for a learner that returned no kit: its step, the cause and what to do."""
+    text, why = _study_log(folder), str(why or "")
+    out_of_time = left is not None and left < 9 * 60
+    if "could not be watched" in why:
+        if out_of_time and "not downloaded" not in text and "section(s) downloaded" not in text:
+            return ("The study's time ran out before it could watch the references. Raise the Claude study budget "
+                    "under Study limits")
+        return _download_why(text)
+    if "could not be read" in why:
+        failed = re.findall(r"learn: watch vision call failed — \w+: (.+)", text)
+        if failed:
+            return f"Claude couldn't read the reference frames: {_claude_why(failed[-1]).rstrip('.')}"
+        return ("Claude looked at the reference frames twice, but its answer couldn't be read as a style. This is "
+                "usually a passing slip")
+    if "could not be written" in why:
+        failed = re.findall(r"learn: build call failed — \w+: (.+)", text)
+        if failed:
+            return f"Claude couldn't write the graphics kit: {_claude_why(failed[-1]).rstrip('.')}"
+        if left is not None and left < 240:
+            return ("The study's time ran out before Claude could write the graphics kit (it needs about 4 minutes). "
+                    "Raise the Claude study budget under Study limits")
+        return ("Claude's graphics kit came back without its files twice. This is usually a passing slip; a long "
+                "brief can also crowd it out")
+    kept = re.search(r"did not validate \((\d+) working types\)", why)
+    if kept:
+        problems = re.findall(r"learn: validate — [^\n]*?types ok; problems: ([^\n]+)", text)
+        first = problems[-1].split("; ")[0][:160] if problems else ""
+        return (f"Claude's graphics kit drew only {kept.group(1)} of its scene types without errors after a repair "
+                "(3 are needed)" + (f"; the first problem: {first}" if first else "")
+                + ". Claude usually writes a working kit on a second try")
     return ""
 
 
@@ -475,6 +648,10 @@ def status(home, operation_id, bridge):
         said, stop_type = str(failure.get("message") or "").strip(), str(failure.get("exception_type") or "")
         message = "This study stopped. Review its saved Claude stages in setup before approving any further work. It will not run again automatically."
         if said:
+            # said once: studies stopped before Studio 105 said "Your study is saved" (or "Your references are
+            # saved") in their own reason as well
+            said = re.sub(r"\s*Your (?:study is|references are) saved; (\w)", lambda m: " " + m.group(1).upper(),
+                          said).strip()
             message = said + " Your study is saved; start it again here when you're ready."
         if native_failure == "timeout":
             message = "Claude timed out while " + PHASES.get(phase, PHASES["prepared"])[1].rstrip(".").lower() + ". Your saved study is intact. Review your references and approve a new study here; setup review is not required to start a separate attempt."
@@ -482,6 +659,8 @@ def status(home, operation_id, bridge):
             message = "Claude reported a usage limit during this study. Your saved work is intact. Once your Claude account has available usage, review and approve a new study here."
         if failure_code == "metadata_handoff_failed":
             message = "Reference study and graphics validation finished, but saving the style stopped. Save the completed study without repeating Claude, downloads or rendering."
+        if saved.get("update_note"):
+            message += " " + saved["update_note"]
     elif state == "complete_local":
         message = "Your validated style is saved locally. Reconnect CR to record completion; no generation needs to repeat."
     elif state == "running":
@@ -491,6 +670,7 @@ def status(home, operation_id, bridge):
         "elapsed_seconds": max(0, round(saved.get("completed_at", time.time()) - saved.get("started_at", time.time()), 1)),
         "operation_project_id": saved.get("project_id"), "reconciliation_pending": bool(saved.get("finish_receipt")),
         "needs_manual_recovery": state == "failed", "reference_url": saved["spec"]["reference_url"],
+        "reference_urls": saved["spec"].get("reference_urls") or [saved["spec"]["reference_url"]],
         "reference_ids": [r["id"] for r in saved["spec"]["references"]],
         "budget_minutes": saved["spec"]["budget_minutes"], "max_calls": saved["spec"]["max_calls"],
         "style_ready": state in {"complete", "complete_local"} and _published(home, saved)}
@@ -504,8 +684,8 @@ def status(home, operation_id, bridge):
     result["stop_reason"] = said
     if state == "failed" and not result["metadata_recovery_available"]:
         result["retry_spec"] = {key: copy.deepcopy(saved["spec"][key]) for key in (
-            "preview_id", "reference_url", "references", "base_style", "name", "label", "title", "brief",
-            "budget_minutes", "max_calls", "minutes") if key in saved["spec"]}
+            "preview_id", "reference_url", "reference_urls", "references", "base_style", "name", "label", "title",
+            "brief", "budget_minutes", "max_calls", "minutes") if key in saved["spec"]}
         result["retry_spec"]["visual_mode"] = saved["spec"].get("visual_mode", "reference_only")
         # the look Studio saw and the creator's answers: a new study made without them would be the plain recipe
         for key in ("look_id", "answers"):
@@ -690,7 +870,12 @@ def _sync(folder, saved, bridge):
     cr_claude.sync_receipts(bridge)
     if saved.get("finish_receipt"):
         bridge.project_progress(saved["project_id"])
-        bridge.finish_project(saved["finish_receipt"])
+        answer = bridge.finish_project(saved["finish_receipt"])
+        if saved["finish_receipt"].get("status") == "failed":
+            import cr_failure
+            note = cr_failure.update_note(answer)
+            if note:
+                saved["update_note"] = note                    # said with the stop: a newer Studio is available
         saved.pop("finish_receipt")
         if saved["state"] == "complete_local":
             saved["state"] = "complete"
@@ -701,6 +886,7 @@ def sync(home, operation_id, bridge):
     """Reconcile only saved metadata. Never call a model, downloader or renderer."""
     folder, saved = _saved(home, operation_id, bridge)
     with _lock(folder):
+        folder, saved = _saved(home, operation_id, bridge)    # as it is now: a style edit may have just saved it
         if saved.get("state") == "validated":
             _publish(home, folder, saved)
         _sync(folder, saved, bridge)
@@ -769,7 +955,8 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
             sheets = [str(p) for p in (seen.get("sheets") or []) if Path(p).is_file()]
             if not sheets:
                 if strict:
-                    raise StudyStopped("An approved reference could not be inspected. No other reference or default look was substituted.")
+                    raise StudyStopped("An approved reference could not be inspected: " + _download_why(_study_log(folder))
+                                       + ". No other reference or default look was substituted.")
                 return {}
             rows = transcript(row["id"], location, original=True)
             excerpt = " ".join(str(item[1]) for item in rows if isinstance(item, (list, tuple))
@@ -802,8 +989,15 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     original_media = learner._media
     def validation_media(engine, analysis, job, work):
         return original_media(engine, analysis, job, work, fetch=False)
+    gave_up = []
+    def no_fallback(engine, title, an, rows, clock, work, gk, why):
+        # The learner's library fallback would swap in another channel's kit: a study never takes it, and keeps the
+        # learner's reason (and the time it had left) to say why it stopped.
+        log(f"  learn: {why}")
+        gave_up.append((str(why), clock.left()))
+        return None
     learned = _bind(learner._learn, research=allowed, match=lambda *args, **kwargs: [],
-                    watch=watch, _media=validation_media, _fallback=lambda *args, **kwargs: None)
+                    watch=watch, _media=validation_media, _fallback=no_fallback)
     brief = spec["brief"]
     if spec.get("visual_mode") == "reference_only":
         if not STUDY_GUIDANCE.is_file():
@@ -825,9 +1019,14 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     if not record or not record.get("kit") or record.get("browser") is not True:
         why = _no_browser_why(folder) if record and record.get("kit") else ""
         if why:
-            raise StudyStopped(f"Your new graphics couldn't be checked in a real browser: {why}. Your references "
-                               "are saved; no plain preset was substituted.")
-        raise StudyStopped("The original learner did not produce a graphics kit that passed real browser validation. Your study is saved; no plain preset was substituted.")
+            raise StudyStopped(f"Your new graphics couldn't be checked in a real browser: {why}. No plain preset was "
+                               "substituted.")
+        stop = _learner_stop(folder, *gave_up[-1]) if gave_up else ""
+        if stop:
+            raise StudyStopped(stop + ". No plain preset was substituted.")
+        stop = _last_step(folder, record)
+        raise StudyStopped("The original learner did not produce a graphics kit that passed real browser validation"
+                           + (": " + stop if stop else "") + ". No plain preset was substituted.")
     score = (record.get("critique") or {}).get("score")
     if spec.get("visual_mode") == "reference_only" and (isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score)):
         raise StudyStopped("The reference animation kit has not completed its visual comparison. It is saved, but it is not ready to use; no unreviewed preset was substituted.")
@@ -958,9 +1157,9 @@ def _renderer(folder, spec, looked, see, log):
         need = min(9 - len(frames), len(watched))
         frames += [watched[i * len(watched) // need] for i in range(need)] if need else []
     # the channel's own name is never drawn, though its watermark is in the frames Claude studies
-    handle = re.search(r"youtube\.com/@([\w.\-]+)", str(spec.get("reference_url") or ""))
-    names = list(dict.fromkeys([str(r.get("channel") or "") for r in looked.get("references") or []]
-                               + ([handle.group(1)] if handle else [])))
+    handles = [m.group(1) for u in (spec.get("reference_urls") or [spec.get("reference_url")])
+               for m in [re.search(r"youtube\.com/@([\w.\-]+)", str(u or ""))] if m]
+    names = list(dict.fromkeys([str(r.get("channel") or "") for r in looked.get("references") or []] + handles))
 
     def judge(references, candidates):
         return cr_bridge.call("style/compare", {"references": [cr_style_likeness._b64(p) for p in references],
@@ -1284,6 +1483,9 @@ def _finish_metadata_recovery(home, folder, saved, bridge, readiness, *, engine=
         _record_failure(folder, saved, error)
         saved.update(state="failed", completed_at=time.time(), finish_receipt={"project_id": saved["project_id"],
             "status": "failed", "artifacts": [], "error_code": "runtime_failed"})
+        failure = _failure_record(home, saved, error, step="save")
+        if failure:
+            saved["finish_receipt"]["failure"] = failure
         _write(folder / "operation.json", saved)
         try:
             _sync(folder, saved, bridge)
@@ -1389,6 +1591,7 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
     """Execute once. Already completed studies only synchronize saved receipts."""
     folder, saved = _saved(home, operation_id, bridge)
     with _lock(_folder(home), ".runner.lock"), _lock(folder):
+        folder, saved = _saved(home, operation_id, bridge)    # as it is now: a style edit may have just saved it
         if saved["state"] in {"complete", "complete_local"}:
             _sync(folder, saved, bridge)
             return status(home, operation_id, bridge)
@@ -1441,6 +1644,9 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
             _record_failure(folder, saved, error)
             saved.update(state="failed", completed_at=time.time(), finish_receipt={"project_id": project["id"],
                 "status": "failed", "artifacts": [], "error_code": "runtime_failed"})
+            failure = _failure_record(home, saved, error)
+            if failure:
+                saved["finish_receipt"]["failure"] = failure
             _write(folder / "operation.json", saved)
             try:
                 _sync(folder, saved, bridge)

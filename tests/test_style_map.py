@@ -545,3 +545,25 @@ def test_a_3d_channel_is_asked_about_its_3d_not_about_2d_animation():
     p["pictures"]["sources"]["families"] = {"3d": 0.3, "generated": 0.6}
     questions = [q["id"] for q in cm.plan_style(p, STYLES)["questions"]]
     assert "medium" in questions and "animation" not in questions
+
+
+def test_the_installed_styles_closest_to_a_channel_are_ranked_with_a_reason():
+    styles = {**STYLES, "cr-stick-stories": {"look": {}, "features": {"on": ["ai_images", "maps"]},
+                                             "pacing": {"photo_every_s": 2.6}},
+              "cr-shorts-3d": {"shorts": {"pipeline": "zack3d", "seconds": 25}, "format": "short"},
+              "cr_clone_mine": {"cr_style_clone": {"learned_v2": {"look_id": "lk_" + "a" * 24}}},
+              "_TEMPLATE": {}, "auto-look": {"variant_of": "documentary"}}
+    drawn = profile({"generated": 0.9, "graphic": 0.1})
+    rows = cm.similar(drawn, styles, profiles={"cr_clone_mine": profile({"3d": 1.0})}, base="stories")
+    assert [r["id"] for r in rows][:2] == ["cr-stick-stories", "stories"] and len(rows) <= 3
+    assert "drawn or generated pictures (90% here, 90% in it)" in rows[0]["why"]
+    assert rows[1]["recommended"] and not rows[0]["recommended"], "the recipe the study would build on is marked"
+    assert not any(r["id"] in ("_TEMPLATE", "auto-look") for r in cm.similar(drawn, styles, limit=50))
+    # a style already learned from these same videos comes first; a Shorts channel finds the Shorts recipe
+    same = cm.similar(profile({"3d": 1.0}), styles, profiles={"cr_clone_mine": profile({"3d": 1.0})},
+                      look_id="lk_" + "a" * 24)
+    assert same[0]["id"] == "cr_clone_mine" and same[0]["same_references"] and same[0]["mine"]
+    shorts = cm.similar(profile({"3d": 0.9, "graphic": 0.1}), styles, shorts=True)
+    assert shorts[0]["id"] == "cr-shorts-3d" and shorts[0]["kind"] == "short" and "Shorts too" in shorts[0]["why"]
+    # what an unlisted recipe makes is read from its switches
+    assert cm.style_families("mine", {"features": {"on": ["youtube", "maps"]}}) == {"footage": 0.5, "graphic": 0.5}

@@ -85,22 +85,27 @@ _NOISE = re.compile(r"^(cached|images:|story:|style:|character:|whisper:|timing|
 
 
 def crash_reason(tail: str, code) -> str:
+    return crash_cause(tail, code)[0]
+
+
+def crash_cause(tail: str, code) -> tuple:
+    """(why in the creator's words, the kind of stop for the failure record: "" when only the message can tell)."""
     low = tail.lower()
     if "the studio that started this video closed" in low:
-        return "Studio closed while this video was being made"
+        return "Studio closed while this video was being made", "studio_closed"
     if "omp: error #15" in low:
-        return "two copies of a maths library clashed while the speech-timing model loaded"
+        return "two copies of a maths library clashed while the speech-timing model loaded", "crash"
     if ("memoryerror" in low or "out of memory" in low or "cannot allocate memory" in low or "bad_alloc" in low
             or code in (137, -9, 3221225495)):
-        return "this computer ran out of memory"
+        return "this computer ran out of memory", "out_of_memory"
     if code in (-4, 132, 3221225501):
-        return "a library needs a processor instruction this computer doesn't have"
+        return "a library needs a processor instruction this computer doesn't have", "crash"
     if code in (-11, 139, 3221225477, 3221226505) or "segmentation fault" in low or "access violation" in low:
-        return "a library it uses crashed"
-    return f"it ended unexpectedly (exit code {code})"
+        return "a library it uses crashed", "crash"
+    return f"it ended unexpectedly (exit code {code})", ""
 
 
-def crash_message(log_path, code) -> str:
+def _log_tail(log_path) -> tuple:
     try:
         with open(log_path, "rb") as f:
             f.seek(0, 2)
@@ -110,9 +115,39 @@ def crash_message(log_path, code) -> str:
         tail = ""
     last = next((line.strip() for line in reversed(tail.splitlines())
                  if line.strip() and not _NOISE.match(line.strip())), "")
+    return tail, last
+
+
+def crash_message(log_path, code) -> str:
+    tail, last = _log_tail(log_path)
     detail = f" Last message: {last[:240]}" if last else ""
     return (f"The local video worker stopped: {crash_reason(tail, code)}. Saved work is kept: press Resume saved project "
             f"to carry on from where it stopped.{detail} (Copy diagnostics in Setup includes the full log.)")
+
+
+# an exception's last line: "MemoryError", "RuntimeError: …", "playwright._impl._errors.TargetClosedError: …"
+_ERROR_LINE = re.compile(r"^(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*(?:Error|Exception|Interrupt|Exit|Fault|Warning)|ERROR)\b:?\s*(.*)$")
+
+
+def _error_line(last: str) -> str:
+    """The worker log's last line as a failure record may hold it: an exception's type and the start of its message
+    (cr_failure cleans that again). Any other line (a step's progress, a scene's or a title's words) is the video's
+    own, so it is left out."""
+    found = _ERROR_LINE.match(last or "")
+    if not found:
+        return ""
+    said = " ".join(found.group(2).split()[:12])[:120]
+    return found.group(1) + (f": {said}" if said else "")
+
+
+def crash_failure(log_path, code) -> dict:
+    """The worker's stop for the failure record (cr_failure): its cause and, when its log ended with an exception, that
+    exception, without the advice."""
+    tail, last = _log_tail(log_path)
+    reason, category = crash_cause(tail, code)
+    last = _error_line(last)
+    return {"category": category, "message": f"The video worker stopped: {reason}." + (f" Last message: {last}"
+                                                                                        if last else "")}
 
 
 def run_original_worker(home, project_id, run_id, studio):
@@ -167,7 +202,12 @@ def worker_options(home) -> dict:
     """How Studio starts a video worker process (the Windows smoke test starts its Whisper worker the same way)."""
     # KMP_DUPLICATE_LIB_OK: two copies of Intel's OpenMP (the speech-timing model's and another library's) abort a
     # process outright on Windows ("OMP: Error #15") instead of running.
-    options = {"cwd": str(home), "stdin": subprocess.DEVNULL, "env": {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE"}}
+    # PYTHONUTF8: the engine is the private source, and 81 of its text reads, writes and tool outputs name no encoding
+    # (sweep 2026-10-25), so on Windows they used cp1252: a curly quote (”) in UTF-8 can't be read that way, and an
+    # arrow, a Japanese title or an emoji can't be written. In UTF-8 mode they are all UTF-8, as on a Mac, and so are the
+    # 3D, timeline and style workers this one starts. The Shorts run the same way (cr_shorts.child_env).
+    options = {"cwd": str(home), "stdin": subprocess.DEVNULL,
+               "env": {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8:replace"}}
     if os.name == "nt":
         options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
@@ -176,10 +216,15 @@ def worker_options(home) -> dict:
 
 
 class VideoWorkers:
-    def __init__(self, studio, home, *, popen=None, stop=None):
+    def __init__(self, studio, home, *, popen=None, stop=None, awake=None):
         self.studio, self.home = studio, Path(home)
         self.popen = popen or subprocess.Popen
         self.stop_process = stop or self._stop_process
+        # the computer stays awake while a real worker runs (cr_awake); a stand-in worker (tests) needs nothing
+        if awake is None and popen is None:
+            import cr_awake
+            awake = cr_awake.hold
+        self.awake = awake
         self.lock = threading.RLock()
         self.current = None
 
@@ -228,6 +273,7 @@ class VideoWorkers:
                     return
                 active = {"slug": slug, "run_id": run_id, "process": process, "cancel_requested": False}
                 self.current = active
+            keep = self.awake(process) if self.awake else None
             try:
                 while process.poll() is None:
                     self._follow(active, progress, state, project_id)
@@ -241,9 +287,12 @@ class VideoWorkers:
                     _write(folder / "cancelled.json", {"project_id": project_id, "run_id": run_id, "slug": slug,
                             "status": "cancelled", "stopped_at": time.time()})
                 elif not state.get("done"):
-                    state.update(state="error", done=True, error=crash_message(log_path, process.returncode))
+                    state.update(state="error", done=True, error=crash_message(log_path, process.returncode),
+                                 cr_failure=crash_failure(log_path, process.returncode))
                     state.setdefault("lines", []).append(state["error"])
             finally:
+                if keep is not None:
+                    keep.release()
                 # Never free the account/project reservation while a worker lives.
                 if process.poll() is not None:
                     with self.lock:

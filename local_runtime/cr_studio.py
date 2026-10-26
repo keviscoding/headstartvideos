@@ -19,6 +19,8 @@ import cr_capabilities
 import cr_media
 import cr_render
 import cr_claude
+import cr_failure
+import cr_machine
 import cr_mcp
 import cr_network
 import cr_paths
@@ -37,6 +39,41 @@ STUDIO_URL = "http://127.0.0.1:7860"
 # for Copy diagnostics (secrets are hidden when they're copied).
 import collections
 RECENT_OUTPUT = collections.deque(maxlen=400)
+
+# A Studio started from inside a Claude Code chat inherits that chat's variables. CLAUDE_EFFORT=xhigh then makes every
+# `claude -p` step Studio runs think at extra-high effort: a 3D review round went past half an hour and steps overran
+# CC_TIMEOUT, so a 2-minute video took hours. The chat's ids and sockets also point at a session that may be gone.
+# Studio's own Claude steps run on the customer's normal settings, so these are dropped when Studio starts. The login
+# (CLAUDE_CODE_OAUTH_TOKEN) and the customer's own configuration (Bedrock, Vertex, Git Bash path, output limits) stay.
+_CHAT_ONLY = {"CLAUDE_EFFORT", "CLAUDECODE", "CLAUDE_PID", "CLAUDE_PREVIEW_CLASSIFIER_FLOOR",
+              "MCP_CONNECTION_NONBLOCKING", "MCP_SERVER_CONNECTION_BATCH_SIZE"}
+_CHAT_PREFIXES = ("CLAUDE_AGENT_SDK_", "CLAUDE_CODE_SESSION", "CLAUDE_CODE_HOST_", "CLAUDE_CODE_CHILD_",
+                  "CLAUDE_CODE_MESSAGING_", "CLAUDE_CODE_DESKTOP_", "CLAUDE_CODE_SDK_")
+_CHAT_CODE = {"ENTRYPOINT", "SIMPLE", "EXECPATH", "TERMINAL_MCP_TOOLS", "STARTUP_FAILURE_RESULTS", "REPORT_FINDINGS",
+              "EMIT_TOOL_USE_SUMMARIES", "ENABLE_ASK_USER_QUESTION_TOOL", "ENABLE_SDK_FILE_CHECKPOINTING", "EAGER_FLUSH",
+              "DISABLE_CRON", "DISABLE_TERMINAL_TITLE", "OAUTH_SCOPES", "ACCOUNT_UUID", "ORGANIZATION_UUID", "USER_EMAIL"}
+CHAT_SETTINGS_DROPPED = []
+
+
+def chat_line() -> str:
+    """For Copy diagnostics: whether this Studio was started from inside a Claude Code chat."""
+    if not CHAT_SETTINGS_DROPPED:
+        return "no"
+    effort = [x for x in CHAT_SETTINGS_DROPPED if x.startswith("CLAUDE_EFFORT=")]
+    return "yes, its settings were left out" + (" (%s)" % effort[0] if effort else "")
+
+
+def forget_claude_chat(environ=None) -> list:
+    """Drop the variables a Claude Code chat hands its child processes; -> what was dropped (names, plus the effort
+    level the chat asked for, never a value that could be personal)."""
+    environ = os.environ if environ is None else environ
+    gone = []
+    for name in sorted(environ):
+        if (name in _CHAT_ONLY or name.startswith(_CHAT_PREFIXES)
+                or (name.startswith("CLAUDE_CODE_") and name[len("CLAUDE_CODE_"):] in _CHAT_CODE)):
+            gone.append("CLAUDE_EFFORT=%s" % environ[name][:12] if name == "CLAUDE_EFFORT" else name)
+            environ.pop(name, None)
+    return gone
 
 
 class _RecentOutput:
@@ -535,7 +572,9 @@ def create_app():
     # The project launcher reads this private, local-only control token. It is
     # never sent to CR or included in copied launch commands.
     control = HOME / ".cr-runtime.json"
-    control.write_text(json.dumps({"pid":os.getpid(),"token":token,"port":7860}), encoding="utf-8")
+    # "output": where the videos go (CHANNELRECIPE_OUTPUT moves it), so Claude Code's quote measures that disk
+    control.write_text(json.dumps({"pid":os.getpid(),"token":token,"port":7860,
+                                   "output":str(getattr(studio.mv, "OUTPUT_ROOT", "") or "")}), encoding="utf-8")
     control.chmod(0o600)
     # Prevent a remote website from using the local control room (DNS rebinding/CSRF).
     @studio.app.before_request
@@ -580,6 +619,7 @@ def create_app():
                 if preflight.get("manimgx_identity"):
                     data["manimgx_identity"] = preflight["manimgx_identity"]
                     request._cached_json = (data, data)
+                g.cr_warnings = preflight.get("warnings") or []   # said with the start (inject), never a stop
                 cfg = cr_bridge.load_settings()
                 cfg["setup_proof"] = preflight["proof"]
                 cr_bridge.save_settings(cfg)
@@ -633,6 +673,8 @@ def create_app():
         paths = cr_paths.status(HOME)                  # Windows' 260-character limit: room for a video's files
         if paths:
             checks["file_paths"] = paths
+        # memory, cores and the free disk the videos go on (CHANNELRECIPE_OUTPUT moves them): a note here, a stop per video
+        checks["computer"] = cr_machine.status(HOME, root=getattr(studio.mv, "OUTPUT_ROOT", None))
         # the setup page shows "Checking…" after 3 s and asks again; a check before work waits for the answer
         # inside a request Studio is serving, so it also tries to reach itself (only a block on the computer stops that)
         page = has_request_context() and request.path == "/cr-status"
@@ -750,7 +792,7 @@ def create_app():
             if not 200 <= response.status_code < 300:
                 return response
             queued=response.get_json().get("queued",[])
-            return jsonify(queued=queued,project_id=project_id)
+            return jsonify(queued=queued,project_id=project_id,**({"warnings":preflight["warnings"]} if preflight.get("warnings") else {}))
         except Exception as error:
             return jsonify(error=str(error)),409
 
@@ -803,6 +845,8 @@ def create_app():
             if activity.lock.acquire(blocking=False):
                 try:
                     if not activity.busy():
+                        # a video in Studio's trash (cr_trash) still tells ChannelRecipe how its run ended: the
+                        # replay only renames the receipt beside itself, and Restore moves the folder back whole
                         for pending in list(studio.OUT.rglob(".cr-finish-pending.json"))[:20]:
                             try:
                                 sync_completion_receipt(cr_bridge, pending)
@@ -898,10 +942,12 @@ def create_app():
                 tick(cli.get("installed")), (" " + str(cli["version"])) if cli.get("version") else "",
                 tick(cli.get("authenticated")), tick(cli.get("mcp_connected")), tick(cli.get("models_verified"))),
             "Writing route: %s" % checks.get("brain_mode", "unknown"),
+            "Started from a Claude Code chat: %s" % chat_line(),
             "Voice and images: %s%s · narration %s" % (hub.get("provider", "none"),
                 (" (" + ", ".join(hub.get("tasks", [])) + ")") if hub.get("tasks") else "", tick(voice.get("connected"))),
             cr_network.diagnostics_line(checks.get("network") or {}),
             cr_paths.diagnostics_line(checks.get("file_paths")),
+            cr_machine.diagnostics_line(checks.get("computer")),
             "Speech-timing model: %s" % ("ready" if (checks.get("speech_model") or {}).get("ready") else
                                          ((checks.get("speech_model") or {}).get("reason") or "unknown")[:300]),
             "Setup ready: %s" % tick(readiness.get("ready")),
@@ -1366,6 +1412,12 @@ def create_app():
     # The independent workspace owns its shell and local-token client already.
     @studio.app.after_request
     def inject(response):
+        if request.path == "/api/run" and getattr(g, "cr_warnings", None) and 200 <= response.status_code < 300 \
+                and response.is_json:
+            # what this video's check warned about (a disk with little to spare) goes back with its start
+            body = response.get_json(silent=True)
+            if isinstance(body, dict):
+                response.set_data(json.dumps({**body, "warnings": g.cr_warnings}))
         if response.headers.get("X-CR-Workspace") == "1":
             return response
         if response.mimetype == "text/html" and request.path != "/cr-setup" and not response.direct_passthrough:
@@ -1550,11 +1602,20 @@ def create_app():
                 try:
                     report={"project_id":project["id"],"status":"done" if complete else "failed",
                         "artifacts":artifacts,"error_code":"" if complete else "cancelled" if state.get("state")=="cancelled" else "runtime_failed"}
+                    if not complete:
+                        # why it stopped, privacy-safe (cr_failure): what ChannelRecipe counts to fix the commonest stops
+                        report["failure"]=cr_failure.for_job(HOME,state,spec,job,project["id"],report["error_code"])
                     pending=job/".cr-finish-pending.json"
                     cr_claude._private_write(pending,report)
-                    cr_bridge.finish_project(report)
+                    answer=cr_bridge.finish_project(report)
                     pending.replace(job/".cr-finish.json")
                     receipt_saved=True
+                    note=cr_failure.update_note(answer) if not complete and report["error_code"]!="cancelled" else ""
+                    if note:
+                        # one plain line: a newer Studio fixes many stops; updating stays the creator's choice
+                        state.setdefault("lines", []).append(note)
+                        if state.get("error"):
+                            state["error"]=str(state["error"]).rstrip()+" "+note
                 except Exception as error:
                     detail = str(error) if isinstance(error, cr_mcp.WorkflowError) else "CR could not save its completion record. Check your connection, then sync in Setup."
                     state.setdefault("lines", []).append("Your local output is saved. " + detail)
@@ -1595,6 +1656,8 @@ def create_app():
     cr_optional_renderer.install(studio, activity, home=HOME, readiness=setup_status)
     import cr_workspace
     cr_workspace.install(studio, activity, token=token, home=HOME)
+    import cr_timing
+    cr_timing.install(studio, home=HOME)                         # the timeline editor's picture timing (its own retime)
     import cr_style_options
     cr_style_options.install(studio)
     cr_cloud.install(HOME)                                       # the farm on ChannelRecipe's machines, when the account has it
@@ -1738,6 +1801,11 @@ def main():
         sys.stdout, sys.stderr = _RecentOutput(sys.stdout), _RecentOutput(sys.stderr)
     # Every page poll printed a line; keep the window for what matters.
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    CHAT_SETTINGS_DROPPED[:] = forget_claude_chat()
+    if CHAT_SETTINGS_DROPPED:
+        effort = next((x.split("=", 1)[1] for x in CHAT_SETTINGS_DROPPED if x.startswith("CLAUDE_EFFORT=")), "")
+        print("Started from inside a Claude Code chat: Studio's own Claude steps use your normal settings"
+              + (" (not the chat's %s effort)" % effort if effort else "") + ".", flush=True)
     import cr_update
     if cr_update.studio_running():
         if already_running():
@@ -1763,6 +1831,8 @@ def main():
         pass
     studio = create_app()
     studio.OUT.mkdir(exist_ok=True)
+    import cr_trash                                              # deleted videos and styles older than 30 days go
+    threading.Thread(target=cr_trash.empty_old, args=(HOME,), daemon=True, name="cr-trash").start()
     try:
         import cr_claude_code
         cr_claude_code.configure(HOME)                           # Claude Code in this folder: the studio tools

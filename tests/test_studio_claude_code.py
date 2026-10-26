@@ -29,6 +29,8 @@ CATALOG = {
          "features": {"offered": [], "on": []}},
         {"name": "cr-shorts-ranking", "label": "Ranking Shorts", "tagline": "Clips to #1.", "short_seconds": 25,
          "ranking": True, "features": {"offered": [], "on": []}},
+        {"name": "cr-shorts-roblox", "label": "Roblox Story Shorts", "tagline": "Blocky stories.", "short_seconds": 55,
+         "short_cost_usd": 0.6, "cost": "About $0.60 a Short.", "features": {"offered": [], "on": []}},
         {"name": "cr-manga-recaps", "label": "Manga Recaps", "tagline": "Panels.", "panels": True,
          "features": {"offered": [], "on": []}},
         {"name": "cr_clone_abc", "label": "My Style", "tagline": "Mine.", "custom": True,
@@ -43,7 +45,8 @@ class FakeStudio:
         self.home = None
         self.run_answers = []
         self.notes = {"cr-shorts-3d": "Shorts render on this computer.", "cr-manga-recaps": "Reads your own panels.",
-                      "cr-shorts-ranking": "Shorts render on this computer.", "cr_clone_abc": ""}
+                      "cr-shorts-ranking": "Shorts render on this computer.", "cr-shorts-roblox": "Shorts render on this computer.",
+                      "cr_clone_abc": ""}
         self.cloud_quote = {"available": True, "balance_usd": 7.71, "topup_url": "https://channelrecipe.com/app#billing",
                             "label": "Cloud machine", "expected_minutes": 15, "expected_cents": 29, "max_cents": 78}
 
@@ -120,8 +123,38 @@ class FakeStudio:
                                 {"id": "elevenlabs", "label": "ElevenLabs", "ready": False, "note": "n",
                                  "setup": "/cr-setup"},
                                 {"id": "own", "label": "Own", "ready": True, "note": "n"}]}
+        if path.startswith("/cr-workspace/presenter-choice/"):
+            if method == "POST":
+                return {"saved": True, "choice": body["choice"]}
+            if path.endswith("/heist--abc"):
+                return {"stopped_on_presenter": True, "current": "again",
+                        "failed": {"label": "Kie.ai", "reason": "Internal Error", "charged": 0},
+                        "choices": [{"id": "skip", "label": "Finish without the presenter", "ready": True, "note": "n"},
+                                    {"id": "again", "label": "Try the presenter again", "ready": True, "note": "n"}]}
+            return {"stopped_on_presenter": False, "choices": []}
+        if path == "/api/status/watching--abc":
+            return {"state": "running", "done": False, "progress": 0.3, "error": "", "lines": [
+                "YouTube: 120 searches", "  YouTube: watched 15 of 42 videos (6 min so far; this video stops watching "
+                "at 40 min)", "  v03_0: not watched - the watcher said no"]}
+        if path == "/api/status/heist--abc":
+            return {"state": "error", "done": True, "progress": 0.97, "lines": ["Avatar intro"],
+                    "error": "Kie.ai couldn't make this video's presenter (Internal Error)."}
+        if path == "/cr-workspace/voice/heist--abc":
+            return {"stopped_on_voice": False, "has_voice": True, "choices": []}
+        if path == "/cr-workspace/project/heist--abc":
+            return {"slug": "heist--abc", "project_id": "crv_" + "3" * 24, "available_for_resume": True,
+                    "title": "The Heist", "status": "error"}
         if path == "/api/products":
             return {"products": [{"slug": "pantry-book", "title": "Pantry Book", "secret": "no"}]}
+        if path.startswith("/cr-workspace/delete/"):            # cr_workspace's own delete routes (cr_trash)
+            kind, ident = path.split("/")[3:5]
+            title = {"done--abc": "Done", "busy--abc": "Busy", "cr_clone_abc": "My Style"}[ident]
+            blocked = "is being made right now. Cancel it or let it finish, then delete it." if ident == "busy--abc" else ""
+            plan = {"kind": kind, "id": ident, "title": title, "goes": ["The finished video: Done.mp4 (5.0 MB)"],
+                    "kept": ["Your voice library and saved recordings"], "keep_days": 30, "blocked": blocked}
+            if method == "POST":
+                return {**plan, "deleted": True, "trash_id": "v20261025-120000-abcdef", "empties_at": 1_800_000_000}
+            return plan
         raise AssertionError("unexpected route " + path)
 
     def posted(self, path):
@@ -183,6 +216,19 @@ def test_a_quote_for_other_choices_or_an_old_one_starts_nothing(studio, monkeypa
     assert out["started"] is False and not studio.posted("/api/run")
 
 
+def test_a_quote_with_research_footage_says_how_long_its_watching_takes(studio):
+    """A customer's 10-minute video watched YouTube clips for 22 extra hours (2026-10-25): the time is said up front,
+    with the cost, and the watching is capped to a budget for the length."""
+    q = ok("quote", {"style": "documentary", "minutes": 10})
+    assert q["footage"]["videos_watched_at_most"] == 50 and q["footage"]["adds_minutes"] == [22, 44]
+    assert q["footage"]["stops_watching_after_minutes"] == 40 and "options.features" in q["footage"]["note"]
+    assert "Research footage adds about 22 to 44 minutes a video" in q["summary"]
+    off = ok("quote", {"style": "documentary", "minutes": 10, "options": {"features": {"youtube": False}}})
+    assert "footage" not in off and "Research footage" not in off["summary"]
+    progress = ok("progress", {"id": "video:watching--abc"})
+    assert progress["watching_clips"]["watched"] == 15 and progress["watching_clips"]["of"] == 42
+
+
 def test_cloud_quote_and_start(studio):
     q = ok("quote", {"style": "documentary", "minutes": 1, "titles": 1, "where": "studio_cloud"})
     assert q["cloud"]["expected_usd_each"] == 0.29 and q["cloud"]["reserved_usd_each"] == 0.78
@@ -223,6 +269,13 @@ def test_shorts_and_ranking_options(studio):
     assert body["minutes"] == 1 and body["extra"].startswith("[[short_seconds=40]] [[ranking=")
     ranking = json.loads(body["extra"].split("[[ranking=", 1)[1].split("]]", 1)[0])
     assert ranking["ranks"] == 7 and ranking["sfx"] == "light" and ranking["use_credits"] is False
+
+
+def test_a_shorts_recipe_quotes_its_own_cost_per_short(studio):
+    q = ok("quote", {"style": "cr-shorts-roblox", "titles": 2})
+    assert q["media"]["per_video_usd"] == 0.6 and q["expected_total_usd"] == 1.2
+    assert "media about $0.60 each" in q["summary"]
+    assert ok("quote", {"style": "cr-shorts-3d"})["media"]["per_video_usd"] == 0.02   # no estimate: the voice price
 
 
 def test_the_daily_model_check_is_run_once_when_it_is_the_only_blocker(studio):
@@ -314,7 +367,7 @@ def test_mcp_handshake_and_tool_list():
     assert [r["id"] for r in replies] == [1, 2, 3]
     assert replies[0]["result"]["protocolVersion"] == "2025-03-26"
     names = {t["name"] for t in replies[1]["result"]["tools"]}
-    assert set(ccc.FREE_TOOLS) | set(ccc.PAID_TOOLS) == names
+    assert set(ccc.FREE_TOOLS) | set(ccc.PAID_TOOLS) | set(ccc.DESTRUCTIVE_TOOLS) == names
     assert all(t["inputSchema"]["type"] == "object" for t in replies[1]["result"]["tools"])
     assert replies[2]["error"]["code"] == -32601
 
@@ -643,6 +696,20 @@ def test_a_video_that_stopped_on_its_voice_offers_the_ways_to_voice_it(studio):
     assert schema["enum"] == ["again", "gemini-man", "gemini-woman", "elevenlabs", "own"]
 
 
+def test_a_video_that_stopped_on_its_presenter_offers_to_finish_without_it(studio):
+    """Kie answered 500 on a presenter intro and stopped a finished video at its last step (2026-10-25)."""
+    out = ok("progress", {"id": "video:heist--abc"})
+    assert out["stopped_on"] == "presenter" and out["presenter_failed"]["charged"] == 0
+    assert [c["id"] for c in out["presenter_choices"]] == ["skip", "again"] and "resume_video" in out["presenter_note"]
+    assert "voice_choices" not in out
+    resumed = ok("resume_video", {"id": "video:heist--abc", "presenter": "skip"})
+    assert resumed["presenter"] == "skip"
+    assert studio.posted("/cr-workspace/presenter-choice/heist--abc") == [{"choice": "skip"}]
+    assert studio.posted("/cr-submit-project") == [{"project_id": "crv_" + "3" * 24}], "the choice, then Resume"
+    assert tools.TOOLS["resume_video"][2]["properties"]["presenter"]["enum"] == ["skip", "again"]
+    assert ok("progress", {"id": "video:zombie--abc"})["stopped_on"] == "voice", "a voice stop stays a voice stop"
+
+
 def test_setup_check_says_why_the_graphics_browser_isnt_ready_and_the_fix_runs_in_studio(studio, monkeypatch):
     calls = []
     real_call = tools.call
@@ -771,3 +838,138 @@ def test_progress_on_an_animated_clone_says_the_animations_score_and_never_picks
     status["renderer"] = {"state": "passed", "overall": 6.7, "bar": 5.5, "say": "Claude wrote it: 6.7/10."}
     passed = ok("progress", {"id": op})
     assert passed["animation"]["what_to_tell_them"] == "Claude wrote it: 6.7/10." and "list_styles" in passed["next"]
+
+
+SIMILAR = [{"id": "cr_clone_abc", "name": "My Style", "closeness": 93, "why": "both are mostly 3D scenes",
+            "kind": "video", "mine": True, "recommended": False, "same_references": False,
+            "preview_url": "/cr-workspace/preview/recipe/cr_clone_abc.jpg", "use_url": "/?cr-preset=cr_clone_abc",
+            "sample": {"can": True, "pictures": 2, "seconds": 5.0, "cost_usd": 0.05}},
+           {"id": "cr-shorts-3d", "name": "3D Explainer Shorts", "closeness": 90, "why": "both are mostly 3D scenes",
+            "kind": "short", "mine": False, "recommended": False, "same_references": False, "preview_url": "",
+            "use_url": "/?cr-preset=cr-shorts-3d", "sample": {"can": False, "why_not": "a whole Short"}}]
+
+
+@pytest.fixture
+def more(studio, monkeypatch):
+    """The fake Studio with the look's suggestions, the style editor and the sample routes."""
+    edits = []
+
+    def call(method, path, body=None, **kw):
+        if path == "/cr-style-clone/look/lk_" + "d" * 24:
+            return {"look_id": "lk_" + "d" * 24, "state": "done", "shorts": True, "similar": SIMILAR,
+                    "mapping": {"base": "3d", "questions": [], "route": {}}}
+        if path == "/cr-style-clone/style/cr_clone_abc":
+            edits.append((method, body))
+            return {"style": "cr_clone_abc", "name": (body or {}).get("changes", {}).get("name", "My Style"),
+                    "features": {"offered": [{"key": "ai_images", "label": "Generated pictures"}], "on": ["ai_images"]},
+                    "study": {"title": "What if the sun went out", "brief": "Light", "base_style": "stories",
+                              "reference_urls": ["https://www.youtube.com/@ifology/videos"]},
+                    "saved": method == "POST"}
+        if path == "/cr-style-clone/sample":
+            studio.calls.append((method, path, body))
+            return {"sample_id": "sm_" + "e" * 24, "state": "running", "cost_usd": 0.05, "message": "Drawing"}
+        if path == "/cr-style-clone/sample/sm_" + "e" * 24 + "/status":
+            return {"sample_id": "sm_" + "e" * 24, "state": "done", "video": "/studio/output/sample.mp4",
+                    "video_url": "/cr-style-clone/sample/sm_" + "e" * 24 + "/video.mp4", "cost_usd": 0.05}
+        return studio(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", call)
+    return SimpleNamespace(edits=edits)
+
+
+def test_a_finished_look_suggests_the_closest_styles_and_a_paid_try_first_without_blocking_the_study(studio, more):
+    out = ok("progress", {"id": "lk_" + "d" * 24})
+    assert out["shorts"] is True and [s["id"] for s in out["similar_styles"]] == ["cr_clone_abc", "cr-shorts-3d"]
+    assert out["similar_styles"][0]["try_first"] == {"tool": "style_sample", "cost_usd": 0.05, "seconds": 5.0}
+    assert out["similar_styles"][1]["try_first"] == {"not_offered": "a whole Short"}
+    assert out["similar_styles"][0]["picture_url"].startswith("http://localhost:7860/cr-workspace/preview/")
+    assert "suggestions only, never a reason not to study" in out["next"]
+    assert "regular landscape (16:9) videos" in out["shorts_note"], "a Shorts study says what its style makes"
+
+
+def test_clone_style_takes_a_bounded_study_budget_and_says_what_a_shorts_study_makes(studio, more, monkeypatch):
+    look_id = "lk_" + "d" * 24
+    looked = tools.call
+
+    def call(method, path, body=None, **kw):
+        if path.endswith("/plan"):
+            return {"mapping": {"base": "3d", "route": {}}}
+        if path == "/cr-style-clone/start":
+            studio.calls.append((method, path, body))
+            return {"operation_id": "op_" + "f" * 24, "state": "running"}
+        return looked(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", call)
+    tools.STATE.mkdir(parents=True, exist_ok=True)
+    (tools.STATE / "looks.json").write_text(json.dumps({look_id: {"preview_id": "pv_" + "c" * 64,
+                                                                  "reference_ids": ["a1aaaaaaaaa"], "at": 1}}))
+    args = {"look_id": look_id, "style_name": "Beasts", "example_title": "Every city has a beast"}
+    for wrong in (14, 31, "25", True):
+        assert tools.run_tool("clone_style", {**args, "budget_minutes": wrong})["isError"]
+    assert not studio.posted("/cr-style-clone/start")
+    started = ok("clone_style", {**args, "budget_minutes": 30})
+    assert studio.posted("/cr-style-clone/start")[0]["budget_minutes"] == 30 and "16:9" in started["shorts_note"]
+    ok("clone_style", args)
+    assert studio.posted("/cr-style-clone/start")[1]["budget_minutes"] == 22, "the page's default"
+
+
+def test_style_sample_is_a_paid_tool_that_says_its_cost_and_brings_back_the_video(studio, more):
+    assert "style_sample" in ccc.PAID_TOOLS and "edit_style" in ccc.FREE_TOOLS
+    started = ok("style_sample", {"style": "My Style", "topic": "How bees build homes"})
+    assert started["id"] == "sm_" + "e" * 24 and started["cost_usd"] == 0.05
+    assert studio.posted("/cr-style-clone/sample") == [{"style": "cr_clone_abc", "topic": "How bees build homes",
+                                                        "line": "", "acknowledge_costs": True}]
+    done = ok("progress", {"id": "sm_" + "e" * 24})
+    assert done["file"] == "/studio/output/sample.mp4" and done["watch_url"].endswith("/video.mp4")
+    assert tools.run_tool("style_sample", {"style": "My Style"})["isError"], "a topic first"
+
+
+def test_edit_style_shows_changes_and_says_how_to_study_it_again(studio, more):
+    shown = ok("edit_style", {"style": "My Style"})
+    assert shown["saved"] is False and more.edits[-1] == ("GET", None)
+    assert shown["study_again"]["example_title"] == "What if the sun went out" and "clone_style_look" in shown["next"]
+    saved = ok("edit_style", {"style": "cr_clone_abc", "name": "Bees", "script_notes": ["Be warm."]})
+    assert saved["saved"] and saved["name"] == "Bees"
+    assert more.edits[-1] == ("POST", {"changes": {"name": "Bees", "script_notes": ["Be warm."]}})
+    assert tools.run_tool("edit_style", {"style": "documentary"})["isError"], "a recipe Studio ships isn't edited here"
+
+
+# ── deleting, only ever into Studio's trash and always asked ──────────────────────────────────────────────────
+
+def test_delete_video_moves_the_named_video_to_the_trash(studio):
+    out = ok("delete_video", {"id": "video:done--abc", "title": "  done "})
+    assert out["deleted"] and out["moved_to_trash"] == ["The finished video: Done.mp4 (5.0 MB)"]
+    assert out["kept"] == ["Your voice library and saved recordings"]
+    assert "Recently deleted" in out["restore"] and "http://localhost:7860/#projects" in out["restore"]
+    assert studio.posted("/cr-workspace/delete/video/done--abc") == [{}]
+
+
+def test_delete_video_refuses_another_title_or_a_video_being_made(studio):
+    wrong = tools.run_tool("delete_video", {"id": "video:done--abc", "title": "Zombie Outbreak"})
+    assert wrong["isError"] and "not “Zombie Outbreak”" in wrong["structuredContent"]["error"]
+    busy = tools.run_tool("delete_video", {"id": "video:busy--abc", "title": "Busy"})
+    assert busy["isError"] and "being made" in busy["structuredContent"]["error"]
+    assert tools.run_tool("delete_video", {"id": "video:../x", "title": "x"})["isError"]
+    assert not [c for c in studio.calls if c[0] == "POST"], "nothing was deleted"
+
+
+def test_delete_style_takes_only_a_cloned_style_by_its_name(studio):
+    refused = tools.run_tool("delete_style", {"id": "documentary", "name": "Editorial Documentary"})
+    assert refused["isError"] and "Only a style the creator cloned" in refused["structuredContent"]["error"]
+    assert not [c for c in studio.calls if "/delete/" in c[1]], "a built-in recipe is refused before Studio is asked"
+    assert tools.run_tool("delete_style", {"id": "cr_clone_abc", "name": "Other"})["isError"]
+    out = ok("delete_style", {"id": "cr_clone_abc", "name": "My Style"})
+    assert out["deleted"] and "#styles" in out["restore"]
+    assert studio.posted("/cr-workspace/delete/style/cr_clone_abc") == [{}]
+
+
+def test_the_deletes_are_destructive_and_always_asked(tmp_path):
+    for name in ("delete_video", "delete_style"):
+        hints = tools.TOOLS[name][3]
+        assert hints["destructiveHint"] is True and hints["readOnlyHint"] is False
+        assert "trash" in tools.TOOLS[name][1] and "approve" in tools.TOOLS[name][1]
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"permissions": {
+        "allow": ["mcp__studio__delete_video", "mcp__studio__list_videos"]}}))
+    ccc.configure(tmp_path)
+    permissions = json.loads((tmp_path / ".claude" / "settings.json").read_text())["permissions"]
+    assert {"mcp__studio__delete_video", "mcp__studio__delete_style"} <= set(permissions["ask"])
+    assert not {"mcp__studio__delete_video", "mcp__studio__delete_style"} & set(permissions["allow"])

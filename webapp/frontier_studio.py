@@ -27,20 +27,21 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from webapp import milestones
+from webapp import studio_failures
 from webapp import database as db
 from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.104"
+VERSION = "5.3-admin.105"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.104.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.105.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104", "5.3-admin.105")
 # Releases that may also START or RESUME a video: every release from MIN_SUPPORTED_RELEASE to the newest. A new release
 # never forces an update (2026-10-24: with "the newest two", five releases in one night made creators stop their work
 # to update, twice). Raise the minimum only on purpose, when older Studios can no longer work with this server, and say
@@ -820,6 +821,30 @@ class NativeFinishProject(SafeContract):
     status: Literal["done", "failed"]
     artifacts: list[NativeArtifact] = Field(default_factory=list, max_length=20)
     error_code: NativeError = ""
+    # why a stopped project stopped (Studio 105+, local_runtime/cr_failure.py); older Studios send none
+    failure: studio_failures.FailureRecord | None = None
+
+
+class FailureReport(BaseModel):
+    """A stop that ends no project of its own (Studio Cloud's preparing)."""
+    model_config = ConfigDict(extra="ignore")
+    failure: studio_failures.FailureRecord
+
+
+def update_note(local_version) -> str:
+    """One plain line for a stopped video's message when its Studio isn't the newest release, or "". It never asks
+    for more than the release rules do: any of SUPPORTED_RELEASES may keep making videos (MIN_SUPPORTED_RELEASE), so
+    for those updating is the creator's choice, between videos."""
+    if local_version not in APPROVED_RELEASES or VERSION not in APPROVED_RELEASES:
+        return ""
+    if APPROVED_RELEASES.index(local_version) >= APPROVED_RELEASES.index(VERSION):
+        return ""
+    newest = "Studio " + VERSION.rsplit(".", 1)[-1]
+    if local_version in SUPPORTED_RELEASES:
+        return (f"A newer Studio, {newest}, is out and fixes many problems like this one. You can update between "
+                "videos with Update now at the top of the Studio page.")
+    return (f"A newer Studio, {newest}, is out and fixes many problems like this one. This Studio can finish its saved "
+            "videos; update between videos (Update now at the top of the Studio page) to start new ones.")
 
 
 class NativeRetryStage(SafeContract):
@@ -1139,11 +1164,20 @@ def native_finish_project(user, req: NativeFinishProject):
         conn.execute(db._q("UPDATE frontier_native_sessions SET artifacts_json=?,error_code=?,updated_at=? WHERE project_id=?"),
                      (json.dumps(artifacts), req.error_code, now, req.project_id))
         conn.execute(db._q("UPDATE frontier_projects SET status=?,updated_at=? WHERE id=?"), (req.status, now, req.project_id))
-        title, purpose = row["title"], json.loads(session["setup_json"]).get("purpose", "video")
+        setup = json.loads(session["setup_json"])
+        title, purpose = row["title"], setup.get("purpose", "video")
+    result = {"saved": True, "reused": False, "status": req.status, "project_id": req.project_id}
     if req.status == "done" and purpose == "video":
         from webapp import lifecycle_email
         lifecycle_email.on_video_finished(user, title)              # the first one gets a short "it's done" email
-    return {"saved": True, "reused": False, "status": req.status, "project_id": req.project_id}
+    if req.status == "failed":
+        if req.failure is not None:                                  # why it stopped: counted in /api/admin/failures
+            studio_failures.record_project(user["id"], req.project_id, req.error_code, req.failure, title)
+        note = "" if req.error_code == "cancelled" else update_note(
+            (req.failure.version if req.failure is not None else "") or setup.get("local_version"))
+        if note:
+            result["update_note"] = note
+    return result
 
 
 def native_retry_stage(user,req:NativeRetryStage):
@@ -1300,6 +1334,13 @@ def make_router(session_user, *, prefix="/api/frontier"):
     @router.post("/stages/retry")
     def runtime_retry(req:NativeRetryStage,user=Depends(access)):
         return native_retry_stage(user,req)
+
+    @router.post("/failures")
+    def report_failure(req: FailureReport, user=Depends(access)):
+        """A stop that ends no project (Studio Cloud's preparing): kept for the team's counts, a few an hour."""
+        saved = studio_failures.record_report(user["id"], req.failure)
+        note = "" if req.failure.category == "cancelled" else update_note(req.failure.version)
+        return {"saved": saved, **({"update_note": note} if note else {})}
 
     def site_link(request: Request, user_id: int, what: str) -> str | None:
         """This site's own link for `what`, signed for this account, for a computer that can't fetch storage links."""

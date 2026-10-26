@@ -25,6 +25,7 @@ from werkzeug.serving import make_server
 RUNTIME = Path(__file__).parents[1] / "local_runtime"
 sys.path.insert(0, str(RUNTIME))
 import cr_presentation
+import cr_watch
 
 TOKEN = "synthetic-browser-local-token"
 CLONE = "cr_clone_browser_fixture"
@@ -46,11 +47,11 @@ def browser():
 
 @pytest.fixture
 def workspace(browser):
-    env = SimpleNamespace(mode="ready", creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
+    env = SimpleNamespace(mode="ready", status_lines=None, creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
                           local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}],
-                          cloud=None, cloud_starts=[], characters=[], drawn=[])
+                          cloud=None, cloud_starts=[], characters=[], drawn=[], active_lines=["ffmpeg: final render"])
     preview_lock = threading.Lock()
     image = io.BytesIO()
     Image.new("RGB", (160, 90), "#415573").save(image, "JPEG")
@@ -67,7 +68,7 @@ def workspace(browser):
     catalog = {"channels": cr_presentation.presentation_catalog(rows, {
         CLONE: {"cr_style_clone": {"visual_mode": "reference_only"}}}),
         "features": features, "caps": {"features": {row["key"]: {"ok": True} for row in features}},
-        "dlc": {}, "prices": {}}
+        "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)]}
     app = Flask(__name__)
 
     @app.before_request
@@ -148,8 +149,31 @@ def workspace(browser):
         env.update_state = {"state": "restarting"}
         return jsonify(env.update_state)
 
+    @app.get("/cr-workspace/presenter-choice/<slug>")
+    def presenter_choices(slug):
+        return jsonify(stopped_on_presenter=slug == "presenter-film", current="again",
+                       failed={"label": "Kie.ai", "reason": "Internal Error", "charged": 0,
+                               "uncertain": getattr(env, "presenter_uncertain", False)}, choices=[
+                           {"id": "skip", "label": "Finish without the presenter", "ready": True,
+                            "note": "The video is finished as it is now, without the presenter intro."},
+                           {"id": "again", "label": "Try the presenter again", "ready": True,
+                            "note": "Best after waiting a few minutes."}])
+
+    @app.post("/cr-workspace/presenter-choice/<slug>")
+    def presenter_pick(slug):
+        return jsonify(saved=True, choice=request.json["choice"])
+
+    @app.get("/cr-workspace/stopped")
+    def stopped_projects():
+        if env.mode == "presenter":
+            return jsonify(projects=[{"slug": "presenter-film", "title": "The Heist", "style": "documentary",
+                                      "state": "stopped", "mtime": 1, "stopped_on": "presenter"}])
+        return jsonify(projects=[])
+
     @app.get("/api/queue")
     def queue():
+        if env.mode == "presenter":
+            return jsonify(busy=False, jobs=[])
         if env.mode == "voice":
             return jsonify(busy=False, jobs=[{"slug": "voice-film", "title": "The Heist", "state": "error"}])
         return jsonify(busy=env.mode == "active", jobs=[{"slug": "active-film", "title": "A film in production",
@@ -183,7 +207,7 @@ def workspace(browser):
 
     @app.get("/cr-workspace/project/<slug>")
     def saved_project(slug):
-        return jsonify(slug=slug, project_id="crv_" + "9" * 24, available_for_resume=slug == "voice-film",
+        return jsonify(slug=slug, project_id="crv_" + "9" * 24, available_for_resume=slug in ("voice-film", "presenter-film"),
                        title="The Heist", status="error")
 
     @app.get("/cr-workspace/voice/<slug>")
@@ -208,13 +232,15 @@ def workspace(browser):
 
     @app.get("/api/status/<slug>")
     def progress(slug):
+        if slug == "presenter-film":
+            return jsonify(error="no live job"), 404
         if slug == "voice-film":
             return jsonify(state="error", done=True, lines=["Writing the voiceover"], progress=0.08, elapsed=60,
                            error="Kie.ai failed this narration task. Internal Error, Please try again later",
                            cr_cancel={"can_cancel": False})
         active = slug == "active-film"
         return jsonify(state="running" if active else "done", done=not active,
-                       lines=["ffmpeg: final render"] if active else ["published: synthetic film"],
+                       lines=(env.status_lines or env.active_lines) if active else ["published: synthetic film"],
                        progress=0.425 if active else 1, elapsed=125, error="",
                        cr_cancel={"can_cancel": active, "run_id": "exact-active-run" if active else ""})
 
@@ -269,6 +295,49 @@ def workspace(browser):
     @app.get("/charimg/<name>")
     def character_picture(style=None, name=None):
         return Response(image.getvalue(), mimetype="image/jpeg")
+
+    # Delete into Studio's trash (cr_trash): what goes and what stays, then Restore
+    env.trash, env.trashed = [], {}
+
+    def item_title(kind, name):
+        if kind == "style":
+            return next((r["label"] for r in catalog["channels"] if r["name"] == name), name)
+        return next((j["title"] for j in env.finished_jobs if j["slug"] == name), name)
+
+    @app.get("/cr-workspace/delete/<kind>/<name>")
+    def delete_plan(kind, name):
+        goes = ["The style “My Illustrated Worlds”: its look, prompts and settings, from your Style library"] \
+            if kind == "style" else ["The finished video: A finished film.mp4 (12 MB)", "Its working files (40 MB)"]
+        kept = ["Videos you made with it stay in Projects"] if kind == "style" else ["Your voice library and saved recordings"]
+        return jsonify(kind=kind, id=name, title=item_title(kind, name), goes=goes, kept=kept, keep_days=30, blocked="")
+
+    @app.post("/cr-workspace/delete/<kind>/<name>")
+    def delete_item(kind, name):
+        entry = f"{kind[0]}20261025-120000-{len(env.trash):06x}"
+        title = item_title(kind, name)
+        if kind == "style":
+            env.trashed[entry] = ("style", [r for r in catalog["channels"] if r["name"] == name])
+            catalog["channels"] = [r for r in catalog["channels"] if r["name"] != name]
+        else:
+            env.trashed[entry] = ("video", [j for j in env.finished_jobs if j["slug"] == name])
+            env.finished_jobs = [j for j in env.finished_jobs if j["slug"] != name]
+        env.trash.insert(0, {"id": entry, "kind": kind, "name": title, "deleted_at": 1793000000, "days_left": 29})
+        return jsonify(deleted=True, kind=kind, id=name, title=title, trash_id=entry, goes=[], kept=[])
+
+    @app.get("/cr-workspace/trash")
+    def trash():
+        return jsonify(entries=env.trash, keep_days=30)
+
+    @app.post("/cr-workspace/trash/<entry>/restore")
+    def restore(entry):
+        kind, rows = env.trashed.pop(entry)
+        if kind == "style":
+            catalog["channels"] += rows
+        else:
+            env.finished_jobs += rows
+        row = next(r for r in env.trash if r["id"] == entry)
+        env.trash.remove(row)
+        return jsonify(restored=True, kind=kind, title=row["name"])
 
     @app.post("/cr-video/<slug>/cancel")
     def cancel(slug):
@@ -390,6 +459,32 @@ def test_projects_draw_native_progress_cancel_exact_run_and_preserve_exports(wor
     assert page.locator("#crw-output-editor").get_attribute("href") == "/editor/finished-film"
     assert page.locator("#crw-output-exports a").count() == 5
     assert page.locator("#crw-output-exports a").all_text_contents() == ["Narration", "Script", "Subtitles", "Description", "Thumbnail"]
+
+
+def test_research_footage_says_what_its_watching_adds_and_progress_counts_the_videos(workspace):
+    """A customer's 10-minute video watched YouTube clips for 22 extra hours (2026-10-25): Create says what Research
+    footage adds for the length chosen, and the progress names how far the watching is."""
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=documentary")
+    note = page.locator("#crw-footage-note")
+    note.wait_for(state="visible")
+    ten = cr_watch.budget(10)
+    assert f"about {ten['typical_minutes'][0]} to {ten['typical_minutes'][1]} minutes to a 10-minute video" in note.inner_text()
+    assert f"up to {ten['videos']} YouTube videos" in note.inner_text()
+    page.locator("[data-minutes='20']").click()
+    assert f"up to {cr_watch.budget(20)['videos']} YouTube videos" in note.inner_text()
+    if os.environ.get("CR_SHOT"):
+        page.locator(".crw-video-summary").screenshot(path=os.environ["CR_SHOT"])
+    page.locator("summary:has-text('Visual sources')").click()
+    page.locator("#crw-features [data-feature='youtube']").uncheck()
+    assert note.is_hidden(), "no footage, no watching"
+    env.mode = "active"
+    env.active_lines = ["YouTube: 40 searches", "  YouTube: watched 12 of 42 videos (5 min so far; this video stops "
+                        "watching at 40 min)"]
+    env.open("#projects")
+    page.get_by_role("button", name="View progress", exact=True).click()
+    page.wait_for_function("document.querySelector('#crw-progress-phase').textContent.includes('12 of 42')")
+    assert page.locator("#crw-progress-phase").inner_text() == "Watching YouTube clips (12 of 42)"
 
 
 def test_gallery_works_with_keyboard_and_a_mobile_viewport(workspace):
@@ -590,6 +685,50 @@ def test_a_video_whose_voice_stopped_offers_other_voices_and_carries_on(workspac
         {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
 
 
+def test_a_video_whose_presenter_stopped_finishes_without_it_from_projects(workspace):
+    """Kie answered 500 on a presenter intro and stopped a finished video (2026-10-25). Its film is on disk, so the
+    library lists it, but it stays a stopped project offering to finish without the presenter or to try again."""
+    env, page = workspace, workspace.page
+    env.mode = "presenter"
+    env.finished_jobs = [{"slug": "presenter-film", "title": "The Heist", "style": "documentary", "editable": True}]
+    env.open("#projects")
+    card = page.locator('.crw-project-card[data-slug="presenter-film"]')
+    card.get_by_role("button", name="Review issue", exact=True).click()
+    box = page.locator(".crw-voice-choices")
+    box.wait_for(state="visible")
+    assert "Kie.ai couldn't make this video's presenter" in box.inner_text()
+    assert "The rest of the video is finished and saved" in box.inner_text()
+    page.get_by_role("button", name="Finish without the presenter").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('without its presenter')")
+    assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/presenter-choice", "/cr-submit"))] == [
+        {"path": "/cr-workspace/presenter-choice/presenter-film", "body": {"choice": "skip"}},
+        {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
+
+
+def test_trying_an_uncertain_presenter_again_asks_first_because_it_can_pay_twice(workspace):
+    """Its last attempt got no clear answer (sent, no task ID back): that task may have started, so trying again could
+    pay for a second presenter. One click is never enough: the creator confirms, having read why (review, 2026-10-26)."""
+    env, page = workspace, workspace.page
+    env.mode, env.presenter_uncertain = "presenter", True
+    env.finished_jobs = [{"slug": "presenter-film", "title": "The Heist", "style": "documentary", "editable": True}]
+    env.open("#projects")
+    page.locator('.crw-project-card[data-slug="presenter-film"]').get_by_role("button", name="Review issue",
+                                                                             exact=True).click()
+    page.locator(".crw-voice-choices").wait_for(state="visible")
+    asked = []
+    page.once("dialog", lambda dialog: (asked.append(dialog.message), dialog.dismiss()))
+    page.get_by_role("button", name="Try the presenter again").click()
+    page.wait_for_function("true")
+    assert asked and "pays for a second presenter" in asked[0] and "Kie.ai" in asked[0]
+    assert not [p for p in env.posts if p["path"].startswith(("/cr-workspace/presenter-choice", "/cr-submit"))]
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.get_by_role("button", name="Try the presenter again").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('Trying the presenter again')")
+    assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/presenter-choice", "/cr-submit"))] == [
+        {"path": "/cr-workspace/presenter-choice/presenter-film", "body": {"choice": "again"}},
+        {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
+
+
 def test_a_new_character_is_drawn_or_uploaded_and_goes_with_the_video(workspace):
     """A customer (Discord, 2026-10-24) couldn't change the character in Creative direction: new words now draw the
     character (or a picture is uploaded) and that picture goes with the video."""
@@ -626,4 +765,101 @@ def test_a_new_character_is_drawn_or_uploaded_and_goes_with_the_video(workspace)
     # going back to Automatic brings back the recipe's own character
     page.locator("#crw-character-image").select_option("")
     assert page.locator("#crw-character").input_value() == STORY_CAST
+
+
+
+def test_a_learned_style_in_the_library_can_be_edited_or_studied_again(workspace):
+    """A customer asked whether a learned recipe can be changed or has to be deleted and made again."""
+    env, page = workspace, workspace.page
+    env.open("#styles")
+    page.locator(".crw-nav [data-nav=styles]").click()
+    item = page.locator("#crw-styles-list .crw-style-item")
+    assert item.count() == 1 and "My Illustrated Worlds" in item.inner_text()
+    assert item.locator("a").get_attribute("href") == "/cr-style-clone?edit=" + CLONE
+    item.locator(".crw-recipe-card").click()
+    assert page.locator("#crw-selected-name").inner_text() == "My Illustrated Worlds", "the card still picks the style"
+
+
+def test_a_finished_video_is_deleted_into_the_trash_and_undo_brings_it_back(workspace):
+    """thatguygab (2026-10-25) asked to delete videos: Delete names what goes and what stays, moves it to Studio's
+    trash, and Undo or Recently deleted puts it back."""
+    env, page = workspace, workspace.page
+    env.open("#projects")
+    card = page.locator('[data-slug="finished-film"]')
+    assert page.locator('[data-slug="active-film"], [data-slug="stopped-film"]').count() >= 1
+    card.get_by_role("button", name="Delete A finished film").click()
+    dialog = page.locator("#crw-delete")
+    dialog.wait_for(state="visible")
+    page.wait_for_function("!document.getElementById('crw-delete-confirm').disabled")
+    assert page.locator("#crw-delete-title").inner_text() == "Delete this video?"
+    assert page.locator("#crw-delete-name").inner_text() == "“A finished film”"
+    assert page.locator("#crw-delete-goes li").all_inner_texts()[0] == "The finished video: A finished film.mp4 (12 MB)"
+    assert page.locator("#crw-delete-kept li").all_inner_texts() == ["Your voice library and saved recordings"]
+    assert "30 days" in page.locator("#crw-delete-note").inner_text()
+    if os.environ.get("CR_SHOT"):
+        page.screenshot(path=os.environ["CR_SHOT"].replace(".png", "-delete.png"))
+    page.locator("#crw-delete-cancel").click()
+    assert dialog.is_hidden() and not [p for p in env.posts if "/delete/" in p["path"]], "Keep it deletes nothing"
+    card.get_by_role("button", name="Delete A finished film").click()
+    page.wait_for_function("!document.getElementById('crw-delete-confirm').disabled")
+    page.locator("#crw-delete-confirm").click()
+    page.wait_for_function("!document.querySelector('[data-slug=\"finished-film\"]')")
+    assert [p["path"] for p in env.posts if "/delete/" in p["path"]] == ["/cr-workspace/delete/video/finished-film"]
+    assert "is in Studio’s trash" in page.locator("#crw-toast").inner_text()
+    trash = page.locator("#crw-trash-videos")
+    trash.wait_for(state="visible")
+    assert "Recently deleted (1)" in trash.locator("summary").inner_text()
+    page.locator("#crw-toast .crw-toast-undo").click()
+    page.wait_for_selector('[data-slug="finished-film"]')
+    assert any(p["path"].endswith("/restore") for p in env.posts)
+    page.wait_for_function("document.getElementById('crw-trash-videos').hidden")
+    for slug in ("active-film", "stopped-film"):           # nothing being made offers Delete
+        if page.locator(f'[data-slug="{slug}"]').count():
+            assert page.locator(f'[data-slug="{slug}"] .crw-delete-button').count() == (0 if slug == "active-film" else 1)
+
+
+def test_a_learned_style_is_deleted_from_the_style_library_and_restored(workspace):
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=" + CLONE)
+    assert page.locator("#crw-selected-name").inner_text() == "My Illustrated Worlds"
+    page.locator(".crw-nav [data-nav=styles]").click()
+    assert page.locator("#crw-styles-list .crw-delete-button").count() == 1, "only the style the creator cloned"
+    page.get_by_role("button", name="Delete My Illustrated Worlds").click()
+    page.wait_for_function("!document.getElementById('crw-delete-confirm').disabled")
+    assert page.locator("#crw-delete-title").inner_text() == "Delete this style?"
+    assert page.locator("#crw-delete-kept li").all_inner_texts() == ["Videos you made with it stay in Projects"]
+    page.locator("#crw-delete-confirm").click()
+    page.locator("#crw-trash-styles").wait_for(state="visible")
+    assert page.locator("#crw-styles-list .crw-recipe-card").count() == 0
+    assert page.locator("#crw-selected-name").inner_text() != "My Illustrated Worlds", "a deleted style isn't chosen"
+    page.locator("#crw-trash-styles summary").click()
+    page.get_by_role("button", name="Restore My Illustrated Worlds").click()
+    page.wait_for_selector("#crw-styles-list .crw-recipe-card")
+    assert "is back in your Style library" in page.locator("#crw-toast").inner_text()
+
+
+def test_progress_says_which_3d_review_round_is_running_and_why_it_takes_long(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "active"
+    env.status_lines = ["3D: previews — round 2/3, 30 scenes, 90 stills",
+                        "3D: review 2/3 — Claude is looking at 90 stills of 30 scenes (6 contact sheets)"]
+    env.open("#projects")
+    page.get_by_role("button", name="View progress", exact=True).click()
+    page.locator("#crw-progress-detail").wait_for(state="visible")
+    assert page.locator("#crw-progress-phase").inner_text() == "3D review, round 2 of 3"
+    detail = page.locator("#crw-progress-detail").inner_text()
+    assert "Claude is checking 90 stills of 30 scenes" in detail and "15 to 30 minutes" in detail
+    if os.environ.get("CR_SHOT"):
+        page.locator("#crw-progress").screenshot(path=os.environ["CR_SHOT"])
+
+
+def test_progress_shows_the_real_step_under_a_general_heading(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "active"
+    env.status_lines = ["Writing the voiceover", "  subtitles: timing narration with whisper (2 of 3 parts)"]
+    env.open("#projects")
+    page.get_by_role("button", name="View progress", exact=True).click()
+    page.locator("#crw-progress-detail").wait_for(state="visible")
+    assert page.locator("#crw-progress-phase").inner_text() == "Timing narration and captions"
+    assert page.locator("#crw-progress-detail").inner_text() == "subtitles: timing narration with whisper (2 of 3 parts)"
 
