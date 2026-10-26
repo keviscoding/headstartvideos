@@ -8,7 +8,7 @@ automatically, and completion synchronization submits only saved receipts.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import copy
 import hashlib
 import json
@@ -969,16 +969,12 @@ def _by_video(frames: list) -> list:
 @contextmanager
 def _renderer_effort():
     """The renderer is the hardest code Claude writes for a style: its drafts keep Claude Code's own effort (the one
-    every renderer so far was measured with), whatever effort Studio asks of its other Opus stages (cr_claude reads
-    CR_CLAUDE_EFFORT per call; "default" leaves it to the CLI). A creator's own CR_CLAUDE_EFFORT still wins."""
-    had = os.environ.get("CR_CLAUDE_EFFORT")
-    if had is None:
-        os.environ["CR_CLAUDE_EFFORT"] = "default"
-    try:
+    every renderer so far was measured with), whatever effort Studio asks of its other Opus stages. cr_claude's
+    call_effort scopes that to this thread's calls only; without it (before 106) no stage asks for an effort at all."""
+    import cr_claude
+    hook = getattr(cr_claude, "call_effort", None)
+    with (hook("default") if callable(hook) else nullcontext()):
         yield
-    finally:
-        if had is None:
-            os.environ.pop("CR_CLAUDE_EFFORT", None)
 
 
 def renderer_frames(folder, spec) -> list:

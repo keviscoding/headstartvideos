@@ -390,17 +390,25 @@ def test_a_renderer_study_never_depends_on_the_motion_graphics_learner(tmp_path)
 
 def test_renderer_drafts_keep_claude_codes_own_effort(monkeypatch):
     """Studio's other Opus stages ask Claude for medium effort (106); writing a whole renderer keeps the CLI's own,
-    which every renderer so far was measured with, unless the creator set CR_CLAUDE_EFFORT themselves."""
+    which every renderer so far was measured with, for the renderer step's own calls only (never process-wide)."""
     import os
+    from contextlib import contextmanager
+    import cr_claude
     import cr_style_clone as clone
-    monkeypatch.delenv("CR_CLAUDE_EFFORT", raising=False)
+    asked = []
+
+    @contextmanager
+    def call_effort(level):
+        asked.append(level)
+        yield
+    monkeypatch.setattr(cr_claude, "call_effort", call_effort, raising=False)
+    before = dict(os.environ)
     with clone._renderer_effort():
-        assert os.environ["CR_CLAUDE_EFFORT"] == "default"
-    assert "CR_CLAUDE_EFFORT" not in os.environ
-    monkeypatch.setenv("CR_CLAUDE_EFFORT", "high")
-    with clone._renderer_effort():
-        assert os.environ["CR_CLAUDE_EFFORT"] == "high"
-    assert os.environ["CR_CLAUDE_EFFORT"] == "high"
+        assert dict(os.environ) == before, "nothing process-wide changes"
+    assert asked == ["default"]
+    monkeypatch.delattr(cr_claude, "call_effort")
+    with clone._renderer_effort():                         # before 106: no stage asks for an effort at all
+        pass
 
 
 def test_round_files_belong_to_their_build(tmp_path):
