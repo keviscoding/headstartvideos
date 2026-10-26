@@ -388,6 +388,21 @@ def test_a_renderer_study_never_depends_on_the_motion_graphics_learner(tmp_path)
     assert json.loads((folder / "study-result.json").read_text())["kit"] is None
 
 
+def test_renderer_drafts_keep_claude_codes_own_effort(monkeypatch):
+    """Studio's other Opus stages ask Claude for medium effort (106); writing a whole renderer keeps the CLI's own,
+    which every renderer so far was measured with, unless the creator set CR_CLAUDE_EFFORT themselves."""
+    import os
+    import cr_style_clone as clone
+    monkeypatch.delenv("CR_CLAUDE_EFFORT", raising=False)
+    with clone._renderer_effort():
+        assert os.environ["CR_CLAUDE_EFFORT"] == "default"
+    assert "CR_CLAUDE_EFFORT" not in os.environ
+    monkeypatch.setenv("CR_CLAUDE_EFFORT", "high")
+    with clone._renderer_effort():
+        assert os.environ["CR_CLAUDE_EFFORT"] == "high"
+    assert os.environ["CR_CLAUDE_EFFORT"] == "high"
+
+
 def test_round_files_belong_to_their_build(tmp_path):
     out = tmp_path / "renderer"
     (out / "round-1").mkdir(parents=True)

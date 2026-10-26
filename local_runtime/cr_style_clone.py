@@ -868,8 +868,9 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
                       log)
         if spec.get("renderer"):
             progress("renderer")
-            _renderer(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "renderer", prompt,
-                                                                                 images, max_tokens=32000), log)
+            with _renderer_effort():
+                _renderer(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "renderer", prompt,
+                                                                                     images, max_tokens=32000), log)
     return finish_original(engine, folder, spec, design, record, progress,
         learner=learner, designer=designer, log=log, report=clock.report())
 
@@ -963,6 +964,21 @@ def _by_video(frames: list) -> list:
     for p in frames:
         groups.setdefault(Path(p).stem.rsplit("_", 1)[0], []).append(p)
     return [g[k] for k in range(max((len(g) for g in groups.values()), default=0)) for g in groups.values() if k < len(g)]
+
+
+@contextmanager
+def _renderer_effort():
+    """The renderer is the hardest code Claude writes for a style: its drafts keep Claude Code's own effort (the one
+    every renderer so far was measured with), whatever effort Studio asks of its other Opus stages (cr_claude reads
+    CR_CLAUDE_EFFORT per call; "default" leaves it to the CLI). A creator's own CR_CLAUDE_EFFORT still wins."""
+    had = os.environ.get("CR_CLAUDE_EFFORT")
+    if had is None:
+        os.environ["CR_CLAUDE_EFFORT"] = "default"
+    try:
+        yield
+    finally:
+        if had is None:
+            os.environ.pop("CR_CLAUDE_EFFORT", None)
 
 
 def renderer_frames(folder, spec) -> list:
