@@ -56,8 +56,7 @@ def checkout(monkeypatch):
         fake = _Stripe(modify_fails)
         monkeypatch.setitem(sys.modules, "stripe", fake)
         monkeypatch.setattr(config, "REWARDFUL_PUBLIC_KEY", "rw_public_key" if on else "")
-        result = asyncio.run(server.create_checkout(server.CheckoutRequest(plan="studio_pro_monthly", referral=referral),
-                                                    _Req()))
+        result = server.create_checkout(server.CheckoutRequest(plan="studio_pro_monthly", referral=referral), _Req())
         assert result["url"].startswith("https://checkout.stripe.test")
         return fake.sessions[0], fake.labels
     return run

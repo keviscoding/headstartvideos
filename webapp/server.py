@@ -324,9 +324,18 @@ def _cook_sweep_reason(row: dict, quiet_sec: float) -> str:
     return ""
 
 
+def _size_sync_threads() -> int:
+    """FastAPI runs every plain-def route and sync dependency on AnyIO's worker threads, under one limiter shared by the
+    whole site (40 by default). Almost every route is a plain def (so the event loop never blocks), so the limiter
+    follows the container's memory (config.WEB_SYNC_THREADS). Must run on the server's event loop."""
+    import anyio.to_thread
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    limiter.total_tokens = config.WEB_SYNC_THREADS
+    return int(limiter.total_tokens)
+
+
 async def _startup_tasks():
-    # Sync routes (voiceover/thumbnail/Gemini) run in this pool — keep it large
-    # so a few 90s Atlas jobs don't starve the rest of the site.
+    # asyncio.to_thread (the loops below, progress streams, the Stripe webhook) uses the loop's default executor.
     try:
         import concurrent.futures
         loop = asyncio.get_running_loop()
@@ -339,9 +348,13 @@ async def _startup_tasks():
         print(f"[web] ThreadPoolExecutor max_workers={config.WEB_THREADPOOL_SIZE}")
     except Exception as e:
         print(f"[web] Could not enlarge threadpool: {e}")
+    try:
+        print(f"[web] sync route threads={_size_sync_threads()}")
+    except Exception as e:
+        print(f"[web] Could not size the sync route threads: {e}")
 
     try:
-        removed = cleanup_expired()
+        removed = await asyncio.to_thread(cleanup_expired)
         print(f"[db] Cleaned {removed} expired sessions/codes on startup")
     except Exception as e:
         print(f"[db] cleanup_expired failed: {e}")
@@ -360,7 +373,7 @@ async def _startup_tasks():
         while True:
             await asyncio.sleep(3600)
             try:
-                cleanup_expired()
+                await asyncio.to_thread(cleanup_expired)       # a DELETE: never on the event loop
             except Exception:
                 pass
 
@@ -643,7 +656,7 @@ _DISPOSABLE_EMAIL_DOMAINS = {
 
 
 @app.post("/api/auth/send-code")
-async def auth_send_code(req: AuthSendCodeRequest):
+def auth_send_code(req: AuthSendCodeRequest):
     email = req.email.strip().lower()
     if not email or "@" not in email or email.count("@") != 1 or "." not in email.split("@")[1]:
         raise HTTPException(400, "Invalid email")
@@ -662,7 +675,7 @@ async def auth_send_code(req: AuthSendCodeRequest):
 
 
 @app.post("/api/auth/verify")
-async def auth_verify(req: AuthVerifyRequest, request: Request):
+def auth_verify(req: AuthVerifyRequest, request: Request):
     email = req.email.strip().lower()
     if not verify_code(email, req.code):
         raise HTTPException(400, "Invalid or expired code")
@@ -727,12 +740,12 @@ def _google_claims(credential: str, client_id: str) -> dict:
 
 
 @app.post("/api/auth/google")
-async def auth_google(req: AuthGoogleRequest, request: Request):
+def auth_google(req: AuthGoogleRequest, request: Request):
     client_id = _google_client_id()
     if not client_id:
         raise HTTPException(404, "Google sign-in isn't available. Use an email code instead.")
     try:
-        claims = await asyncio.to_thread(_google_claims, req.credential, client_id)
+        claims = _google_claims(req.credential, client_id)
     except Exception as e:                                      # noqa: BLE001 - any failure is "not signed in"
         print(f"[auth] Google token rejected: {e}")
         raise HTTPException(400, "Google sign-in didn't work. Try again, or use an email code.") from None
@@ -745,7 +758,7 @@ async def auth_google(req: AuthGoogleRequest, request: Request):
 
 
 @app.get("/api/auth/me")
-async def auth_me(request: Request):
+def auth_me(request: Request):
     user = _current_user(request)
     if not user:
         return JSONResponse({"user": None}, status_code=200)
@@ -758,14 +771,14 @@ async def auth_me(request: Request):
 
 
 @app.post("/api/notices/{notice_id}/ack")
-async def ack_notice(notice_id: int, request: Request):
+def ack_notice(notice_id: int, request: Request):
     user = require_user(request)
     ok = mark_notice_read(notice_id, user.get("email") or "")
     return {"ok": bool(ok)}
 
 
 @app.post("/api/auth/logout")
-async def auth_logout(request: Request):
+def auth_logout(request: Request):
     token = request.cookies.get("session")
     if token:
         delete_session(token)
@@ -1208,7 +1221,7 @@ def _find_user_for_stripe(*, sub_id: str = "", customer_id: str = "") -> dict | 
 
 
 @app.post("/api/billing/checkout")
-async def create_checkout(req: CheckoutRequest, request: Request):
+def create_checkout(req: CheckoutRequest, request: Request):
     """Create a Stripe Checkout session with 7-day trial (card required)."""
     import stripe
     if not config.STRIPE_SECRET_KEY:
@@ -1281,7 +1294,7 @@ async def create_checkout(req: CheckoutRequest, request: Request):
 
 
 @app.post("/api/billing/topup")
-async def create_topup(req: TopupRequest, request: Request):
+def create_topup(req: TopupRequest, request: Request):
     """Create a Stripe Checkout session for a one-time credit top-up."""
     import stripe
     if not config.STRIPE_SECRET_KEY:
@@ -1323,14 +1336,17 @@ async def create_topup(req: TopupRequest, request: Request):
 
 @app.post("/api/billing/webhook")
 async def stripe_webhook(request: Request):
-    """Handle Stripe webhook events."""
+    """Handle Stripe webhook events. Only the body is read here: checking the signature and applying the event (the
+    database, Stripe and email calls) runs in a worker thread, so a slow call never holds up the event loop."""
+    payload = await request.body()
+    return await asyncio.to_thread(_stripe_webhook_sync, payload, request.headers.get("stripe-signature", ""))
+
+
+def _stripe_webhook_sync(payload: bytes, sig: str) -> dict:
     import stripe
     if not config.STRIPE_SECRET_KEY:
         raise HTTPException(500, "Stripe not configured")
     stripe.api_key = config.STRIPE_SECRET_KEY
-
-    payload = await request.body()
-    sig = request.headers.get("stripe-signature", "")
 
     try:
         if not config.STRIPE_WEBHOOK_SECRET:
@@ -1687,7 +1703,7 @@ async def stripe_webhook(request: Request):
 
 
 @app.get("/api/billing/status")
-async def billing_status(request: Request):
+def billing_status(request: Request):
     user = _current_user(request)
     if not user:
         return {"plan": "free", "credits": 0}
@@ -1700,7 +1716,7 @@ async def billing_status(request: Request):
 
 
 @app.get("/api/admin/billing")
-async def admin_billing_health(sync: int = 0, admin: dict = Depends(require_admin)):
+def admin_billing_health(sync: int = 0, admin: dict = Depends(require_admin)):
     """Admin billing snapshot: plan counts + optional Stripe subscription sync.
 
     ?sync=1 retrieves each Stripe subscription status and flags DB mismatches
@@ -1796,7 +1812,7 @@ async def admin_billing_health(sync: int = 0, admin: dict = Depends(require_admi
 
 
 @app.post("/api/billing/portal")
-async def create_portal_session(request: Request):
+def create_portal_session(request: Request):
     """Create a Stripe Customer Portal session for subscription management."""
     import stripe
     if not config.STRIPE_SECRET_KEY:
@@ -1824,7 +1840,7 @@ async def create_portal_session(request: Request):
 
 
 @app.post("/api/billing/end-trial")
-async def end_trial_early(request: Request, req: EndTrialRequest | None = None):
+def end_trial_early(request: Request, req: EndTrialRequest | None = None):
     """End the 7-day trial immediately, charge the card, grant full credits.
 
     `tier` and `interval` let the customer convert onto any advertised plan.
@@ -1858,33 +1874,31 @@ async def end_trial_early(request: Request, req: EndTrialRequest | None = None):
         raise HTTPException(400, f"Unknown billing interval '{want_interval}'.")
 
     try:
-        import asyncio
-
         if want_tier != trial_tier or want_interval:
             # Swap the price while still trialing: no invoice exists yet, so
             # there is nothing to prorate and the charge below bills the chosen
             # plan. Done first so a failure here cannot charge the old price.
-            interval = await asyncio.to_thread(
-                _switch_trial_price, stripe, sub_id, want_tier, user["id"], want_interval
+            interval = _switch_trial_price(
+                stripe, sub_id, want_tier, user["id"], want_interval
             )
         else:
             # Keeping the same plan: read the interval, change nothing.
-            interval = await asyncio.to_thread(_subscription_interval, stripe, sub_id)
+            interval = _subscription_interval(stripe, sub_id)
 
         # End trial and create the first real invoice immediately
-        await asyncio.to_thread(stripe.Subscription.modify, sub_id, trial_end="now")
+        stripe.Subscription.modify(sub_id, trial_end="now")
         print(f"[stripe] Trial end requested for user {user['id']} (sub {sub_id})")
 
         # Stripe may take a moment to charge — poll until active or failed
         sub_status = None
         for _ in range(8):
-            sub = await asyncio.to_thread(stripe.Subscription.retrieve, sub_id)
+            sub = stripe.Subscription.retrieve(sub_id)
             sub_status = sub.get("status") if isinstance(sub, dict) else getattr(sub, "status", None)
             if sub_status == "active":
                 break
             if sub_status in ("past_due", "unpaid", "canceled", "incomplete_expired"):
                 break
-            await asyncio.sleep(0.75)
+            time.sleep(0.75)
 
         print(f"[stripe] End-trial poll result: user {user['id']} status={sub_status}")
 
@@ -2157,12 +2171,12 @@ def _community_member(request: Request) -> bool:
 
 
 @app.get("/api/community/access", include_in_schema=False)
-async def community_access(request: Request):
+def community_access(request: Request):
     return JSONResponse({"member": _community_member(request)}, headers={"Cache-Control": "private, no-store"})
 
 
 @app.get("/community/discord", include_in_schema=False)
-async def community_discord(request: Request):
+def community_discord(request: Request):
     if _community_member(request):
         return RedirectResponse(DISCORD_INVITE_URL, status_code=302)
     return web_assets.html_page(STATIC_DIR / "community.html", cache="private, no-store")
@@ -2246,8 +2260,25 @@ app.include_router(_money_niche_web.make_router(_current_user, require_user, req
 # ---------------------------------------------------------------------------
 @app.get("/api/health")
 async def health():
-    """Liveness probe — no DB, no secrets. Safe for DigitalOcean health checks."""
+    """Liveness probe — no DB, no secrets. Safe for DigitalOcean health checks. It stays async on purpose: it answers
+    only while the event loop is free, which is what liveness means."""
     return {"status": "ok"}
+
+
+@app.get("/api/ready")
+def ready():
+    """Readiness: this container can serve a request that needs the database. A plain def, so it takes the same worker
+    thread and pooled connection as a real route: a database connection within 2 s, then SELECT 1. 503 otherwise."""
+    from webapp import database as _database
+    started = time.monotonic()
+    try:
+        _database.ping(timeout=2.0)
+    except Exception as e:                                      # noqa: BLE001 - any failure means "not ready"
+        print(f"[ready] database not reachable: {type(e).__name__}")
+        return JSONResponse({"status": "unavailable", "db": "unreachable"}, status_code=503,
+                            headers={"Cache-Control": "no-store"})
+    return JSONResponse({"status": "ok", "db": "ok", "ms": round((time.monotonic() - started) * 1000)},
+                        headers={"Cache-Control": "no-store"})
 
 
 # One-click unsubscribe from the setup and release emails (the link is signed per customer). POST is the
@@ -2279,7 +2310,7 @@ class ReleaseEmailRequest(BaseModel):
 
 
 @app.post("/api/admin/lifecycle/release-email", include_in_schema=False)
-async def admin_release_email(req: ReleaseEmailRequest, admin: dict = Depends(require_admin)):
+def admin_release_email(req: ReleaseEmailRequest, admin: dict = Depends(require_admin)):
     """Email one Studio release's notes to every Studio customer who hasn't had them (runs in the background)."""
     from webapp import frontier_studio
     entry = next((row for row in frontier_studio.changelog(50) if row.get("build") == req.build), None)
@@ -2354,7 +2385,7 @@ def _referral(value) -> str:
 
 
 @app.get("/api/niches")
-async def get_niches(request: Request):
+def get_niches(request: Request):
     user = _current_user(request)
     is_admin = user and _is_admin_email(user.get("email", ""))
     
@@ -2407,7 +2438,7 @@ class RankingImportUrlRequest(BaseModel):
 
 
 @app.get("/api/ranking/access")
-async def ranking_access(user: dict = Depends(require_user)):
+def ranking_access(user: dict = Depends(require_user)):
     """Trial quota remaining for Ranking & Countdown cooks."""
     from webapp.ranking_billing import (
         is_trial_plan, is_paid_plan, trial_ranking_allowed, ranking_credit_cost,
@@ -2460,13 +2491,13 @@ async def ranking_access(user: dict = Depends(require_user)):
 
 
 @app.post("/api/ranking/upload")
-async def ranking_upload(file: UploadFile = File(...), user: dict = Depends(require_user)):
+def ranking_upload(file: UploadFile = File(...), user: dict = Depends(require_user)):
     """Upload a ranking clip; staged to Spaces for Fly cooks."""
     allowed = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
     ext = Path(file.filename or "clip.mp4").suffix.lower()
     if ext not in allowed:
         raise HTTPException(400, f"Unsupported format '{ext}'. Use MP4, MOV, or WEBM.")
-    content = await file.read()
+    content = file.file.read()
     if len(content) > 120 * 1024 * 1024:
         raise HTTPException(400, "Clip too large (max 120MB).")
     if len(content) < 1000:
@@ -2503,7 +2534,7 @@ async def ranking_upload(file: UploadFile = File(...), user: dict = Depends(requ
 
 
 @app.post("/api/ranking/import-url")
-async def ranking_import_url(req: RankingImportUrlRequest, user: dict = Depends(require_user)):
+def ranking_import_url(req: RankingImportUrlRequest, user: dict = Depends(require_user)):
     """Download a TikTok / YouTube / Instagram clip into ranking uploads."""
     from webapp.ranking_import import import_ranking_url, detect_platform, short_url_label
 
@@ -2520,7 +2551,7 @@ async def ranking_import_url(req: RankingImportUrlRequest, user: dict = Depends(
     local = out_dir / fname
 
     try:
-        meta = await asyncio.to_thread(import_ranking_url, raw, local)
+        meta = import_ranking_url(raw, local)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except RuntimeError as e:
@@ -2566,7 +2597,7 @@ async def ranking_import_url(req: RankingImportUrlRequest, user: dict = Depends(
 
 
 @app.post("/api/ranking/assemble")
-async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(require_active_plan)):
+def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(require_active_plan)):
     """Queue a ranking_countdown cook on Fly (or web) after trial/credit gate."""
     from webapp.ranking_billing import (
         is_trial_plan, trial_ranking_allowed, ranking_credit_cost,
@@ -2834,7 +2865,7 @@ async def avatar_gen_cost(req: AvatarGenRequest, user: dict = Depends(require_us
 
 
 @app.post("/api/avatar-gen/generate")
-async def avatar_gen_generate(
+def avatar_gen_generate(
     script: str = Form(...),
     title: str = Form(""),
     avatar_source: str = Form("prompt"),
@@ -2903,7 +2934,7 @@ async def avatar_gen_generate(
     
     if avatar_source_type == "upload" and avatar_file:
         # Save uploaded avatar image
-        content = await avatar_file.read()
+        content = avatar_file.file.read()
         if len(content) > 10 * 1024 * 1024:
             raise HTTPException(400, "Avatar image too large (max 10MB)")
         
@@ -2946,10 +2977,9 @@ async def avatar_gen_generate(
         
         try:
             import httpx
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, follow_redirects=True, timeout=30)
-                resp.raise_for_status()
-                local.write_bytes(resp.content)
+            resp = httpx.get(url, follow_redirects=True, timeout=30)
+            resp.raise_for_status()
+            local.write_bytes(resp.content)
             
             # Upload to remote storage if configured (for Fly cook workers)
             if storage.is_remote():
@@ -3345,7 +3375,7 @@ def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)
 
 
 @app.post("/api/voiceover/upload")
-async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(require_user)):
+def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(require_user)):
     """Accept a user-uploaded voiceover file (WAV, MP3, M4A) and return its path."""
     import subprocess
 
@@ -3354,7 +3384,7 @@ async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(re
     if ext not in allowed:
         raise HTTPException(400, f"Unsupported format '{ext}'. Use WAV, MP3, or M4A.")
 
-    content = await file.read()
+    content = file.file.read()
 
     def _convert() -> str:
         out_dir = _unique_media_dir("voiceovers")
@@ -3373,7 +3403,7 @@ async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(re
         return str(wav_path)
 
     try:
-        wav_path = await asyncio.to_thread(_convert)
+        wav_path = _convert()
     except Exception as e:
         raise HTTPException(500, f"Audio conversion failed: {e}")
 
@@ -3433,7 +3463,7 @@ def get_voice_clones(user: dict = Depends(require_user)):
 
 
 @app.post("/api/voice/clone")
-async def create_fish_voice_clone(
+def create_fish_voice_clone(
     request: Request,
     user: dict = Depends(require_user),
     file: UploadFile | None = File(None),
@@ -3480,7 +3510,7 @@ async def create_fish_voice_clone(
         # Upload wins when both are present — people paste a YouTube link, it
         # gets bot-blocked, then drag in a screen recording without clearing the URL.
         if has_file:
-            raw = await file.read()
+            raw = file.file.read()
             if len(raw) < 1000:
                 raise HTTPException(400, "File is too small.")
             ext = Path(file.filename or "sample.wav").suffix.lower() or ".wav"
@@ -3500,19 +3530,18 @@ async def create_fish_voice_clone(
                 raise HTTPException(400, f"File too large (max {mb}MB). Trim the recording and retry.")
             raw_path = tmp_dir / f"upload{ext}"
             raw_path.write_bytes(raw)
-            sample_path = await asyncio.to_thread(normalize_sample, str(raw_path), str(tmp_dir))
+            sample_path = normalize_sample(str(raw_path), str(tmp_dir))
             source = "screen_recording" if ext in video_exts else "upload"
         elif yt:
             source = "youtube"
-            sample_path = await asyncio.to_thread(extract_youtube_audio, yt, str(tmp_dir))
+            sample_path = extract_youtube_audio(yt, str(tmp_dir))
         else:
             raise HTTPException(
                 400,
                 "Paste a YouTube URL, or upload a screen recording / audio sample.",
             )
 
-        result = await asyncio.to_thread(
-            create_voice_model,
+        result = create_voice_model(
             sample_path,
             title=(title or "My voice").strip()[:80] or "My voice",
             description="Rights-gated ChannelRecipe clone",
@@ -3586,13 +3615,13 @@ def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_u
 # Thumbnails
 # ---------------------------------------------------------------------------
 @app.post("/api/thumbnail/upload")
-async def upload_thumbnail(file: UploadFile = File(...), user: dict = Depends(require_user)):
+def upload_thumbnail(file: UploadFile = File(...), user: dict = Depends(require_user)):
     """Accept a finished thumbnail the user already has — no AI generation."""
     allowed = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
     ext = Path(file.filename or "thumb.png").suffix.lower()
     if ext not in allowed:
         raise HTTPException(400, "Use PNG, JPG, or WEBP.")
-    content = await file.read()
+    content = file.file.read()
     if len(content) < 500:
         raise HTTPException(400, "Image file is too small.")
     if len(content) > 12 * 1024 * 1024:
@@ -3631,7 +3660,7 @@ def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require_user)
 
 
 @app.post("/api/thumbnail/with-refs")
-async def generate_thumbnail_with_refs(
+def generate_thumbnail_with_refs(
     title: str = Form(...),
     style: str = Form(""),
     count: int = Form(2),
@@ -3644,7 +3673,7 @@ async def generate_thumbnail_with_refs(
     for ref in refs:
         dest = UPLOAD_DIR / f"ref_{int(time.time())}_{ref.filename}"
         with open(dest, "wb") as f:
-            content = await ref.read()
+            content = ref.file.read()
             f.write(content)
         ref_paths.append(str(dest))
 
@@ -3660,7 +3689,7 @@ async def generate_thumbnail_with_refs(
         )
 
     try:
-        paths = await asyncio.to_thread(_run)
+        paths = _run()
         if not paths:
             raise ValueError("No thumbnails generated. Try again in a moment.")
         staged_paths = []
@@ -3721,7 +3750,7 @@ def _enforce_user_cook_slot(user: dict) -> None:
 
 
 @app.get("/api/cooks/active")
-async def list_active_cooks(request: Request):
+def list_active_cooks(request: Request):
     """Active video cooks for the signed-in user (survives refresh / cleared localStorage)."""
     user = _current_user(request)
     if not user:
@@ -3826,7 +3855,7 @@ else:
 
 
 @app.post("/api/build")
-async def start_build(req: BuildRequest, request: Request):
+def start_build(req: BuildRequest, request: Request):
     user = _current_user(request)
     if not user:
         raise HTTPException(401, "Sign in to continue.")
@@ -4073,9 +4102,33 @@ def _get_user_job(job_id: str, request: Request) -> dict:
     return job
 
 
+# How often an open progress stream re-reads its cook from the database (worker cooks). Each read runs in a worker
+# thread, never on the event loop, which also answers /api/health: dozens of open streams reading every second on the
+# loop could hold it long enough for the platform to see the site as down.
+SSE_DB_POLL_SECONDS = 2.0
+
+
+def _poll_build_progress(job_id: str, job: dict, last_announce: float) -> float:
+    """One poll of a progress stream (in a worker thread); returns when the queue was last announced."""
+    if COOK_ON_WEB:
+        if job.get("status") == "queued":
+            job_queue.queue_info(job_id)
+        return last_announce
+    try:
+        _refresh_job_from_db(job_id, job)
+        now = time.time()
+        if job.get("status") == "queued" and now - last_announce >= 5:
+            announce_queued_jobs()
+            _refresh_job_from_db(job_id, job)
+            last_announce = now
+    except Exception as e:                                      # a database blip: the next poll tries again
+        print(f"[build] progress refresh failed for {job_id}: {e}")
+    return last_announce
+
+
 @app.get("/api/build/{job_id}/progress")
 async def build_progress(job_id: str, request: Request):
-    job = _get_user_job(job_id, request)
+    job = await asyncio.to_thread(_get_user_job, job_id, request)
 
     async def stream():
         seen = 0
@@ -4083,18 +4136,7 @@ async def build_progress(job_id: str, request: Request):
         while True:
             if await request.is_disconnected():
                 break
-            if not COOK_ON_WEB:
-                _refresh_job_from_db(job_id, job)
-                now = time.time()
-                if job.get("status") == "queued" and now - last_announce >= 5:
-                    try:
-                        announce_queued_jobs()
-                        _refresh_job_from_db(job_id, job)
-                    except Exception:
-                        pass
-                    last_announce = now
-            elif job.get("status") == "queued":
-                job_queue.queue_info(job_id)
+            last_announce = await asyncio.to_thread(_poll_build_progress, job_id, job, last_announce)
             for msg in job["progress"][seen:]:
                 yield {"event": "progress", "data": json.dumps(msg)}
                 seen += 1
@@ -4104,13 +4146,13 @@ async def build_progress(job_id: str, request: Request):
             elif job["status"] in ("error", "cancelled"):
                 yield {"event": "error", "data": json.dumps({"error": job.get("error", "Unknown")})}
                 break
-            await asyncio.sleep(1)
+            await asyncio.sleep(1 if COOK_ON_WEB else SSE_DB_POLL_SECONDS)
 
     return EventSourceResponse(stream())
 
 
 @app.delete("/api/build/{job_id}")
-async def cancel_build(job_id: str, request: Request):
+def cancel_build(job_id: str, request: Request):
     job = _get_user_job(job_id, request)
     if job["status"] not in ("queued", "web_queued", "running"):
         return {"status": job["status"]}
@@ -4144,7 +4186,7 @@ async def cancel_build(job_id: str, request: Request):
 
 
 @app.get("/api/build/{job_id}/result")
-async def build_result(job_id: str, request: Request):
+def build_result(job_id: str, request: Request):
     user = _current_user(request)
     job = _jobs.get(job_id)
     if job and not COOK_ON_WEB:
@@ -4811,7 +4853,7 @@ def download_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
 # Storyboard Pack (admin-only v1 — stills + I2V prompts zip)
 # ---------------------------------------------------------------------------
 @app.get("/api/storyboard/cast")
-async def get_storyboard_cast(admin: dict = Depends(require_user)):
+def get_storyboard_cast(admin: dict = Depends(require_user)):
     """Load persistent cast settings (empty cast by default — no forced family)."""
     from core.storyboard_pack import (
         VISUAL_STYLE_PRESETS,
@@ -4839,7 +4881,7 @@ async def get_storyboard_cast(admin: dict = Depends(require_user)):
 
 
 @app.put("/api/storyboard/cast")
-async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Depends(require_user)):
+def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Depends(require_user)):
     from core.storyboard_pack import normalize_cast, resolve_visual_style
     from webapp.database import set_user_storyboard_settings
     rows = []
@@ -4867,7 +4909,7 @@ async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Dep
 
 
 @app.post("/api/storyboard/cast/extract")
-async def extract_storyboard_cast(
+def extract_storyboard_cast(
     req: StoryboardExtractCastRequest,
     admin: dict = Depends(require_user),
 ):
@@ -4880,8 +4922,7 @@ async def extract_storyboard_cast(
     try:
         from core.storyboard_pack import extract_cast_from_text, resolve_visual_style
         style_id, _, _ = resolve_visual_style(req.visual_style or "")
-        cast = await asyncio.to_thread(
-            extract_cast_from_text,
+        cast = extract_cast_from_text(
             story=story,
             script=script,
             visual_style=style_id,
@@ -4900,7 +4941,7 @@ async def extract_storyboard_cast(
 
 
 @app.post("/api/storyboard/cast/generate-look")
-async def generate_storyboard_cast_look(
+def generate_storyboard_cast_look(
     req: StoryboardLookRequest,
     admin: dict = Depends(require_user),
 ):
@@ -4928,8 +4969,7 @@ async def generate_storyboard_cast_look(
     stamp = int(time.time())
 
     try:
-        portrait_local = await asyncio.to_thread(
-            generate_character_portrait,
+        portrait_local = generate_character_portrait(
             name=name,
             look_prompt=look,
             out_path=out_dir / f"portrait_{stamp}.png",
@@ -4940,8 +4980,7 @@ async def generate_storyboard_cast_look(
         )
         sheet_path, sheet_url = "", ""
         if req.make_sheet:
-            sheet_local = await asyncio.to_thread(
-                generate_character_sheet,
+            sheet_local = generate_character_sheet(
                 name=name,
                 look_prompt=look,
                 out_path=out_dir / f"sheet_{stamp}.png",
@@ -5002,7 +5041,7 @@ async def generate_storyboard_cast_look(
 
 
 @app.post("/api/storyboard/thumbnail")
-async def storyboard_thumbnail(
+def storyboard_thumbnail(
     title: str = Form(...),
     story: str = Form(""),
     script: str = Form(""),
@@ -5035,8 +5074,7 @@ async def storyboard_thumbnail(
     n = max(1, min(int(count or 2), 3))
 
     try:
-        brief = await asyncio.to_thread(
-            suggest_storyboard_thumbnail_brief,
+        brief = suggest_storyboard_thumbnail_brief(
             title=title,
             story=(story or "").strip(),
             script=(script or "").strip(),
@@ -5104,7 +5142,7 @@ async def storyboard_thumbnail(
         try:
             dest = cache / f"user_{int(time.time())}_{ref.filename or 'ref.png'}"
             with open(dest, "wb") as f:
-                f.write(await ref.read())
+                f.write(ref.file.read())
             if dest.is_file() and dest.stat().st_size > 100:
                 ref_paths.append(str(dest))
         except Exception as e:
@@ -5113,8 +5151,7 @@ async def storyboard_thumbnail(
     out_dir = str(OUTPUT_DIR / "thumbnails" / str(admin["id"]) / str(int(time.time())))
     try:
         if ref_paths:
-            paths = await asyncio.to_thread(
-                generate_thumbnails,
+            paths = generate_thumbnails(
                 title,
                 ref_paths,
                 style_prompt,
@@ -5123,8 +5160,7 @@ async def storyboard_thumbnail(
                 out_dir,
             )
         else:
-            paths = await asyncio.to_thread(
-                generate_thumbnail_no_refs,
+            paths = generate_thumbnail_no_refs(
                 title,
                 style_prompt,
                 "",
@@ -5154,7 +5190,7 @@ async def storyboard_thumbnail(
 
 
 @app.post("/api/storyboard/suggest-morals")
-async def storyboard_suggest_morals(
+def storyboard_suggest_morals(
     req: StoryboardSuggestMoralsRequest,
     admin: dict = Depends(require_user),
 ):
@@ -5172,7 +5208,7 @@ async def storyboard_suggest_morals(
 
 
 @app.post("/api/storyboard/jobs")
-async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(require_active_plan)):
+def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(require_active_plan)):
     """Queue a storyboard pack build (credits for paying users; trial packs free but capped)."""
     title = (req.title or "").strip()
     story = (req.story or req.topic or "").strip()
@@ -5411,7 +5447,7 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
 
 
 @app.get("/api/storyboard/jobs/active")
-async def list_active_storyboard_pack_jobs(user: dict = Depends(require_user)):
+def list_active_storyboard_pack_jobs(user: dict = Depends(require_user)):
     """In-flight stills packs for the signed-in user (close-tab / refresh resume)."""
     jobs = list_user_active_storyboard_packs(int(user["id"]))
     out = []
@@ -5442,7 +5478,7 @@ async def list_active_storyboard_pack_jobs(user: dict = Depends(require_user)):
 
 
 @app.get("/api/storyboard/jobs/{job_id}")
-async def get_storyboard_job(job_id: str, admin: dict = Depends(require_active_plan)):
+def get_storyboard_job(job_id: str, admin: dict = Depends(require_active_plan)):
     job = _jobs.get(job_id)
     if job:
         if job.get("user_id") != admin["id"] and not _is_admin_email(admin.get("email", "")):
@@ -5485,7 +5521,7 @@ async def get_storyboard_job(job_id: str, admin: dict = Depends(require_active_p
 
 
 @app.post("/api/storyboard/jobs/{job_id}/regen-beat")
-async def regen_storyboard_beat(
+def regen_storyboard_beat(
     job_id: str,
     req: StoryboardRegenBeatRequest,
     admin: dict = Depends(require_active_plan),
@@ -5564,8 +5600,7 @@ async def regen_storyboard_beat(
     )
 
     try:
-        updated = await asyncio.to_thread(
-            regenerate_beat_still,
+        updated = regenerate_beat_still(
             beat_obj,
             out_dir / f"{beat_obj.index:03d}_scene.jpg",
             cast=cast,
@@ -5625,7 +5660,7 @@ async def regen_storyboard_beat(
 
 
 @app.get("/api/storyboard/jobs/{job_id}/download")
-async def download_storyboard_job(job_id: str, admin: dict = Depends(require_active_plan)):
+def download_storyboard_job(job_id: str, admin: dict = Depends(require_active_plan)):
     job = _jobs.get(job_id)
     if not job:
         row = get_cook_job(job_id)
@@ -5750,7 +5785,7 @@ def _require_storyboard_stills_ready(
     return beats
 
 
-async def _save_assemble_uploads(
+def _save_assemble_uploads(
     files: list[UploadFile],
     dest_dir: Path,
 ) -> list[Path]:
@@ -5760,14 +5795,14 @@ async def _save_assemble_uploads(
         name = Path(f.filename or "clip.bin").name
         dest = dest_dir / name
         with open(dest, "wb") as out:
-            out.write(await f.read())
+            shutil.copyfileobj(f.file, out, 1 << 20)          # a zip of clips can be large: copied, never held whole
         if dest.is_file() and dest.stat().st_size > 100:
             saved.append(dest)
     return saved
 
 
 @app.post("/api/storyboard/jobs/{job_id}/assemble/match")
-async def match_storyboard_assemble(
+def match_storyboard_assemble(
     job_id: str,
     clips: list[UploadFile] = File(default=[]),
     admin: dict = Depends(require_active_plan),
@@ -5787,7 +5822,7 @@ async def match_storyboard_assemble(
 
     stamp = int(time.time())
     stage = OUTPUT_DIR / "storyboard_assemble_uploads" / str(admin["id"]) / f"{job_id}_{stamp}"
-    saved = await _save_assemble_uploads(clips, stage)
+    saved = _save_assemble_uploads(clips, stage)
     if not saved:
         raise HTTPException(400, "Upload at least one .mp4/.webm/.mov clip or a zip of clips.")
 
@@ -5843,7 +5878,7 @@ async def match_storyboard_assemble(
 
 
 @app.post("/api/storyboard/jobs/{job_id}/assemble")
-async def start_storyboard_assemble(
+def start_storyboard_assemble(
     job_id: str,
     staging_id: str = Form(""),
     burn_captions: str = Form("1"),
@@ -5881,7 +5916,7 @@ async def start_storyboard_assemble(
     if clips:
         stamp = int(time.time())
         stage = OUTPUT_DIR / "storyboard_assemble_uploads" / str(admin["id"]) / f"{job_id}_{stamp}"
-        saved = await _save_assemble_uploads(clips, stage)
+        saved = _save_assemble_uploads(clips, stage)
         ready = extract_clips_from_uploads(saved, stage / "clips")
         if ready:
             clips_dir = stage / "clips"
@@ -6042,7 +6077,7 @@ def _storyboard_animate_credit_cost(target_minutes: float, *, byok: bool = False
 
 
 @app.post("/api/storyboard/jobs/{job_id}/animate")
-async def start_storyboard_animate(
+def start_storyboard_animate(
     job_id: str,
     burn_captions: str = Form("1"),
     add_music: str = Form("1"),
@@ -6267,7 +6302,7 @@ async def start_storyboard_animate(
 
 
 @app.get("/api/storyboard/animate-cost")
-async def storyboard_animate_cost(
+def storyboard_animate_cost(
     minutes: float = 8,
     admin: dict = Depends(require_active_plan),
 ):
@@ -6299,7 +6334,7 @@ async def storyboard_animate_cost(
 
 
 @app.get("/api/storyboard/pack-cost")
-async def storyboard_pack_cost(
+def storyboard_pack_cost(
     minutes: float = 8,
     pack_mode: str = "full",
     admin: dict = Depends(require_user),
@@ -6658,7 +6693,7 @@ def _video_to_entry(v: dict, retention_secs: float, now: float) -> dict:
 
 
 @app.get("/api/media/playable")
-async def media_playable(url: str = "", user: dict = Depends(require_user)):
+def media_playable(url: str = "", user: dict = Depends(require_user)):
     """Return a browser-playable URL for a Spaces object (ACL + presign)."""
     if not url or not url.startswith("http"):
         raise HTTPException(status_code=400, detail="url required")
@@ -6671,7 +6706,7 @@ async def media_playable(url: str = "", user: dict = Depends(require_user)):
 
 
 @app.get("/api/history")
-async def get_history(type: str = "all", request: Request = None, user: dict = Depends(require_user)):
+def get_history(type: str = "all", request: Request = None, user: dict = Depends(require_user)):
     now = time.time()
     retention_secs = _retention_days(request) * 86400
     videos = list_videos(user["id"])
@@ -6680,7 +6715,7 @@ async def get_history(type: str = "all", request: Request = None, user: dict = D
 
 
 @app.get("/api/videos")
-async def api_list_videos(request: Request = None, user: dict = Depends(require_user)):
+def api_list_videos(request: Request = None, user: dict = Depends(require_user)):
     now = time.time()
     retention_secs = _retention_days(request) * 86400
     videos = [_video_to_entry(v, retention_secs, now) for v in list_videos(user["id"])]
@@ -6688,7 +6723,7 @@ async def api_list_videos(request: Request = None, user: dict = Depends(require_
 
 
 @app.get("/api/videos/{video_id}")
-async def api_get_video(video_id: int, request: Request = None, user: dict = Depends(require_user)):
+def api_get_video(video_id: int, request: Request = None, user: dict = Depends(require_user)):
     v = get_video(video_id, user["id"])
     if not v:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -6702,7 +6737,7 @@ class VideoKitRequest(BaseModel):
 
 
 @app.post("/api/videos/{video_id}/kit")
-async def api_save_video_kit(video_id: int, req: VideoKitRequest, user: dict = Depends(require_user)):
+def api_save_video_kit(video_id: int, req: VideoKitRequest, user: dict = Depends(require_user)):
     v = get_video(video_id, user["id"])
     if not v:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -6713,7 +6748,7 @@ async def api_save_video_kit(video_id: int, req: VideoKitRequest, user: dict = D
 
 
 @app.delete("/api/videos/{video_id}")
-async def api_delete_video(video_id: int, user: dict = Depends(require_user)):
+def api_delete_video(video_id: int, user: dict = Depends(require_user)):
     row = delete_video(video_id, user["id"])
     if not row:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -6727,7 +6762,7 @@ async def api_delete_video(video_id: int, user: dict = Depends(require_user)):
 
 
 @app.post("/api/history/cleanup")
-async def cleanup_history(request: Request, user: dict = Depends(require_user)):
+def cleanup_history(request: Request, user: dict = Depends(require_user)):
     """Remove expired output directories."""
     output = ROOT / "output"
     if not output.exists():
@@ -6761,7 +6796,7 @@ _HEYGEN_GUIDE = {
 
 
 @app.get("/api/me/integrations")
-async def get_my_integrations(user: dict = Depends(require_user)):
+def get_my_integrations(user: dict = Depends(require_user)):
     byok = _is_byok_email(user.get("email", ""))
     payload = {
         "heygen": user_heygen_status(user["id"]),
@@ -6881,7 +6916,7 @@ def save_atlas_key(req: AtlasKeyRequest, user: dict = Depends(require_user)):
 
 
 @app.delete("/api/me/integrations/atlas")
-async def delete_atlas_key(user: dict = Depends(require_user)):
+def delete_atlas_key(user: dict = Depends(require_user)):
     _require_byok_user(user)
     set_user_atlas_key(user["id"], None)
     return {"ok": True, "atlas": {"configured": False, "last4": ""}}
@@ -6917,7 +6952,7 @@ def save_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
 
 
 @app.delete("/api/me/integrations/heygen")
-async def delete_heygen_key(user: dict = Depends(require_user)):
+def delete_heygen_key(user: dict = Depends(require_user)):
     set_user_heygen_key(user["id"], None)
     return {"ok": True, "heygen": {"configured": False, "last4": ""}}
 
@@ -7116,7 +7151,7 @@ KEY_MAP = {
 
 
 @app.get("/api/admin/stats")
-async def admin_stats(days: int = 30, user: dict = Depends(require_analytics)):
+def admin_stats(days: int = 30, user: dict = Depends(require_analytics)):
     """Lightweight COGS / render-health snapshot (admin or analytics viewers).
 
     PostHog owns the pretty funnels; this is the authoritative unit-economics
@@ -7132,7 +7167,7 @@ class CreditGrantRequest(BaseModel):
 
 
 @app.post("/api/admin/credits")
-async def admin_grant_credits(req: CreditGrantRequest, admin: dict = Depends(require_admin)):
+def admin_grant_credits(req: CreditGrantRequest, admin: dict = Depends(require_admin)):
     """Support: grant cook credits to a user by email."""
     email = (req.email or "").lower().strip()
     amount = int(req.amount or 0)
@@ -7200,7 +7235,7 @@ async def save_settings(keys: dict, admin: dict = Depends(require_admin)):
 
 
 @app.post("/api/settings/test-key")
-async def test_key(req: KeyTestRequest, admin: dict = Depends(require_admin)):
+def test_key(req: KeyTestRequest, admin: dict = Depends(require_admin)):
     env_name = KEY_MAP.get(req.key_name)
     key_val = req.key_value or os.environ.get(env_name or "", "") or getattr(config, env_name or "", "")
 

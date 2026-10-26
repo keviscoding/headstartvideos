@@ -103,8 +103,9 @@ def make_router(session_user) -> APIRouter:
     async def connect_page():
         return FileResponse(str(PAGE), headers={"Cache-Control": "no-store"})
 
+    # plain defs: both read and write the database, which must never run on the event loop
     @router.post("/api/studio/connect/approve")
-    async def approve(body: ApproveRequest, request: Request):
+    def approve(body: ApproveRequest, request: Request):
         user = require_studio_user(session_user(request))
         if not _CHALLENGE.fullmatch(body.challenge) or not _STATE.fullmatch(body.state):
             raise HTTPException(400, "This connection link is incomplete. Press Connect in Studio again.")
@@ -112,7 +113,7 @@ def make_router(session_user) -> APIRouter:
         return {"redirect": RETURN_URL + "?" + urlencode({"code": code, "state": body.state})}
 
     @router.post("/api/studio/connect/exchange")
-    async def exchange(body: ExchangeRequest):
+    def exchange(body: ExchangeRequest):
         user_id = read_code(body.code, body.verifier)
         user = require_studio_user(db.get_user_by_id(user_id))
         milestones.record(int(user["id"]), milestones.CONNECTED)

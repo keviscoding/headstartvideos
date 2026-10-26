@@ -52,11 +52,10 @@ def test_keys_are_never_written_to_the_app_folder_on_the_hosted_site(monkeypatch
 def test_a_storyboard_match_id_that_is_a_path_is_refused(monkeypatch, sid):
     """Assemble built a folder path from the form's staging_id: '../<another account>/<job>_<stamp>' read another
     account's staging and assembled their clips."""
-    import asyncio
     from fastapi import HTTPException
     monkeypatch.setattr(server, "_storyboard_pack_job_or_404", lambda job_id, user: {"result": {}})
     monkeypatch.setattr(server, "_require_storyboard_stills_ready", lambda job: None)
     with pytest.raises(HTTPException) as refused:
-        asyncio.run(server.start_storyboard_assemble("job1", staging_id=sid, burn_captions="1", add_music="1",
-                                                     notify_email="", clips=[], admin={"id": 5}))
+        server.start_storyboard_assemble("job1", staging_id=sid, burn_captions="1", add_music="1", notify_email="",
+                                         clips=[], admin={"id": 5})
     assert refused.value.status_code == 400 and "Match again" in refused.value.detail

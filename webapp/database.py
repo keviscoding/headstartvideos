@@ -382,6 +382,22 @@ def _conn():
         conn.close()
 
 
+def ping(timeout: float = 2.0) -> None:
+    """SELECT 1 on a connection obtained within `timeout` seconds (the readiness check). Raises when there is none."""
+    if IS_PG and _pool():
+        with _pool().connection(timeout=timeout) as conn:
+            conn.execute("SELECT 1").fetchone()
+        return
+    if IS_PG:
+        conn = psycopg.connect(DATABASE_URL, connect_timeout=max(1, int(round(timeout))))
+    else:
+        conn = sqlite3.connect(str(DB_PATH), timeout=timeout)
+    try:
+        conn.execute("SELECT 1").fetchone()
+    finally:
+        conn.close()
+
+
 _INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_users_stripe_sub ON users (stripe_sub_id);
 CREATE INDEX IF NOT EXISTS idx_videos_user ON videos (user_id, created_at);

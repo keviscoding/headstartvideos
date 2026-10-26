@@ -691,7 +691,7 @@ def make_router(access) -> APIRouter:
             raise HTTPException(400, "Send an Anthropic Messages request.")
         if not isinstance(body, dict) or not body.get("messages"):
             raise HTTPException(400, "Send an Anthropic Messages request.")
-        out = relay_response(j, body)
+        out = await run_in_threadpool(relay_response, j, body)          # it records the question: a database write
         return await out.respond() if isinstance(out, _PlainRelay) else out
 
     return router
