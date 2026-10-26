@@ -160,8 +160,9 @@ def said(lines, text):
 def test_kie_down_hands_every_watch_to_channelrecipe_and_stops_asking_kie_after_three(run):
     got = run.module.fetch_clips(run.engine, "word " * 300, run.job, "documentary", False)
     assert len(got) == 6 and all(v["shots"] for v in got.values()), "every video is watched"
-    # three failures open Kie's breaker; the first wave watches up to WORKERS_UPLOAD at once, so it may reach four
-    assert 3 <= len(run.module.KIE["calls"]) <= watch.WORKERS_UPLOAD, "then Kie is never asked again for this video"
+    # three failures open Kie's breaker; until the third failure lands, the other workers (WORKERS_UPLOAD at once) may
+    # each have started one more watch, so up to 3 + WORKERS_UPLOAD - 1 asks (Windows CI saw 5)
+    assert 3 <= len(run.module.KIE["calls"]) <= 3 + watch.WORKERS_UPLOAD - 1, "then Kie is never asked again"
     posts = run.service.posts
     assert {p["use_credits"] for p in posts} == {False} and {p["mode"] for p in posts} == {"scout"}
     assert all(p["end"] - p["start"] <= 240 for p in posts)

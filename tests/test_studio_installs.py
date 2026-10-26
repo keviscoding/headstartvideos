@@ -450,7 +450,7 @@ def test_fix_claude_runs_the_installer_in_a_clean_environment_then_finds_claude(
     assert kw["stdin"] is subprocess.DEVNULL and kw["encoding"] == "utf-8" and kw["stderr"] is subprocess.STDOUT
     assert "ANTHROPIC_API_KEY" not in kw["env"], "the installer never sees a key"
     # Windows PowerShell 5.1 started with PowerShell 7's module path can't load Get-FileHash (Windows CI, 2026-10-26)
-    assert ("PSModulePath" in kw["env"]) is (not windows)
+    assert any(k.upper() == "PSMODULEPATH" for k in kw["env"]) is (not windows)    # Windows' names are upper-case
     # its own process group (Mac, Linux) or tree root (Windows): a timeout stops all of it
     assert kw.get("start_new_session") is True if os.name != "nt" else "creationflags" in kw
 

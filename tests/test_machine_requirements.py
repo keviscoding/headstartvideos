@@ -265,6 +265,8 @@ def test_the_quote_says_when_the_disk_cant_hold_the_videos(monkeypatch, tmp_path
     cat = {"prices": {"voice": {"per_min": 0.02}, "features": {}}}
     measured = []
     monkeypatch.setattr(tools, "output_root", lambda: "D:/ChannelRecipe")
+    # nothing in the queue, and never the Studio really running on this computer (the owner's Mac answered on 7860)
+    monkeypatch.setattr(tools, "queue_line", lambda: {"before": 0, "on_hold": False, "ahead_gb": 0.0})
     monkeypatch.setattr(cr_machine, "free_disk_gb", lambda home, root=None: measured.append(root) or 3.0)
     q = tools.quote_for(cat, row, titles=2, minutes=10, where="this_computer", features={"threed": False})
     assert measured == ["D:/ChannelRecipe"], "the disk the running Studio's videos go on"
