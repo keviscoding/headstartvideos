@@ -36,7 +36,7 @@ def test_only_studios_own_files_lose_the_mark(tmp_path):
     (home / ".venv").mkdir()
     removed = []
     assert cr_unblock.clear(home, windows=True, remove=removed.append) == 4
-    assert sorted(removed) == sorted(str(home.joinpath(*name.split("/"))) + ":Zone.Identifier" for name in
+    assert sorted(removed) == sorted(str(home.resolve().joinpath(*name.split("/"))) + ":Zone.Identifier" for name in
                                      ["Start on Windows.cmd", "cr-files.json", "cr_studio.py", "threed/engine/index.html"])
     assert not any(word in path for path in removed for word in ("output", ".venv", "outside", "system.ini", "hosts"))
 
@@ -50,10 +50,28 @@ def test_a_file_without_a_mark_or_a_disk_without_streams_never_stops_it(tmp_path
 
 
 def test_without_a_file_list_the_launcher_still_loses_its_mark(tmp_path):
+    for name in ("Start on Windows.cmd", "cr-files.json"):
+        (tmp_path / name).write_text("not a list", encoding="utf-8")
     removed = []
     assert cr_unblock.clear(tmp_path, windows=True, remove=removed.append) == 2
-    assert removed == [str(tmp_path / "Start on Windows.cmd") + ":Zone.Identifier",
-                       str(tmp_path / "cr-files.json") + ":Zone.Identifier"]
+    assert removed == [str(tmp_path.resolve() / "Start on Windows.cmd") + ":Zone.Identifier",
+                       str(tmp_path.resolve() / "cr-files.json") + ":Zone.Identifier"]
+
+
+def test_a_backslash_a_link_or_a_junction_never_leads_outside_the_folder(tmp_path):
+    """Coordinator review (2026-10-26): names are checked the POSIX way, so a backslash (a folder step on Windows) is
+    refused, and a link or junction inside the folder is never followed to anywhere else."""
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "system.ini").write_text("not Studio's", encoding="utf-8")
+    home = studio(tmp_path, ["cr_studio.py"], listed_only=["..\\elsewhere\\system.ini", "linked/system.ini",
+                                                          "pointer.ini"])
+    (home / "linked").symlink_to(outside, target_is_directory=True)
+    (home / "pointer.ini").symlink_to(outside / "system.ini")
+    removed = []
+    cr_unblock.clear(home, windows=True, remove=removed.append)
+    assert not any("elsewhere" in path or "linked" in path or "pointer" in path for path in removed), removed
+    assert any(path.endswith("cr_studio.py:Zone.Identifier") for path in removed)
 
 
 def test_nothing_happens_off_windows(tmp_path):

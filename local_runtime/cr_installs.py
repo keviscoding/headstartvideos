@@ -1,8 +1,8 @@
 """Setup's one-click Fix it for the tools Studio needs from outside Python: FFmpeg (with ffprobe), Node.js and the
-Claude Code command-line tool. FFmpeg and Node.js start by themselves while the setup page is open and they're missing
-or too old (the page starts them once, as the speech-timing model starts itself); otherwise nothing installs until the
-creator presses Fix it (or asks Claude Code, whose fix tools call the same routes). Claude Code installs only on
-Install Claude Code.
+Claude Code command-line tool. Nothing installs until the creator presses Fix it (or asks Claude Code, whose fix tools
+call the same routes); FFmpeg and Node.js can start by themselves while the setup page is open only when
+AUTO_FIX_TOOLS (or the settings' auto_fix_tools) is on, which stays off until the owner decides. Claude Code installs
+only on Install Claude Code.
 
 FFmpeg and Node.js go into this Studio's own folder (tools/ffmpeg, tools/node): no password, no sudo, nothing in the
 computer's system folders, the creator's own FFmpeg or Node.js left as they are. Every download is pinned to one

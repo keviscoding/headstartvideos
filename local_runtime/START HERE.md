@@ -24,9 +24,9 @@
    Studio then clears that warning so it doesn't ask again). Keep that window
    open. The first launch downloads about 300 MB and takes a few minutes.
 3. Your browser opens the setup page at http://127.0.0.1:7860/cr-setup:
-   - if FFmpeg (video tools) or Node.js (YouTube helper) is missing, Studio
-     downloads it into its own folder by itself while the page is open (no
-     password); only if it says it couldn't, press **Fix it** next to it,
+   - if FFmpeg (video tools) or Node.js (YouTube helper) is missing, press
+     **Fix it** next to each: Studio downloads it into its own folder (no
+     password),
    - connect your ChannelRecipe account,
    - Claude: Studio needs Claude Code's command-line tool (the Claude desktop
      app alone isn't enough). Press **Install Claude Code** (Anthropic's
