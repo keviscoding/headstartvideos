@@ -137,3 +137,59 @@ def test_a_designed_video_carries_the_channels_cast_into_every_scene(tmp_path, m
         assert "THE CHANNEL'S DESIGNED CAST" in engine._extra_block()
     finally:
         look._current.job = None
+
+
+def test_a_short_video_gets_two_3d_review_rounds_unless_its_recipe_set_its_own(tmp_path, monkeypatch):
+    mod = types.ModuleType("threed")
+    mod.SB = types.SimpleNamespace(PRESETS=["documentary", "white_studio"])
+    mod._cfg = lambda engine, style: {"preset": "white_studio", "review_rounds": 3}
+    rounds = []
+
+    def _add_to_timeline(segs, srt, job, style, force, engine, total):
+        rounds.append(mod._cfg(engine, style)["review_rounds"])
+        return segs
+    mod._add_to_timeline = _add_to_timeline
+    monkeypatch.setitem(sys.modules, "threed", mod)
+    look.install()
+    engine = types.SimpleNamespace(STYLE_INFO={"own-rounds": {"look": {"threed": {"review_rounds": 3}}}})
+    for name, mins, style in (("short", 2, "cr-3d"), ("long", 8, "cr-3d"), ("unknown", None, "cr-3d"),
+                              ("short-own", 2, "own-rounds")):
+        j = tmp_path / name
+        j.mkdir()
+        (j / "run_spec.json").write_text(json.dumps({"minutes": mins} if mins is not None else {}))
+        mod._add_to_timeline([], j, j, style, False, engine, 60.0)
+    assert rounds == [2, 3, 3, 3], "2 minutes: two rounds; 8 minutes, an unknown length or a recipe's own: as set"
+
+
+
+def test_quicker_3d_review_chosen_in_create_means_one_round_even_over_the_recipes_own(tmp_path, monkeypatch):
+    mod = types.ModuleType("threed")
+    mod.SB = types.SimpleNamespace(PRESETS=["documentary", "white_studio"])
+    mod._cfg = lambda engine, style: {"preset": "white_studio", "review_rounds": 3}
+    rounds = []
+
+    def _add_to_timeline(segs, srt, job, style, force, engine, total):
+        rounds.append(mod._cfg(engine, style)["review_rounds"])
+        return segs
+    mod._add_to_timeline = _add_to_timeline
+    monkeypatch.setitem(sys.modules, "threed", mod)
+    look.install()
+    engine = types.SimpleNamespace(STYLE_INFO={"own-rounds": {"look": {"threed": {"review_rounds": 3}}}})
+    for name, spec, style in (("quick-long", {"minutes": 8, "cr_threed_quick": True}, "cr-3d"),
+                              ("quick-own", {"minutes": 8, "cr_threed_quick": True}, "own-rounds"),
+                              ("not-quick", {"minutes": 8, "cr_threed_quick": "yes"}, "cr-3d")):
+        j = tmp_path / name
+        j.mkdir()
+        (j / "run_spec.json").write_text(json.dumps(spec))
+        mod._add_to_timeline([], j, j, style, False, engine, 60.0)
+    assert rounds == [1, 1, 3], "only a real yes counts"
+
+
+def test_claude_codes_make_videos_can_ask_for_quicker_3d_review():
+    """Both ways: the Studio page's Quicker 3D review switch and Claude Code's make_videos send the same choice."""
+    import cr_studio_tools as tools
+    row = {"name": "cr-3d", "label": "3D", "features": {"offered": ["threed"], "on": ["threed"]}}
+    quick = tools.video_payload(row, ["A title"], 2, {"threed": True}, {"quicker_3d_review": True})
+    assert quick["threed_quick"] is True
+    assert tools.video_payload(row, ["A title"], 2, {"threed": True}, {})["threed_quick"] is False
+    assert tools.video_payload(row, ["A title"], 2, {"threed": False}, {"quicker_3d_review": True})["threed_quick"] is False

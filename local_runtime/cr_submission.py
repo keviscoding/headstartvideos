@@ -134,6 +134,8 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_threed_look"] = threed_look
         if payload.get("cr_captions") == "on" and payload.get("burn_subs") is not False:
             spec["cr_captions"] = "on"           # captions asked for on a style that has none: burned in (cr_captions)
+        if payload.get("threed_quick") is True:
+            spec["cr_threed_quick"] = True            # one 3D review round (cr_threed_look)
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
         if isinstance(proof, dict):

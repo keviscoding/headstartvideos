@@ -306,7 +306,23 @@
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
-    footageNote();
+    footageNote(); threedNote();
+  }
+  // A 3D video's time is mostly Claude's: it directs every shot, then reviews them in rounds (a customer's 2-minute 3D
+  // video spent 84 of its 116 minutes in Claude Opus, 2026-10-25). Said before Create, with Quicker 3D review. Sections
+  // of about 50 s, three at a time; one Claude round took 8-19 minutes on customers' runs (re-measure after Studio 106
+  // asks Opus for medium effort, and lower these).
+  function threedEstimate(minutes, quick) {
+    const groups = Math.max(1, Math.ceil(minutes * 60 * 0.85 / 50 / 3)), rounds = quick ? 1 : minutes <= 3 ? 2 : 3;
+    const calls = (1 + rounds) * groups, nearest = v => Math.max(5, Math.round(v / 5) * 5);
+    return [nearest(calls * 8), nearest(calls * 19)];
+  }
+  function threedNote() {
+    const r = state.selected, on = !!(r && featureValues().threed && !strict(r) && !isShort(r) && !isRanking(r));
+    hide('crw-threed-note', !on);
+    if (!on) return;
+    const minutes = number('crw-minutes',10,1,60), [lo, hi] = threedEstimate(minutes, checked('crw-threed-quick'));
+    text('crw-threed-note', `3D adds about ${lo} to ${hi} minutes to a ${minutes}-minute video: Claude directs every shot and reviews them, on your Claude plan. Quicker 3D review (Creative direction, 3D look) cuts the reviews to one round.`);
   }
   // Research footage watches YouTube videos on the creator's video-model account before the video is made: what that
   // adds, said before Create (a customer's 10-minute video watched clips for 22 hours, 2026-10-25). The numbers are
@@ -802,7 +818,7 @@
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
-      threed_look:threedLook(features)};
+      threed_look:threedLook(features), threed_quick:!!(features.threed && !strict() && checked('crw-threed-quick'))};
     if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
       // A Short to remake: any YouTube link form (Shorts, watch, youtu.be, m., any case), sent as one plain link, for one topic
       const pasted=$('crw-rank-reference').value.trim(), refId=(/(?:youtu\.be\/|youtube\.com\/(?:shorts\/|watch\?(?:[^#]*&)?v=|live\/|embed\/))([A-Za-z0-9_-]{11})/i.exec(pasted)||[])[1]||'';
@@ -812,7 +828,7 @@
       const ranking={ranks:number('crw-ranks',5,3,10),commentary:checked('crw-rank-commentary'),booms:checked('crw-rank-booms'),sfx:$('crw-rank-sfx').value,
         punch_ins:checked('crw-rank-punch'),clean:checked('crw-rank-clean'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{}),...(reference?{reference}:{})};
       p.extra=`[[ranking=${JSON.stringify(ranking)}]] `+(p.extra||'');}
-    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';}
+    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';p.threed_quick=false;}
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }

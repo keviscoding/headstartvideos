@@ -1001,3 +1001,28 @@ def test_a_held_queue_says_why_on_its_cards_and_new_videos_join_it(workspace):
     page.locator("#crw-create").click()
     page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('on hold with the others')")
     assert not env.errors
+
+
+def test_a_3d_video_says_what_its_3d_adds_and_can_take_one_quicker_review_round(workspace):
+    """A customer's 2-minute 3D video took about two hours, mostly Claude (2026-10-25), with nothing said up front."""
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=3d")
+    note = page.locator("#crw-threed-note")
+    note.wait_for(state="visible")
+    assert "to a 10-minute video" in note.inner_text() and "Claude directs every shot" in note.inner_text()
+    page.locator("[data-minutes='2']").click() if page.locator("[data-minutes='2']").count() else \
+        page.locator("#crw-minutes").fill("2")
+    page.locator("#crw-minutes").dispatch_event("input")
+    two = note.inner_text()
+    assert "to a 2-minute video" in two
+    page.locator("summary:has-text('Creative direction')").click()
+    page.locator("#crw-threed-quick").check()
+    assert note.inner_text() != two, "one round: less time"
+    if os.environ.get("CR_SHOT"):
+        page.locator("#crw-threed-quick").scroll_into_view_if_needed()
+        page.screenshot(path=os.environ["CR_SHOT"], full_page=False)
+    page.locator("#crw-title").fill("How one tank stopped a column")
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    assert env.creates[0]["body"]["threed_quick"] is True
+

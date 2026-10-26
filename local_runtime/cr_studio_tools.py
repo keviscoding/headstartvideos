@@ -678,7 +678,9 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
          "desc": description, "chapters": 5 if description else 0, "sources": 3 if description else 0,
          "features": features, "render_backend": "original", "character": "", "character_image": "",
          "avatar_id": "", "avatar_s": 8, "avatar_count": 1, "offer": "", "offer_plugs": 0, "panels": "",
-         "cta": None, "pictures_per_min": None, "threed_look": ""}
+         "cta": None, "pictures_per_min": None, "threed_look": "",
+         # Create's Quicker 3D review: one 3D review round (cr_threed_look), for styles with 3D scenes only
+         "threed_quick": options.get("quicker_3d_review") is True and bool((features or {}).get("threed"))}
     if p["script"] and len(titles) > 1:
         raise Refused("Your own script goes with one title.")
     if kind(row) == "short":
@@ -1449,7 +1451,9 @@ _OPTIONS = {"type": "object", "description": (
     "captions=true burns them in anyway), thumbnails (default true), thumbnail_count 1-4, description (YouTube "
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
     "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
-    "short_seconds 15-60 for Shorts, ranking {ranks 3-10, narrator_lines, vine_booms, meme_sounds full|light|off, "
+    "short_seconds 15-60 for Shorts, quicker_3d_review (true: one 3D review round instead of two or three, about "
+    "half the Claude time of a 3D video, fewer last fixes; Create's Quicker 3D review), "
+    "ranking {ranks 3-10, narrator_lines, vine_booms, meme_sounds full|light|off, "
     "punch_ins, captions} for Ranking Shorts. character: words for the main character who appears in every picture "
     "(age, hair, face, clothes, one recognisable detail); they replace the style's own character for these videos, and "
     "on a style with a character picture Studio draws the new one once in the style's look (one picture, about $0.02). "
