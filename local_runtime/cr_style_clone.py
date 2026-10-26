@@ -773,15 +773,25 @@ def renderer_pictures(home, operation_id, bridge, *, style=None) -> dict:
     if not shots:
         built = _read(folder / "renderer" / "build.json")
         shots = [folder / "renderer" / p for p in built.get("stills") or []]
-    root = Path(home).resolve()
-    shots = [p for p in shots if p.is_file() and p.resolve().is_relative_to(root)][:4]
+    # pictures only, from where they are made: this study, the style's Lab workspace and the look's frames
+    import cr_style_look
+    places = [Path(folder).resolve(), (Path(home) / "style-lab" / str(spec.get("style_id") or "")).resolve()]
+    try:
+        places.append(cr_style_look.folder(home, spec.get("look_id") or "").resolve())
+    except ValueError:                                      # a study without a look has no channel frames
+        pass
+
+    def fine(p):
+        return (p.suffix.lower() in (".jpg", ".jpeg") and p.is_file() and not p.is_symlink()
+                and any(p.resolve().is_relative_to(place) for place in places))
+    shots = [p for p in shots if fine(p)][:4]
     channel = []
     if spec.get("look_id"):
         try:
             channel = [Path(p) for p in renderer_frames(folder, spec)][:3]
         except Exception:                                   # noqa: BLE001 - the shots still show without them
             channel = []
-    channel = [p for p in channel if p.is_file() and p.resolve().is_relative_to(root)]
+    channel = [p for p in channel if fine(p)]
     return {"shots": shots, "channel": channel}
 
 
@@ -843,7 +853,8 @@ def use_pictures(home, operation_id, bridge):
     style.pop("cost", None)
     style = cr_style_map.apply(style, mapping)
     clone = style.setdefault("cr_style_clone", {})
-    clone["pictures_instead"] = {"at": time.time(), "renderer": {k: renderer.get(k) for k in ("state", "overall", "bar")}}
+    clone["pictures_instead"] = {"at": time.time(), "renderer": {k: renderer.get(k) for k in ("state", "overall", "bar")},
+                                 "answers": answers}
     if isinstance(clone.get("learned_v2"), dict):
         clone["learned_v2"]["route"] = mapping.get("route") or {}
     republish(folder, saved, style)
@@ -1301,8 +1312,10 @@ def _apply_learned(folder, spec, style, log):
     looked = _read(cr_style_look.folder(home, spec["look_id"]) / "look.json")
     if looked.get("state") != "done":
         return style
+    # a study that wrote no renderer (approved before Studio 107, or instead of code) keeps the way it was approved:
+    # planned again with Studio's own engines, never as code it has no renderer for
     mapping = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=spec["base_style"],
-                                      answers=spec.get("answers") or {})
+                                      answers=spec.get("answers") or {}, code=bool(spec.get("renderer")))
     learned = cr_style_map.apply(style, mapping)
     if mapping["base"] in ("stories", "avatar-premium"):
         # The engine's automatic documentary look adds documentary script and edit guidance; a picture-led channel
@@ -1324,7 +1337,11 @@ def _apply_learned(folder, spec, style, log):
         if mapping["overrides"]["look"].get("aspect"):
             look["aspect"] = mapping["overrides"]["look"]["aspect"]
         import cr_animated2d
-        if spec.get("renderer"):
+        carried = _read(folder / "renderer-carried.json")
+        if spec.get("renderer") and carried.get("schema") == 1:
+            # an improved copy of a coded style: its source's renderer as last saved, never one drawn in its place
+            cr_animated2d.carry(learned, carried.get("record") or {}, home)
+        elif spec.get("renderer"):
             cr_animated2d.attach(learned, folder, home)
         learned["cost"] = cr_animated2d.cost_note(learned)
     learned.setdefault("cr_style_clone", {}).update(

@@ -473,6 +473,8 @@ def _page3d(spec: dict, code: str, home=None, mode: str = "render") -> str:
 GL_ARGS = ["--enable-gpu", "--ignore-gpu-blocklist", "--force-color-profile=srgb", "--hide-scrollbars", "--mute-audio",
            "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
            "--disable-backgrounding-occluded-windows"] + (["--use-angle=metal"] if sys.platform == "darwin" else [])
+# no way out besides requests (which the page's CSP and the route refuse): WebRTC sends no UDP and no name is looked up
+NO_NET_ARGS = ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--host-resolver-rules=MAP * ~NOTFOUND"]
 
 
 class _Sandbox:
@@ -483,8 +485,9 @@ class _Sandbox:
         self._pw = sync_playwright().start()
         root = Path(home or HERE)
         try:
-            self.browser = self._pw.chromium.launch(args=GL_ARGS if gl else ["--disable-gpu", "--force-color-profile=srgb",
-                                                                              "--font-render-hinting=none"])
+            self.browser = self._pw.chromium.launch(args=(GL_ARGS if gl else ["--disable-gpu", "--force-color-profile=srgb",
+                                                                               "--font-render-hinting=none"])
+                                                    + NO_NET_ARGS)
             self.context = self.browser.new_context(viewport={"width": width, "height": height}, device_scale_factor=1,
                                                     offline=True, java_script_enabled=True, accept_downloads=False)
             self.blocked = []
@@ -538,6 +541,11 @@ class _Sandbox:
             pass
 
 
+SOUND_NAME = re.compile(r"[a-z_]{1,32}")
+SOUND_MAX_S = 4                        # the page renders at most 4 s of each sound
+MAX_SOUNDS = 24
+
+
 _MAKE_SOUNDS = """async () => {
   const R = Kit._renderer, out = {};
   for (const [name, def] of Object.entries((R && R.sounds) || {})) {
@@ -574,20 +582,40 @@ def make_sounds(code: str, out_dir: Path, *, home=None, dims: int = 2) -> tuple:
     finally:
         box.close()
     files, problems = {}, []
-    for name, row in made.items():
-        if row.get("error"):
-            problems.append(f"its sound \"{name}\" could not be made: {row['error']}")
+    # the page's answer is the renderer's to shape (it can replace the page's own checks): every name, type and size
+    # is checked again here before anything is written, and only inside out_dir
+    for name, row in list(made.items() if isinstance(made, dict) else [])[:MAX_SOUNDS]:
+        if not isinstance(name, str) or not SOUND_NAME.fullmatch(name) or not isinstance(row, dict):
+            problems.append(f"its sound {str(name)[:40]!r} has a name Studio can't use (a-z and _, up to 32)")
             continue
-        if float(row.get("peak") or 0) < 0.01:
+        if row.get("error"):
+            problems.append(f"its sound \"{name}\" could not be made: {str(row['error'])[:200]}")
+            continue
+        rate, pcm, peak = row.get("rate"), row.get("pcm"), row.get("peak")
+        if (not isinstance(rate, int) or isinstance(rate, bool) or not 8000 <= rate <= 48000 or not isinstance(pcm, str)
+                or len(pcm) > (SOUND_MAX_S * 48000 * 2) * 4 // 3 + 8 or not isinstance(peak, (int, float))):
+            problems.append(f"its sound \"{name}\" came back in a form Studio can't use")
+            continue
+        try:
+            data = base64.b64decode(pcm, validate=True)
+        except ValueError:
+            problems.append(f"its sound \"{name}\" came back in a form Studio can't use")
+            continue
+        if len(data) % 2 or len(data) > SOUND_MAX_S * rate * 2:
+            problems.append(f"its sound \"{name}\" is longer than {SOUND_MAX_S} s")
+            continue
+        if float(peak) < 0.01:
             problems.append(f"its sound \"{name}\" came out silent")
             continue
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / f"{name}.wav"
+        if path.resolve().parent != out_dir.resolve():
+            continue
         with wave.open(str(path), "wb") as w:
             w.setnchannels(1)
             w.setsampwidth(2)
-            w.setframerate(int(row.get("rate") or 44100))
-            w.writeframes(base64.b64decode(row["pcm"]))
+            w.setframerate(rate)
+            w.writeframes(data)
         files[name] = path
     return files, problems
 
@@ -1053,6 +1081,17 @@ def attach(style: dict, folder, home) -> dict:
     digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
     if digest != built.get("sha256"):
         raise AnimationStopped("The study's renderer changed after it was judged. No other renderer was used.")
+    same = _keep(style, code, digest, home)
+    spec["renderer"] = {"file": same.relative_to(Path(home) / "assets").as_posix(), "sha256": digest,
+                        "version": int(re.sub(r"\D", "", same.stem)), "api": KIT_API, "dims": dims_of(spec),
+                        "state": built["state"],
+                        "overall": built.get("overall"), "bar": built.get("bar"), "control": built.get("control"),
+                        "round": built.get("round"), "manifest": built.get("manifest") or {}}
+    return style
+
+
+def _keep(style: dict, code: str, digest: str, home) -> Path:
+    """assets/styles/learned/<name>/renderer-v<N>.js holding this code: the version already there, else a new one."""
     name = re.sub(r"[^a-z0-9_-]", "", str(style.get("name") or ""))
     target = Path(home) / "assets" / "styles" / "learned" / name
     target.mkdir(parents=True, exist_ok=True)
@@ -1062,31 +1101,52 @@ def attach(style: dict, folder, home) -> dict:
         number = (int(re.sub(r"\D", "", versions[-1].stem)) + 1) if versions else 1
         same = target / f"renderer-v{number}.js"
         same.write_text(code, encoding="utf-8")
-    spec["renderer"] = {"file": same.relative_to(Path(home) / "assets").as_posix(), "sha256": digest,
-                        "version": int(re.sub(r"\D", "", same.stem)), "api": KIT_API, "dims": dims_of(spec),
-                        "state": built["state"],
-                        "overall": built.get("overall"), "bar": built.get("bar"), "control": built.get("control"),
-                        "round": built.get("round"), "manifest": built.get("manifest") or {}}
+    return same
+
+
+def carry(style: dict, record: dict, home) -> dict:
+    """An improved copy of a coded style keeps its source's renderer as last saved (Style Lab's saves included), copied
+    into its own folder unchanged (the hash is checked): look.animated2d.renderer. A source without a working renderer
+    passes on its state, so the copy is refused the same way and never drawn with anything else."""
+    spec = style.setdefault("look", {}).setdefault("animated2d", {})
+    record = dict(record or {})
+    if not record.get("file"):
+        spec["renderer"] = {"state": str(record.get("state") or "missing"),
+                            "why": str(record.get("why") or "the style it improves has no working renderer")}
+        return style
+    source = Path(home) / "assets" / str(record["file"])
+    code = source.read_text(encoding="utf-8") if source.is_file() else ""
+    digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    if not code or digest != record.get("sha256"):
+        raise AnimationStopped("The renderer of the style being improved is missing or changed on disk. Nothing else "
+                               "was used in its place; study the channel again or restore the style.")
+    same = _keep(style, code, digest, home)
+    spec["renderer"] = {**record, "file": same.relative_to(Path(home) / "assets").as_posix(),
+                        "version": int(re.sub(r"\D", "", same.stem)), "carried_from": str(record["file"])}
     return style
 
 
 SCORE_USD = 0.12                       # one piece of the channel's own music: two Suno takes on the creator's Kie account
 
 
-PLATES_PER_VIDEO = 4                   # places a video's casting usually designs (1 to 4)
+PLATES_PER_VIDEO = 6                   # the most places a video's casting designs (clean_sets keeps 6): quoted in full
 SCORE_PIECE_S = 35                     # the sound storyboard writes a piece of music every 25 to 45 s
 
 
 def media_usd(style: dict) -> dict:
-    """What a video in a style drawn by its own renderer pays on the creator's accounts beyond its voice, for quotes:
-    {"plates_usd": its background pictures, "music_usd_per_piece", "piece_seconds"}; {} for any other style."""
+    """What a video in a style pays on the creator's accounts beyond its voice and its options' own prices, for quotes:
+    {"plates_usd": a coded style's background pictures, "music_usd_per_piece", "piece_seconds"}. Any style with its
+    own music score (cr_score, picture styles included) pays for it; {} when there is nothing else to pay."""
     look = (style or {}).get("look") or {}
-    if look.get("visuals") not in PLUGINS:
-        return {}
-    found = ((look.get("animated2d") or {}).get("renderer") or {}).get("manifest") or {}
     sound = look.get("sound") if isinstance(look.get("sound"), dict) else {}
-    scored = isinstance(sound.get("score"), dict) and sound.get("music") is not False
-    return {"plates_usd": 0.0 if (found.get("plates") or {}).get("draw") is False else round(PLATES_PER_VIDEO * PLATE_USD, 2),
+    score = sound.get("score")
+    scored = isinstance(score, dict) and score.get("on") is not False and sound.get("music") is not False
+    coded = look.get("visuals") in PLUGINS
+    if not coded and not scored:
+        return {}
+    found = ((look.get("animated2d") or {}).get("renderer") or {}).get("manifest") or {} if coded else {}
+    drawn = coded and (found.get("plates") or {}).get("draw") is not False
+    return {"plates_usd": round(PLATES_PER_VIDEO * PLATE_USD, 2) if drawn else 0.0,
             "music_usd_per_piece": SCORE_USD if scored else 0.0, "piece_seconds": SCORE_PIECE_S}
 
 
@@ -1096,14 +1156,13 @@ def cost_note(style: dict) -> str:
     style has one (cr_score)."""
     look = style.get("look") or {}
     found = (((look.get("animated2d") or {}).get("renderer") or {}).get("manifest") or {})
-    sound = look.get("sound") if isinstance(look.get("sound"), dict) else {}
     music = (f", plus its own music, about ${SCORE_USD:.2f} a piece (one or two a short video)"
-             if isinstance(sound.get("score"), dict) and sound.get("music") is not False else "")
+             if media_usd(style).get("music_usd_per_piece") else "")
     if (found.get("plates") or {}).get("draw") is False:
         if dims_of(look.get("animated2d")) == 3:
             return f"Your voice{music or ' only'}: every scene is rendered in 3D on this computer."
         return f"Your voice{music or ' only'}: the characters and every place are drawn on this computer."
-    return (f"Your voice{music}, plus about $0.02 for each place's background picture (usually 2 to 4 a video). "
+    return (f"Your voice{music}, plus about $0.02 for each place's background picture (up to {PLATES_PER_VIDEO} a video). "
             "The characters are animated on this computer.")
 
 
@@ -1117,8 +1176,11 @@ def renderer_problem(info: dict, home=None) -> str:
                 "Studio doesn't have. Update Studio.")
     saved = spec.get("renderer") if isinstance(spec.get("renderer"), dict) else None
     if not saved:
-        return "This style has no 3D renderer yet. Study the channel again." if three else ""
-    if saved.get("state") in ("failed", "missing"):
+        if three:
+            return "This style has no 3D renderer yet. Study the channel again."
+        return ("This style is written in code but has no renderer saved with it. Open the style's study and choose "
+                "Use pictures instead, or study the channel again." if coded(info) else "")
+    if saved.get("state") in ("failed", "missing") or not saved.get("file"):
         return ("This style's study couldn't write a working animation for the channel. Open the style's study and "
                 "choose Use pictures instead, or study the channel again.")
     path = Path(home or HERE) / "assets" / str(saved.get("file") or "")
@@ -1144,14 +1206,24 @@ def renderer_for(info: dict, home=None) -> tuple:
             raise AnimationStopped("This style's animation renderer changed on disk since it was saved. Study the style "
                                    "again; a changed renderer is never used.")
         return code, saved.get("manifest") or manifest(code, home, dims_of(spec))
-    if saved and saved.get("state") == "failed":
-        raise AnimationStopped("This style's study couldn't write a working animation renderer: "
-                               + str(saved.get("why") or "") + ". Switch it to pictures on the style's page.")
+    if saved is not None:
+        raise AnimationStopped("This style's study couldn't write a working animation renderer"
+                               + (": " + str(saved["why"]) if saved.get("why") else "")
+                               + ". Switch it to pictures on the style's page; nothing else is drawn in its place.")
     if dims_of(spec) == 3:
         raise AnimationStopped("This style has no 3D renderer yet. Study the channel again; nothing else is drawn in "
                                "its place.")
-    code = example(home)
+    if coded(info):
+        raise AnimationStopped("This style is written in code but has no renderer saved with it. Switch it to pictures "
+                               "on the style's page or study the channel again; nothing else is drawn in its place.")
+    code = example(home)                    # a 2D style from before Studio 104: the kit's stick fights it was made with
     return code, manifest(code, home)
+
+
+def coded(info: dict) -> bool:
+    """A style planned as written in code (Studio 107+): its pictures come only from its own renderer."""
+    route = (((info or {}).get("cr_style_clone") or {}).get("learned_v2") or {}).get("route") or {}
+    return route.get("coded") is True
 
 
 # ── checking what Claude writes per video ──────────────────────────────────────────────────────────────────────────
@@ -1426,20 +1498,42 @@ def _model(kind: str) -> str:
     return cr_claude.VISUAL_MODEL if kind == "director" else cr_claude.GENERAL_MODEL
 
 
-def _style_renderer(engine, style: str) -> tuple:
-    return renderer_for(engine.STYLE_INFO.get(style) or {})
+def _style_renderer(engine, style: str, job=None) -> tuple:
+    """(code, manifest) a video is drawn with. With its job folder, the version it started with: pinned in
+    animated2d/renderer.js (+ renderer.json, its hash and manifest) at the first call, so a renderer saved later (from
+    Style Lab) changes only new videos; a resumed video keeps its cast, backdrops and quote."""
+    if job is None:
+        return renderer_for(engine.STYLE_INFO.get(style) or {})
+    folder = Path(job) / "animated2d"
+    pin, path = _read(folder / "renderer.json"), folder / "renderer.js"
+    if pin.get("sha256") and path.is_file():
+        code = path.read_text(encoding="utf-8")
+        if hashlib.sha256(code.encode("utf-8")).hexdigest() != pin["sha256"]:
+            raise AnimationStopped("This video's renderer changed on disk after the video started. Nothing else was "
+                                   "drawn in its place.")
+        return code, pin.get("manifest") or {}
+    code, man = renderer_for(engine.STYLE_INFO.get(style) or {})
+    saved = ((((engine.STYLE_INFO.get(style) or {}).get("look") or {}).get("animated2d") or {}).get("renderer") or {})
+    folder.mkdir(parents=True, exist_ok=True)
+    path.write_text(code, encoding="utf-8")
+    _write(folder / "renderer.json", {"sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+                                      "file": str(saved.get("file") or "the kit's stick fights"),
+                                      "version": saved.get("version"), "manifest": man})
+    return code, man
 
 
 def cast_and_sets(engine, script: str, job: Path, style: str, title: str = "", man: dict = None) -> dict:
     """The video's characters, in the traits its renderer declared, and its places, designed once (casting.json)."""
     folder = Path(job) / "animated2d"
     spec = _spec(engine, style)
-    man = man if man is not None else _style_renderer(engine, style)[1]
+    man = man if man is not None else _style_renderer(engine, style, job)[1]
     cast_spec = man.get("cast") or {}
-    key = _digest({"script": script, "spec": spec, "prompt": _prompt("cast.txt"), "brief": engine._extra_block(),
-                   "cast": cast_spec})
+    asked = {"script": script, "prompt": _prompt("cast.txt"), "brief": engine._extra_block(), "cast": cast_spec}
+    # the renderer's record is not part of the cast: a renderer saved mid-video never re-casts it (or re-draws its
+    # backdrops); the older key, which hashed it, still finds a cast designed before
+    key = _digest({**asked, "spec": {k: v for k, v in spec.items() if k != "renderer"}})
     saved = _read(folder / "casting.json")
-    if saved.get("key") == key:
+    if saved.get("key") in (key, _digest({**asked, "spec": spec})):
         return saved
     reply = folder / "casting-reply.txt"
     if reply.is_file() and _read(folder / "casting-request.json").get("key") == key:
@@ -1627,7 +1721,7 @@ def prepare(engine, script, job, style, force):
     if not available():
         raise AnimationStopped("Studio's animated 2D kit is missing. Update Studio before making this video.")
     job = Path(job)
-    code, man = _style_renderer(engine, style)
+    code, man = _style_renderer(engine, style, job)
     casting = cast_and_sets(engine, script, job, style, _first_line(job / "title.txt"), man)
     plates(engine, job, casting, _spec(engine, style), man=man)
 
@@ -1635,7 +1729,7 @@ def prepare(engine, script, job, style, force):
 def assemble(engine, job, mp3, srt, style, force, burn_subs):
     job = Path(job)
     spec = _spec(engine, style)
-    code, man = _style_renderer(engine, style)
+    code, man = _style_renderer(engine, style, job)       # the version this video started with
     script = (job / "script.txt").read_text(encoding="utf-8") if (job / "script.txt").is_file() else ""
     title = _first_line(job / "title.txt")
     # the cast prepare() designed while the voice recorded (from the engine's own script text)

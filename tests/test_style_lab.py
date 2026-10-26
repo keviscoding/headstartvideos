@@ -135,9 +135,9 @@ def test_a_renderer_that_keeps_state_between_frames_or_draws_2d_code_is_refused(
     assert json.loads((folder / "lab.json").read_text())["history"][-1]["ok"] is False
 
 
-def test_words_too_small_to_read_at_video_size_are_a_problem_claude_fixes(home3d, monkeypatch):
+def test_words_too_small_to_read_at_video_size_are_said_for_claude_to_fix(home3d, monkeypatch):
     """A customer's cloned style: "nearly every overlay is too small to read at video size". Words a renderer writes on
-    screen are measured where they are drawn, and too small ones are a problem to fix before saving."""
+    screen are measured where they are drawn, and too small ones are said as a warning to fix (never a save blocker)."""
     monkeypatch.setattr(a2d, "available3d", lambda home=None: True)
     _style(home3d)
     folder = Path(lab.start(home3d, "cr_clone_box")["workspace"])
@@ -149,8 +149,9 @@ def test_words_too_small_to_read_at_video_size_are_a_problem_claude_fixes(home3d
                        "view.overlay.fillText('source: NASA', 20, 40);")
     (folder / "renderer.js").write_text(tiny)
     shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=1))
-    assert not shown["ok"] and shown["smallest_text"]["text"] == "source: NASA"
-    assert any("too small to read" in p and "at least 14 px" in p for p in shown["problems"]), shown["problems"]
+    assert shown["smallest_text"]["text"] == "source: NASA"
+    assert any("too small to read" in p and "at least 14 px" in p for p in shown["warnings"]), shown["warnings"]
+    assert shown["ok"], "said, never a reason it can't be saved (the 107 review: never limit Claude)"
     (folder / "renderer.js").write_text(BOX)
     shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=1))
     assert shown["ok"] and shown["smallest_text"]["px"] >= 14, "the captions read"
@@ -238,5 +239,5 @@ def test_a_channels_own_sounds_are_made_in_code_and_stock_slop_is_refused(home3d
     (folder / "renderer.js").write_text(slop)
     shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=1))
     assert not shown["ok"]
-    assert any('stock "braam"' in p and "stone thud" in p for p in shown["problems"]), shown["problems"]
-    assert any("wobble" in p for p in shown["problems"]), "a sound that is nobody's is said"
+    assert any('stock "braam"' in p and "stone thud" in p for p in shown["warnings"]), shown["warnings"]
+    assert any("wobble" in p for p in shown["problems"]), "a sound that is nobody's can't be played"
