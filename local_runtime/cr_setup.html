@@ -281,8 +281,11 @@ async function fixSpeech(button,note){
 }
 async function refresh(){try{
  const data=await request('/cr-status'),labels={python:'Python',ffmpeg:'Video tools (FFmpeg)',browser:'Graphics browser',node:'YouTube helper (Node)'};statusData=data;if(claudeDraft&&!claudeModelsDirty())claudeDraft=null;
- $('checks').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="check '+(data[key]?'ok':'')+'" id="'+key+'-row">'+label+'<b>'+(data[key]?'Ready':'Needs attention')+'</b></div>').join('');
- for(const kind of ['ffmpeg','node'])if(!data[kind])toolFixRow(kind,data);
+ // the YouTube helper row follows node_youtube: a Node.js older than 22 is a note with Fix it (it stops only videos
+ // that download from YouTube); a missing one blocks setup as before
+ const ok=key=>key==='node'?(data.node_youtube??data.node):data[key];
+ $('checks').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="check '+(ok(key)?'ok':'')+'" id="'+key+'-row">'+label+'<b>'+(ok(key)?'Ready':'Needs attention')+'</b></div>').join('');
+ for(const kind of ['ffmpeg','node'])if(!ok(kind))toolFixRow(kind,data);
  if(!data.browser){const row=[...$('checks').querySelectorAll('.check')].find(r=>r.textContent.startsWith('Graphics browser'));if(row){const note=document.createElement('small');note.textContent=data.browser_reason||'The graphics browser needs installing.';const fix=document.createElement('button');fix.type='button';fix.className='link-button';fix.id='fix-browser';fix.textContent='Fix it';fix.onclick=()=>fixBrowser(fix,note);row.append(note,fix);}}
  renderSetupRows(data);
  const connected=!!data.account?.brain?.connected;accounts=data.model_accounts||{};savedProviders=data.providers||{};
@@ -397,7 +400,7 @@ function updateSteps(){
   const badge=sec.querySelector('.step-state');if(badge)badge.textContent=done&&k!=='ready'?'✓ Done':k===current&&k!=='ready'?'Next':'';
   if(stepSeen[k]!==done&&done)sec.classList.remove('open');stepSeen[k]=done;}
  for(const li of document.querySelectorAll('#steps-nav li')){const k=li.dataset.step;li.classList.toggle('done',k==='ready'?st.ready:!!st[k]);li.classList.toggle('current',k===current);}
- $('step-tools').classList.toggle('all-good',['python','ffmpeg','browser','node'].every(k=>statusData[k]===true)&&(!statusData.speech_model||statusData.speech_model.ready===true)&&statusData.network?.ready!==false&&!(statusData.network?.warnings||[]).length&&!(statusData.network?.checking&&!(statusData.network?.hosts||[]).length)&&!statusData.computer?.message);
+ $('step-tools').classList.toggle('all-good',['python','ffmpeg','browser','node'].every(k=>(k==='node'?(statusData.node_youtube??statusData.node):statusData[k])===true)&&(!statusData.speech_model||statusData.speech_model.ready===true)&&statusData.network?.ready!==false&&!(statusData.network?.warnings||[]).length&&!(statusData.network?.checking&&!(statusData.network?.hosts||[]).length)&&!statusData.computer?.message);
  const cli=statusData.claude_code||{},ready=cli.installed===true&&cli.authenticated===true;
  $('claude-quick').disabled=quickRunning||setupBusy||!st.account||!ready;
  if(!quickRunning)$('claude-quick-status').textContent=!st.account?'Connect your ChannelRecipe account first (step 1).':!cli.installed?(statusData.can_fix?.claude===false?'Claude Code isn’t installed yet. Follow the steps under Details.':'Studio needs Claude Code’s command-line tool (the Claude desktop app alone isn’t enough). Press Install Claude Code: Studio runs Anthropic’s official installer, no password needed.'):!cli.authenticated?'Sign in to Claude Code once: press Open the sign-in window and sign in in your browser with your Claude Pro or Max account. This page notices when you’re done.':st.claude?'Claude is set up for videos.':'Connects Studio to Claude Code, picks the recommended models and runs a tiny check. About a minute.';

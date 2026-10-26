@@ -91,8 +91,9 @@ Studio through its own checks, so nothing needs the Studio web page.
 - If `setup_check` says the graphics browser isn't ready, call `fix_graphics_browser` (Studio installs it itself) and
   check again after a couple of minutes. Never install it with pip/playwright from your own shell: Claude Code's shell
   can be sandboxed, so the install lands where Studio can't see it. Setup's page has the same Fix it button.
-- `setup_check`'s `video_tools` or `node` not ready (FFmpeg missing or unable to burn captions; Node.js missing or
-  older than 22, which the YouTube downloader needs): call `fix_ffmpeg` or `fix_node`. Studio downloads a pinned,
+- `setup_check`'s `video_tools` or `node` not ready (FFmpeg missing or unable to burn captions; Node.js missing, or
+  older than 22, which the YouTube downloader needs: an older Node stops only videos that download from YouTube,
+  such as Research footage and Ranking Shorts, never the others): call `fix_ffmpeg` or `fix_node`. Studio downloads a pinned,
   checksum-checked build into its own folder (no password, the customer's own copies untouched) and uses it first;
   call `setup_check` again after a minute or two. Never install these from your own shell; call the fix tool (same
   rule as the graphics browser). If the fix says `failed`, read its message to the customer.

@@ -411,7 +411,11 @@ def tool_setup_check(args):
                                  "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
                                  "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
             "video_tools": tool_summary(status, "ffmpeg", "fix_ffmpeg"),
-            "node": tool_summary(status, "node", "fix_node"),
+            "node": {**tool_summary(status, "node", "fix_node"),
+                     "blocks_every_video": not status.get("node", True),
+                     "note": "Only videos that download from YouTube (Research footage, Ranking Shorts) need Node.js "
+                             "22 or newer; Studio refuses those before anything is paid until fix_node has run."
+                             if status.get("node", True) and not status.get("node_youtube", True) else ""},
             "network": network_summary(status.get("network") or {}),
             "computer": computer_summary(status.get("computer")),
             "speech_model": {"ready": bool(speech.get("ready")), "state": speech.get("state") or "",
@@ -434,7 +438,8 @@ def tool_setup_check(args):
 
 def tool_summary(status: dict, key: str, fix: str) -> dict:
     """FFmpeg or Node.js: ready, why not, and the fix tool that installs it in Studio's own folder."""
-    ready = bool(status.get(key))
+    # Node.js: ready for YouTube downloads (22 or newer); an older one stops only the videos that use YouTube
+    ready = bool(status.get("node_youtube", status.get("node")) if key == "node" else status.get(key))
     can_fix = bool((status.get("can_fix") or {}).get(key, True))
     return {"ready": ready, "why": "" if ready else str(status.get(key + "_reason") or ""),
             "fix": "" if ready else (f"Call {fix}: Studio downloads it into its own folder (pinned version, checksum "

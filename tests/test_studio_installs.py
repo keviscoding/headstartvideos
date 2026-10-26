@@ -507,3 +507,77 @@ def test_the_hint_says_how_big_the_download_is_on_this_computer(monkeypatch):
     assert "(a 109 MB download, no password needed)" in cr_installs.fix_hint("ffmpeg")
     monkeypatch.setattr(cr_installs, "platform_key", lambda *a: "")
     assert cr_installs.fix_hint("node").startswith("Install Node.js 22 or newer from https://nodejs.org")
+
+
+# ── an old Node.js stops only videos that download from YouTube (coordinator, 2026-10-26) ──────────────────────
+
+import cr_readiness  # noqa: E402
+
+
+def test_an_old_node_is_a_note_in_setup_and_a_missing_one_still_blocks(monkeypatch):
+    """Customers on Node 18/20 who make recipes without YouTube kept working: an old Node never blocks setup."""
+    monkeypatch.setattr(cr_readiness.cr_bridge, "load_settings", lambda: {"brain_mode": "channelrecipe",
+                                                                          "costs_accepted": True})
+    monkeypatch.setattr(cr_readiness.cr_claude, "status", lambda *a, **k: {"installed": True, "ready": True})
+    monkeypatch.setattr(cr_readiness.cr_claude, "models_verified", lambda *a: True)
+    monkeypatch.setattr(cr_readiness.cr_mcp, "is_registered", lambda cfg: True)
+    base = {"python": True, "ffmpeg": True, "browser": True, "local_version": "v",
+            "account": {"version": "v", "brain": {"connected": True}}}
+    old = cr_readiness.basic({**base, "node": True, "node_youtube": False, "node_reason": "Node.js 20.11.1 is too old "
+                              "for the YouTube downloader (it needs 22 or newer). Press Fix it next to YouTube helper."})
+    row = next(r for r in old["checks"] if r["key"] == "node")
+    assert old["ready"] is True and row["ready"] is True and "Node.js 20.11.1 is too old" in row["message"]
+    missing = cr_readiness.basic({**base, "node": False, "node_youtube": False,
+                                  "node_reason": "Node.js isn't installed. Press Fix it next to YouTube helper."})
+    assert missing["ready"] is False and "Node.js isn't installed" in " ".join(missing["blockers"])
+    current = cr_readiness.basic({**base, "node": True, "node_youtube": True})
+    assert next(r for r in current["checks"] if r["key"] == "node")["message"] == ""
+
+
+def preset_studio(features, shorts=None):
+    info = {"features": {"offered": list(features), "on": list(features)}, **({"shorts": shorts} if shorts else {})}
+    return SimpleNamespace(
+        mv=SimpleNamespace(prompts=SimpleNamespace(PROMPT_SETS={"doc": {}}), STYLE_INFO={"doc": info}),
+        styles=SimpleNamespace(load_all=lambda: None, STYLES={"doc": info}),
+        features=SimpleNamespace(capabilities=lambda: {"base": {"voice": {"ok": True}}, "features": {}},
+                                 KEYS=list(features), EXPLICIT=[], BY_KEY={},
+                                 resolve=lambda info, asked: {k: True for k in features}))
+
+
+@pytest.mark.parametrize("features,shorts,node_youtube,refused", [
+    ([], None, False, False),                                   # a stories video with Node 20: made as before
+    (["youtube"], None, False, True),                           # Research footage downloads from YouTube
+    ([], {"pipeline": "ranking"}, False, True),                 # Ranking Shorts download their clips from YouTube
+    (["youtube"], None, True, False),                           # Node 22 or newer (or Deno)
+    (["youtube"], None, None, False)])                          # an older check without node_youtube: never refused
+def test_an_old_node_refuses_only_videos_that_download_from_youtube(monkeypatch, features, shorts, node_youtube,
+                                                                    refused):
+    monkeypatch.setattr(cr_readiness, "basic", lambda checks: {"checks": [], "claude_code": {}, "brain_mode": "claudecode"})
+    monkeypatch.setattr(cr_readiness, "proof", lambda *a, **k: {})
+    monkeypatch.setattr(cr_readiness.cr_media, "active", lambda task: False)
+    checks = {"node": True} if node_youtube is None else {"node": True, "node_youtube": node_youtube}
+    result = cr_readiness.preset(preset_studio(features, shorts), checks, {"style": "doc"})
+    stops = [c for c in result["checks"] if c["key"] == "youtube_node"]
+    assert bool(stops) is refused and result["ready"] is (not refused)
+    if refused:
+        assert stops[0]["message"] == ("This video downloads from YouTube, which needs Node.js 22 or newer: press "
+                                       "Fix it in Setup.")
+        assert stops[0]["message"] in result["blockers"]
+
+
+def test_setup_status_reports_node_for_youtube_apart_from_node_at_all(monkeypatch):
+    import cr_studio
+    monkeypatch.setattr(cr_studio, "video_tools_ready", lambda *a: True)
+    monkeypatch.setattr(cr_studio, "tool_ready", lambda name, flag="-version": name == "node")   # Node runs, no Deno
+    monkeypatch.setattr(cr_installs, "node_status", lambda **k: {"ready": False, "version": "20.11.1",
+                                                                 "reason": "Node.js 20.11.1 is too old for the YouTube "
+                                                                           "downloader (it needs 22 or newer)."})
+    checks = cr_studio.tool_checks()
+    assert checks["node"] is True and checks["node_youtube"] is False and checks["node_version"] == "20.11.1"
+    assert checks["node_reason"].startswith("Node.js 20.11.1 is too old") and "Fix it" in checks["node_reason"]
+    monkeypatch.setattr(cr_studio, "tool_ready", lambda name, flag="-version": name == "deno")
+    assert cr_studio.tool_checks()["node_youtube"] is True, "Deno solves YouTube's challenge too"
+    monkeypatch.setattr(cr_studio, "tool_ready", lambda *a, **k: False)
+    monkeypatch.setattr(cr_installs, "node_status", lambda **k: {"ready": False, "version": "",
+                                                                 "reason": "Node.js isn't installed."})
+    assert cr_studio.tool_checks()["node"] is False

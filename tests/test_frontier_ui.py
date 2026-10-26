@@ -701,7 +701,7 @@ def test_setup_fixes_ffmpeg_and_node_and_installs_and_signs_in_to_claude_code(pa
     tab.unroute("**/*")
     html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text()
     html = html.replace("__LOCAL_TOKEN__", "ui-fixture-local-token")
-    state = {"python": True, "ffmpeg": False, "browser": True, "node": False, "connected": True,
+    state = {"python": True, "ffmpeg": False, "browser": True, "node": True, "node_youtube": False, "connected": True,
              "ffmpeg_reason": "This computer's FFmpeg can't burn captions. Press Fix it next to Video tools.",
              "node_reason": "Node.js 20.11.1 is too old for the YouTube downloader (it needs 22 or newer).",
              "can_fix": {"ffmpeg": True, "node": True, "claude": True},

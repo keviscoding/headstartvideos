@@ -988,7 +988,8 @@ def test_setup_check_offers_the_ffmpeg_node_and_claude_fixes_and_they_run_in_stu
         if path == "/cr-status":
             return {"local_version": "5.3-admin.106", "readiness": {"ready": False, "blockers": ["x"]},
                     "ffmpeg": False, "ffmpeg_reason": "This computer's FFmpeg can't burn captions. Press Fix it.",
-                    "node": False, "node_reason": "Node.js 20.11.1 is too old for the YouTube downloader.",
+                    "node": True, "node_youtube": False,
+                    "node_reason": "Node.js 20.11.1 is too old for the YouTube downloader.",
                     "can_fix": {"ffmpeg": True, "node": True, "claude": True},
                     "claude_code": {"installed": False, "authenticated": False}}
         if path in answers:
@@ -999,6 +1000,7 @@ def test_setup_check_offers_the_ffmpeg_node_and_claude_fixes_and_they_run_in_stu
     assert out["video_tools"]["ready"] is False and "burn captions" in out["video_tools"]["why"]
     assert "Call fix_ffmpeg" in out["video_tools"]["fix"] and "Never install it from this shell" in out["video_tools"]["fix"]
     assert "Call fix_node" in out["node"]["fix"] and "too old" in out["node"]["why"]
+    assert out["node"]["blocks_every_video"] is False and "Only videos that download from YouTube" in out["node"]["note"]
     assert out["claude_code"]["installed"] is False and "Call fix_claude_cli" in out["claude_code"]["fix"]
     for name, path in (("fix_ffmpeg", "/cr-setup/fix-ffmpeg"), ("fix_node", "/cr-setup/fix-node")):
         fixed = ok(name, {})
@@ -1019,5 +1021,6 @@ def test_setup_check_on_a_computer_studio_cant_fix_says_so(studio, monkeypatch):
         "node": True, "can_fix": {"ffmpeg": False, "node": False, "claude": True},
         "claude_code": {"installed": True}} if path == "/cr-status" else real_call(method, path, body, **kw))
     out = ok("setup_check", {})
-    assert "package manager" in out["video_tools"]["fix"] and out["node"] == {"ready": True, "why": "", "fix": ""}
+    assert "package manager" in out["video_tools"]["fix"]
+    assert out["node"] == {"ready": True, "why": "", "fix": "", "blocks_every_video": False, "note": ""}
     assert out["claude_code"]["fix"] == ""

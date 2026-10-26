@@ -506,17 +506,21 @@ def video_tools_ready(ffmpeg="ffmpeg", ffprobe="ffprobe"):
 
 
 def node_ready():
-    """A JavaScript runtime yt-dlp can solve YouTube's challenge with: Deno, or Node.js 22 or newer."""
-    return tool_ready("deno", "--version") or cr_installs.node_status()["ready"]
+    """Node.js (any version) or Deno runs: what every video needs, as before. Downloading from YouTube needs more
+    (Node 22 or newer, node_youtube in tool_checks): cr_readiness.preset() refuses only the videos that do."""
+    return tool_ready("node", "--version") or tool_ready("deno", "--version")
 
 
 def tool_checks():
     """Setup's FFmpeg and Node rows, with what is wrong and the fix (setup's Fix it puts both in Studio's own folder,
-    cr_installs)."""
+    cr_installs). node: a JavaScript runtime runs (a missing one blocks setup, as it always did); node_youtube: yt-dlp
+    can use it for YouTube (Deno, or Node.js 22 or newer). An older Node is a note in setup and stops only videos that
+    download from YouTube (cr_readiness.preset), never the rest."""
     ffmpeg = "" if video_tools_ready() else (cr_installs.video_tools_problem() or "FFmpeg isn't ready.")
-    node = {"ready": True, "version": "deno", "reason": ""} if tool_ready("deno", "--version") else cr_installs.node_status()
+    deno = tool_ready("deno", "--version")
+    node = {"ready": True, "version": "deno", "reason": ""} if deno else cr_installs.node_status()
     return {"ffmpeg": not ffmpeg, "ffmpeg_reason": (ffmpeg + " " + cr_installs.fix_hint("ffmpeg")) if ffmpeg else "",
-            "node": node["ready"], "node_version": node["version"],
+            "node": deno or node["ready"] or node_ready(), "node_youtube": node["ready"], "node_version": node["version"],
             "node_reason": (node["reason"] + " " + cr_installs.fix_hint("node")) if not node["ready"] else "",
             "can_fix": {name: cr_installs.can_fix(name) for name in ("ffmpeg", "node", "claude")}}
 
