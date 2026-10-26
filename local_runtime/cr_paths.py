@@ -6,6 +6,7 @@ and a creator's collages stopped (2026-10-24). Setup now says when this folder l
 own receipts no longer repeat a picture's long name (cr_media.task_receipt)."""
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from pathlib import Path, PurePosixPath
@@ -95,7 +96,9 @@ def install(engine, home, *, windows=None, long_paths=None, folder=None):
         stem, dot, ext = name.rpartition(".")
         if not dot or len(stem) <= most:
             return name
-        return (stem[:most].rstrip(" .") or "video") + "." + ext
+        # a short mark of the whole title, so two long titles cut alike ("... Part 1", "... Part 2") never share a name
+        mark = hashlib.sha1(str(title).encode("utf-8")).hexdigest()[:6]
+        return (stem[:max(1, most - 7)].rstrip(" .") or "video") + " " + mark + "." + ext
     youtube_filename._cr_paths = True
     engine.youtube_filename = youtube_filename
 

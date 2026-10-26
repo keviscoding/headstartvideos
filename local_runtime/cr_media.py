@@ -1028,8 +1028,13 @@ VOICE_FAILED = "cr-voice-failed.json"    # why the last voice attempt stopped (o
 
 def job_voice(job) -> dict:
     """This video's own voice choice, or {} for the voice in Setup & accounts."""
+    return _voice_in(Path(job) / VOICE_CHOICE)
+
+
+def _voice_in(path: Path) -> dict:
+    """A saved voice choice (a video's own, or the style narrator it started with), or {}."""
     try:
-        choice = json.loads((Path(job) / VOICE_CHOICE).read_text(encoding="utf-8"))
+        choice = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     if not isinstance(choice, dict):
@@ -1063,13 +1068,15 @@ def _voice_failed(job, provider, model, failed) -> None:
 
 
 STYLE_VOICES = "style_voices"            # settings: {style: Gemini voice} chosen in Create for a cloned style
+STYLE_VOICE_PIN = "cr-style-voice.json"  # a video's style narrator as first used: a Resume reads with the same voice
 
 
 def style_voice(style: str, info: dict = None) -> dict:
     """The narrator a cloned style was learned with (its study's suggested_voice, a Gemini voice like the channel's
     own), or the voice chosen for that style in Create, as a Kie choice; {} when Kie doesn't narrate this account, the
     style has none, or the voice isn't one Kie has. Before 109 nothing read the suggestion: a deadpan male channel's
-    clone was read by the account's Kore (the owner's Windows test, 2026-10-26)."""
+    clone was read by the account's Kore (the owner's Windows test, 2026-10-26). A style saved before 109 (no
+    own_narrator mark) keeps the account's voice it has always had, unless one is chosen for it in Create."""
     try:
         cfg = profile("narration")
     except AccountStop:
@@ -1077,7 +1084,8 @@ def style_voice(style: str, info: dict = None) -> dict:
     if not style or cfg.get("provider") != "kie":
         return {}
     picked = (cr_bridge.load_settings().get(STYLE_VOICES) or {}).get(style)
-    suggested = ((info or {}).get("cr_style_clone") or {}).get("suggested_voice")
+    learned = (info or {}).get("cr_style_clone") or {}
+    suggested = learned.get("suggested_voice") if learned.get("own_narrator") is True else None
     voice = str(picked or suggested or "")
     try:
         model = narration_model("kie", cfg.get("model"))
@@ -1089,10 +1097,19 @@ def style_voice(style: str, info: dict = None) -> dict:
 
 
 def narrate(engine, text, mp3, srt, voice_id="", style=""):
-    chosen = job_voice(Path(mp3).parent)
-    started = any((Path(mp3).parent / (Path(mp3).stem + "-hub-voice")).glob("part-*.*"))
+    job = Path(mp3).parent
+    chosen = job_voice(job) or _voice_in(job / STYLE_VOICE_PIN)
+    started = any((job / (Path(mp3).stem + "-hub-voice")).glob("part-*.*"))
     if not chosen and not started:                   # a video carried on keeps the one voice it started with
         chosen = style_voice(style, (getattr(engine, "STYLE_INFO", {}) or {}).get(style))
+        if chosen:
+            # kept with the video: a Resume after a stop mid-narration reads with this voice again (its parts' receipts
+            # carry the voice, so another voice would pay for them twice and change narrator halfway)
+            try:
+                (job / STYLE_VOICE_PIN).write_text(json.dumps({k: chosen[k] for k in ("provider", "model", "voice")}),
+                                                   encoding="utf-8")
+            except OSError:
+                pass
     chosen = chosen if chosen.get("provider") == "kie" else None
     cfg = chosen or profile("narration")
     provider = cfg["provider"]

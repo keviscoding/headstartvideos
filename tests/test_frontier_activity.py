@@ -1013,7 +1013,8 @@ def test_choose_voice_keeps_a_cloned_styles_own_narrator_for_that_style(runtime,
                         lambda task=None: real({**r.cfg["narration"], "tasks": ["narration"]}) if task == "narration" else {})
     monkeypatch.setattr(cr_studio.cr_media, "active", lambda task: task == "narration")
     r.studio.styles.STYLES.update(cr_clone_survival={"label": "2d Survival Stories",
-                                                     "cr_style_clone": {"suggested_voice": "Zubenelgenubi"}},
+                                                     "cr_style_clone": {"suggested_voice": "Zubenelgenubi",
+                                                                                        "own_narrator": True}},
                                   documentary={"label": "Documentary"})
     listed = r.client.get("/cr-voices?style=cr_clone_survival", headers=r.headers).json
     assert listed["voice"] == "Zubenelgenubi" and listed["style_voice"] is True
