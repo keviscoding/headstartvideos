@@ -513,7 +513,7 @@ def node_ready():
 def tool_checks():
     """Setup's FFmpeg and Node rows, with what is wrong and the fix (setup's Fix it puts both in Studio's own folder,
     cr_installs)."""
-    ffmpeg = cr_installs.video_tools_problem()
+    ffmpeg = "" if video_tools_ready() else (cr_installs.video_tools_problem() or "FFmpeg isn't ready.")
     node = {"ready": True, "version": "deno", "reason": ""} if tool_ready("deno", "--version") else cr_installs.node_status()
     return {"ffmpeg": not ffmpeg, "ffmpeg_reason": (ffmpeg + " " + cr_installs.fix_hint("ffmpeg")) if ffmpeg else "",
             "node": node["ready"], "node_version": node["version"],
