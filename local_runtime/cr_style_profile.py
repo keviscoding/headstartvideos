@@ -57,18 +57,33 @@ def _norm_phrase(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ,'-]", " ", str(text or "").lower())).strip()
 
 
-def _dedupe(items: list, limit: int = 12) -> list:
-    seen, out = set(), []
+def _stems(text: str) -> set:
+    """The content words of a phrase, plural-insensitive ("stick-figure characters" == "stick figure character")."""
+    words = _norm_phrase(text).replace("-", " ").replace(",", " ").split()
+    return {w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+            for w in words if w not in _STOP and len(w) > 1}
+
+
+def _dedupe(items: list, limit: int = 12, *, near: bool = False) -> list:
+    """Each thing once (the same words in any order). near: also an item whose words are inside, or mostly shared
+    with, one already kept (the owner's test showed "Simple stick figure characters" beside "Stick figure characters"
+    as two chips); the longer, more telling wording of the two is kept, where the first one was."""
+    kept = []                                               # [(words, text)]
     for item in items:
         if not isinstance(item, str) or not item.strip():
             continue
-        key = " ".join(sorted(set(_norm_phrase(item).split()) - {"the", "a", "an", "and", "of", "on", "with"}))
-        if key and key not in seen:
-            seen.add(key)
-            out.append(item.strip())
-        if len(out) >= limit:
-            break
-    return out
+        words = _stems(item) if near else \
+            {" ".join(sorted(set(_norm_phrase(item).split()) - {"the", "a", "an", "and", "of", "on", "with"}))} - {""}
+        if not words:
+            continue
+        twin = next((k for k, (have, _) in enumerate(kept) if words == have or near and (
+            words <= have or have <= words or len(words & have) / len(words | have) >= 0.6)), None)
+        if twin is None:
+            if len(kept) < limit:
+                kept.append((words, item.strip()))
+        elif near and len(item.strip()) > len(kept[twin][1]):
+            kept[twin] = (words | kept[twin][0], item.strip())
+    return [text for _, text in kept]
 
 
 _STOP = {"the", "a", "an", "and", "of", "on", "with", "in", "to", "for", "by", "its", "is", "are", "or", "against",
@@ -246,7 +261,7 @@ def watched_summary(watch: dict) -> dict:
         "cta": [c for w in windows for c in (w["log"].get("cta") or []) if isinstance(c, dict)][:8],
         "hook": _dedupe([lg.get("hook") for lg in logs], 1),
         "breathing": _dedupe([lg.get("breathing") for lg in logs], 3),
-        "recognisable": _dedupe([x for lg in logs for x in lg.get("recognisable") or []], 8),
+        "recognisable": _dedupe([x for lg in logs for x in lg.get("recognisable") or []], 8, near=True),
         "audio_events": _event_rates(logs, total),
     }
     return out
@@ -518,7 +533,7 @@ def build(references: list) -> dict:
                      kinds=sorted({str(c.get("kind") or "").lower() for s in seen for c in s.get("cta") or []
                                    if c.get("kind")})),
     }
-    profile["recognisable"] = _dedupe([x for s in seen for x in s.get("recognisable") or []], 8)
+    profile["recognisable"] = _dedupe([x for s in seen for x in s.get("recognisable") or []], 8, near=True)
     profile["questions"] = questions(profile)
     return profile
 
@@ -594,10 +609,17 @@ def questions(profile: dict) -> list:
     # a lead character is offered as a mascot only when the pictures are drawn or generated (real people in footage
     # are the story's)
     lead = None if people or not drawn else lead_character(profile)
-    if people:
-        out.append({"id": "host", "ask": f"The channel has a recurring {people[0]['role']} ({people[0]['name']}). "
+    talking = _num((profile.get("format", {}).get("presenter") or {}).get("value")) >= 0.1
+    if people and people[0]["role"] == "presenter" and talking and not drawn:
+        out.append({"id": "host", "ask": f"The channel has a recurring presenter ({people[0]['name']}). "
                     "Should your videos have one too?", "options": ["Yes, design one for my channel",
                                                                      "Yes, I'll upload mine", "No host"]})
+    elif people:
+        # a drawn or story channel's regular character (a stick-figure "Worker") is a character, never "a presenter"
+        out.append({"id": "host", "ask": f"{people[0]['name']} appears again and again in the channel's videos. Should "
+                    "every video keep one recurring character like that?",
+                    "options": ["Yes, design one for my channel", "Yes, I'll upload mine",
+                                "No, a new cast for each story"]})
     elif lead:
         # one character carries the whole video (an everyman like "Tom"): the channel's mascot, or this story's
         # hero? One reference can't show whether he returns, so the creator decides.

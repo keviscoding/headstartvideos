@@ -163,7 +163,11 @@ def status(home, look_id) -> dict:
                 mapping = cr_style_map.plan_style(saved.get("profile") or {}, _styles(home))
             except Exception:                  # noqa: BLE001 - a recipe since removed: the saved plan is shown
                 pass
-        out.update(profile=saved.get("profile"), mapping=mapping, sheets=saved.get("sheets", []),
+        profile = dict(saved.get("profile") or {})
+        if isinstance(profile.get("recognisable"), list):       # near-duplicate chips merged, looks saved before 109 too
+            import cr_style_profile
+            profile["recognisable"] = cr_style_profile._dedupe(profile["recognisable"], 8, near=True)
+        out.update(profile=profile, mapping=mapping, sheets=saved.get("sheets", []),
                    not_watched=saved.get("not_watched", []), not_measured=saved.get("not_measured", []),
                    shorts=bool(saved.get("references")) and all(r.get("short") for r in saved["references"]))
         # ideas for the study's example title, from the channel's own titles (no model call): the page offers them

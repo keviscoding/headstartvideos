@@ -756,3 +756,34 @@ def test_a_finished_look_offers_example_titles_built_from_the_channels_own_title
     assert look.title_ideas([]) == []
     _, done, calls = run_look(home)
     assert done["title_ideas"] and calls and all(c.startswith("style/watch") for c in calls), "no model is asked"
+
+
+def test_a_style_written_in_code_is_never_offered_a_picture_every_picture_copies(home):
+    """The owner's test: "Choose the picture style every video keeps" (AI samples on the creator's image account) was
+    offered for a coded style, whose renderer draws every frame."""
+    import cr_style_anchor as anchor
+    _, done, _ = run_look(home)
+    op = saved_v2_style(home, done["look_id"])
+    assert anchor.status(home, op)["offered"] is True, "a style made with pictures keeps it"
+    path = home / "styles" / "cr_clone_toby.json"
+    style = json.loads(path.read_text())
+    style["look"]["visuals"] = "cr_animated2d"
+    path.write_text(json.dumps(style))
+    assert anchor.status(home, op)["offered"] is False
+    with pytest.raises(RuntimeError, match="written in code"):
+        anchor.start(home, op, generate=lambda *a, **k: pytest.fail("no picture is drawn"), upload=lambda p: "u",
+                     thread=False)
+
+
+def test_claude_code_is_given_the_looks_time_left_and_title_ideas(monkeypatch):
+    import cr_studio_tools as tools
+    answers = {"running": {"state": "running", "percent": 40, "message": "Video 2 of 3 · Measuring", "left_s": 200},
+               "done": {"state": "done", "mapping": {"questions": [], "route": {"engine": "animated2d", "why": "x"}},
+                        "title_ideas": ["50 Strangers, 1 Prison: Who Survives 24 Days"]}}
+    for state, answer in answers.items():
+        monkeypatch.setattr(tools, "call", lambda method, path, timeout=30, answer=answer: answer)
+        got = tools.look_progress("lk_" + "a" * 24)
+        if state == "running":
+            assert got["minutes_left"] == 3 and got["message"].startswith("Video 2 of 3")
+        else:
+            assert got["title_ideas"] == answer["title_ideas"] and "title_ideas" in got["next"]

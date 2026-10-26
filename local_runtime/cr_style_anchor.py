@@ -103,12 +103,21 @@ def status(home, operation_id) -> dict:
             "chosen": state.get("chosen"), "character": bool(look.get("character_image")),
             "has_cast": bool(str(look.get("character") or "").strip()),
             "style_image": bool(look.get("style_image")), "cost_usd": round(0.02 * (len(SUBJECTS) + 1), 2),
-            "upload_character": _wants_upload(saved)}
+            "upload_character": _wants_upload(saved), "offered": not _coded(style)}
+
+
+def _coded(style) -> bool:
+    """A style written in code: its renderer draws every picture, so a picture every picture copies has no use (and
+    would push AI pictures on a coded style)."""
+    return ((style or {}).get("look") or {}).get("visuals") in ("cr_animated2d", "cr_animated3d")
 
 
 def start(home, operation_id, *, generate=None, upload=None, thread=True) -> dict:
     """Draw the samples (approved by the caller). Runs in the background unless thread=False."""
     folder, _, _, style = _learned(home, operation_id)
+    if _coded(style):
+        raise RuntimeError("This style is written in code: its own animation draws every picture, so it has no picture "
+                           "style to choose. Improve it on its page instead.")
     frames = _frames(home, style)
     if not frames:
         raise RuntimeError("This style was saved without reference frames. Look at the references again to make samples.")

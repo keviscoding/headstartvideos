@@ -1367,6 +1367,9 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     coded_way = way.get("engine") in ("animated2d", "animated3d")
     base_for = BASES.get(chosen, "")
     if coded_way:
+        # the picture model and what each picture shows are for AI pictures: a style written in code draws every frame
+        # (the settings stay for the odd background picture its renderer asks for, only the rows are not shown)
+        plan.settings = [r for r in plan.settings if r.get("path") not in ("look.image_model", "look.storyboard")]
         # the recipe brings the workflow; the channel's own renderer draws every picture (never "a new drawn or
         # generated picture for every line" over a style written in code)
         base_for = (BASES_CODED.get(chosen) or "the video's workflow") + ", with every picture drawn in code"

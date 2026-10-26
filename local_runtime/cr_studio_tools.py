@@ -1226,9 +1226,12 @@ def look_progress(look_id: str) -> dict:
                    medium_gap=route.get("medium_gap") or "", cost_note=m.get("cost") if isinstance(m.get("cost"), str)
                    else "", not_watched=d.get("not_watched") or [], shorts=bool(d.get("shorts")),
                    similar_styles=similar_styles(d.get("similar")),
+                   # example titles built from the channel's own titles (no model call): offer them for example_title
+                   title_ideas=[str(t) for t in d.get("title_ideas") or []][:5],
                    **({"shorts_note": SHORTS_NOTE} if d.get("shorts") else {}),
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
-                        "with look_id, a style name, an example title and their answers. The 'made' question decides "
+                        "with look_id, a style name, an example title (title_ideas has a few from the channel's own "
+                        "titles to offer; they can change any) and their answers. The 'made' question decides "
                         "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
                         "their Claude Code write the channel's own renderer during the study (usually 10 to 25 "
                         "minutes of their Claude usage for the whole study, at most 46). Its videos then cost their "
