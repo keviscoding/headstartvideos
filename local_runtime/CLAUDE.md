@@ -32,17 +32,22 @@ already passes.
      and go into its own folder. Copies the customer already has are used when
      they work (setup shows them as ready).
 4. **Start Studio.** Mac: `open "Start on Mac.command"`. Windows:
-   `start "" "Start on Windows.cmd"`. The launcher window must stay open; its
-   first run installs libraries and a graphics browser, which takes a few
-   minutes. If it fails, read the error in that window with the customer.
+   `powershell -NoProfile -Command "Unblock-File -LiteralPath '.\Start on Windows.cmd'; Start-Process '.\Start on Windows.cmd'"`
+   (Unblock-File takes off the mark Windows puts on files from a downloaded
+   ZIP, so Windows doesn't stop with an "Unknown Publisher" security warning;
+   Studio clears it from its other files itself). The launcher window must
+   stay open; its first run installs libraries and a graphics browser, which
+   takes a few minutes. If it fails, read the error in that window with the
+   customer.
    Never run `cr_studio.py` yourself inside a command or a background shell:
    when that command ends or times out, Studio closes, and any video it is
    making stops with it. Only the launcher's own window keeps it running.
 5. **Open setup.** When the launcher says it's ready, open
-   http://127.0.0.1:7860/cr-setup. If "Make sure the tools are ready" shows
-   Video tools (FFmpeg) or YouTube helper (Node) needing attention, they press
-   **Fix it** next to it (or call `fix_ffmpeg` / `fix_node`, below): Studio
-   downloads it into its own folder, no password. Then tell the customer, in
+   http://127.0.0.1:7860/cr-setup. If Video tools (FFmpeg) or YouTube helper
+   (Node) are missing or too old, setup starts downloading them into Studio's
+   own folder by itself while the page is open (the row says Downloading…; no
+   password). Only if a row says it couldn't, they press **Fix it** next to it
+   (or call `fix_ffmpeg` / `fix_node`, below). Then tell the customer, in
    plain words, it's three buttons, top to bottom:
    1. **Connect my ChannelRecipe account**: it opens channelrecipe.com; they
       sign in if asked and press Approve, then land back on setup. No key to

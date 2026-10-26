@@ -169,8 +169,9 @@ def start(studio: Path, env, log, python):
         return subprocess.Popen(command, cwd=studio, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
     # what the launchers do: a fresh environment, the libraries, the graphics browser, then Studio
-    script = ('set -e; "$CR_SMOKE_PYTHON" -m venv .venv; .venv/bin/python -m pip install -q -r requirements.txt; '
-              '.venv/bin/python -m playwright install chromium; exec .venv/bin/python cr_studio.py')
+    script = ('set -e; "$CR_SMOKE_PYTHON" -m venv .venv; '
+              '.venv/bin/python -m pip install -q --disable-pip-version-check -r requirements.txt; '
+              '.venv/bin/python -m playwright install --only-shell chromium; exec .venv/bin/python cr_studio.py')
     return subprocess.Popen(["/bin/sh", "-c", script], cwd=studio, env={**env, "CR_SMOKE_PYTHON": python},
                             stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
 

@@ -397,25 +397,41 @@ def graphics_ready():
         result["browser_reason"]="The graphics browser's library isn't installed. Press Fix it next to Graphics browser."
     else:
         try:
+            # Studio draws in Playwright's headless shell (what a headless launch starts), so that is what's checked:
+            # chromium.executable_path names the full Chrome for Testing, which Studio no longer downloads (B5)
             with sync_playwright() as p:
-                if not Path(p.chromium.executable_path).is_file():
-                    result["browser_reason"]="The graphics browser isn't installed yet. Press Fix it to install it (a few minutes)."
-                else:
-                    browser=p.chromium.launch(headless=True,args=["--enable-unsafe-swiftshader"])
-                    page=browser.new_page()
-                    result.update(page.evaluate("""() => ({browser:!!document.createElement('canvas').getContext('2d'),webgl:!!document.createElement('canvas').getContext('webgl2')})"""))
-                    browser.close()
-                    if not result.get("browser"):
-                        result["browser_reason"]="The graphics browser started but couldn't draw. Press Fix it to reinstall it."
+                browser=p.chromium.launch(headless=True,args=["--enable-unsafe-swiftshader"])
+                page=browser.new_page()
+                result.update(page.evaluate("""() => ({browser:!!document.createElement('canvas').getContext('2d'),webgl:!!document.createElement('canvas').getContext('webgl2')})"""))
+                browser.close()
+                if not result.get("browser"):
+                    result["browser_reason"]="The graphics browser started but couldn't draw. Press Fix it to reinstall it."
         except Exception as error:
             first=(str(error).strip().splitlines() or [type(error).__name__])[0][:160]
-            result["browser_reason"]=f"The graphics browser won't start ({first}). Press Fix it to reinstall it."
+            if "Executable doesn't exist" in first or "playwright install" in str(error):
+                result["browser_reason"]="The graphics browser isn't installed yet. Press Fix it to install it (a few minutes)."
+            else:
+                result["browser_reason"]=f"The graphics browser won't start ({first}). Press Fix it to reinstall it."
     _graphics_check.update(result=result,expires=time.monotonic()+(300 if result.get("browser") else 0))
     return result
 
 
 BROWSER_FIX = {"state": "idle", "tail": ""}
 _browser_fix_lock = threading.Lock()
+# Playwright's headless shell only (about 115 MB): every graphic Studio draws runs headless, so the full Chrome for
+# Testing beside it (about 180 MB more) was never used (owner's Windows test, 2026-10-26). A Playwright older than
+# 1.49 has no --only-shell (and no shell of its own: it draws with the full Chromium), so that one installs as before.
+BROWSER_INSTALL = ("install", "--only-shell", "chromium")
+BROWSER_INSTALL_OLD = ("install", "chromium")
+
+
+def install_graphics_browser(run=None, **options):
+    """Install the graphics browser with this Studio's own Python; the last run's result (returncode, stdout, stderr)."""
+    run = run or subprocess.run
+    result = run([sys.executable, "-m", "playwright", *BROWSER_INSTALL], **options)
+    if getattr(result, "returncode", result) != 0:
+        result = run([sys.executable, "-m", "playwright", *BROWSER_INSTALL_OLD], **options)
+    return result
 
 
 def fix_graphics_browser():
@@ -428,8 +444,8 @@ def fix_graphics_browser():
 
     def work():
         try:
-            run = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
-                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+            run = install_graphics_browser(capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                           timeout=1800)
             ok, tail = run.returncode == 0, ((run.stdout or "") + (run.stderr or ""))[-1500:]
         except Exception as error:
             ok, tail = False, f"{type(error).__name__}: {error}"[:500]
@@ -2006,6 +2022,10 @@ def main():
     # once) and the services this network can't reach.
     for begin in (cr_whisper.start, lambda: cr_network.start(network_needs(cr_whisper.status()))):
         threading.Thread(target=begin, daemon=True, name="cr-setup-checks").start()
+    # Windows: Studio's own files lose the downloaded-ZIP mark, so the launcher stops asking "Unknown Publisher"
+    # (cr_unblock; here too because an in-app update never replaces a running Windows launcher)
+    import cr_unblock
+    threading.Thread(target=cr_unblock.clear, args=(HOME,), daemon=True, name="cr-unblock").start()
     try:
         # Updates from older releases ran an updater that could not remove
         # retired files, so tidy them on start too.
@@ -2067,8 +2087,10 @@ def restart_into_update():
         print("Updated to ChannelRecipe Studio %s." % cr_update._build(result["version"]), flush=True)
         if result["requirements_changed"]:
             print("Installing updated libraries. This can take a minute…", flush=True)
-            if (subprocess.call([sys.executable, "-m", "pip", "install", "-r", str(HOME / "requirements.txt")]) == 0
-                    and subprocess.call([sys.executable, "-m", "playwright", "install", "chromium"]) == 0):
+            # quiet as the launchers are (errors still show), without pip's own upgrade notice
+            if (subprocess.call([sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check", "-r",
+                                 str(HOME / "requirements.txt")]) == 0
+                    and install_graphics_browser(run=subprocess.call) == 0):
                 (HOME / ".venv" / ".cr-installed").touch()
     except cr_update.UpdateStopped as stopped:
         print(stopped, flush=True)

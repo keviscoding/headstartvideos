@@ -52,21 +52,30 @@ fi
 
 .venv/bin/python -c 'import sys; print("Studio Python:", sys.version.split()[0]); raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' || failed "This Studio folder's Python environment (.venv) was made with a Python older than 3.10. To fix it: 1. Install Python 3.13 or newer from https://www.python.org/downloads/macos/ 2. In this folder, rename the .venv folder to .venv-old (it's hidden in Finder: press Cmd+Shift+. to show it). 3. Open this launcher again. Your output folder and saved accounts stay in place."
 
+# Playwright's headless shell only: Studio never draws with the full Chrome for Testing (about 170 MB more). A
+# Playwright older than 1.49 has no --only-shell and draws with the full Chromium, so that one installs instead.
+install_browser() {
+  .venv/bin/python -m playwright install --only-shell chromium || .venv/bin/python -m playwright install chromium
+}
+
 if [ ! -f .venv/.cr-installed ]; then
-  echo "Setting up ChannelRecipe. This first download may take a few minutes."
-  .venv/bin/python -m pip install -r requirements.txt || failed "The studio libraries could not finish installing. Check the error above and your connection, then reopen this launcher."
-  .venv/bin/python -m playwright install chromium || failed "The graphics browser could not finish installing. Check the error above and your connection, then reopen this launcher."
+  echo "Setting up ChannelRecipe. The first start downloads about 280 MB and takes a few minutes."
+  echo ""
+  # One plain line per stage instead of pip's wall of output: -q still shows any error, and no pip upgrade notice.
+  echo "[1 of 2] Installing Studio's libraries, about 180 MB. This window stays quiet for a few minutes..."
+  .venv/bin/python -m pip install -q --disable-pip-version-check -r requirements.txt || failed "The studio libraries could not finish installing. Check the error above and your connection, then reopen this launcher."
+  echo "[2 of 2] Installing the graphics browser, about 100 MB..."
+  install_browser || failed "The graphics browser could not finish installing. Check the error above and your connection, then reopen this launcher."
   touch .venv/.cr-installed
+  echo "Done. Starting Studio..."
 fi
-# The graphics browser is checked on every start, not only the first: a missing one is installed again here.
-if ! .venv/bin/python -c 'import os, sys
-from playwright.sync_api import sync_playwright
-p = sync_playwright().start()
-ok = os.path.exists(p.chromium.executable_path)
-p.stop()
-sys.exit(0 if ok else 1)' >/dev/null 2>&1; then
-  echo "Installing the graphics browser. This can take a few minutes."
-  .venv/bin/python -m playwright install chromium || echo "The graphics browser could not install. Studio's setup page has a Fix it button for it."
+# The graphics browser is checked on every start, not only the first: a missing one is installed again here. It
+# starts the browser Studio draws with (the headless shell), as setup's own check does.
+if ! .venv/bin/python -c 'from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    p.chromium.launch().close()' >/dev/null 2>&1; then
+  echo "Installing the graphics browser, about 100 MB. This can take a few minutes."
+  install_browser || echo "The graphics browser could not install. Studio's setup page has a Fix it button for it."
 fi
 .venv/bin/python cr_studio.py
 cr_result=$?
