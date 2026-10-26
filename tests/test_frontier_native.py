@@ -191,7 +191,9 @@ def test_final_metadata_cannot_hide_incomplete_stages(native):
     with pytest.raises(HTTPException):studio.native_finish_project(native.owner,report)
 
 
-def test_recovery_requires_acknowledgement_and_only_one_extra_execution(native):
+def test_recovery_requires_acknowledgement_and_a_new_approval_for_each_bounded_attempt(native):
+    """Each further run of a stopped stage needs its own approval, up to MAX_STAGE_ATTEMPTS runs in all: a stage that
+    stopped twice (a usage limit met again before its reset) no longer leaves the video unfinishable."""
     req=stage(native)
     approval=studio.native_authorize(native.owner,req)
     studio.native_finish_stage(native.owner,studio.NativeFinishStage(project_id=req.project_id,stage_id=req.stage_id,
@@ -199,14 +201,34 @@ def test_recovery_requires_acknowledgement_and_only_one_extra_execution(native):
     retry=studio.NativeRetryStage(project_id=req.project_id,stage_id=req.stage_id)
     with pytest.raises(HTTPException):studio.native_retry_stage(native.owner,retry)
     with pytest.raises(HTTPException):studio.native_retry_stage(native.other,retry.model_copy(update={"acknowledge_costs":True}))
-    assert studio.native_retry_stage(native.owner,retry.model_copy(update={"acknowledge_costs":True}))["approved"]
-    second=studio.native_authorize(native.owner,req)
-    assert second["authorization_token"] != approval["authorization_token"]
-    studio.native_finish_stage(native.owner,studio.NativeFinishStage(project_id=req.project_id,stage_id=req.stage_id,
-        authorization_token=second["authorization_token"],status="failed",error_code="timeout"))
+    tokens={approval["authorization_token"]}
+    for attempt in range(2, studio.MAX_STAGE_ATTEMPTS + 1):
+        with pytest.raises(HTTPException):studio.native_authorize(native.owner,req)   # never without the approval
+        assert studio.native_retry_stage(native.owner,retry.model_copy(update={"acknowledge_costs":True}))["approved"]
+        again=studio.native_authorize(native.owner,req)
+        assert again["execute"] and again["authorization_token"] not in tokens
+        tokens.add(again["authorization_token"])
+        studio.native_finish_stage(native.owner,studio.NativeFinishStage(project_id=req.project_id,stage_id=req.stage_id,
+            authorization_token=again["authorization_token"],status="failed",error_code="usage_limit"))
     with pytest.raises(HTTPException):studio.native_retry_stage(native.owner,retry.model_copy(update={"acknowledge_costs":True}))
     progress=studio.native_progress(native.owner,req.project_id)
-    assert progress["project"]["calls"]==2 and not progress["stages"][0]["can_retry"]
+    assert progress["project"]["calls"]==studio.MAX_STAGE_ATTEMPTS and not progress["stages"][0]["can_retry"]
+    assert progress["stages"][0]["attempts_left"]==0
+
+
+def test_a_late_failure_of_the_attempt_before_keeps_the_newest_approval(native):
+    req=stage(native)
+    first=studio.native_authorize(native.owner,req)
+    studio.native_finish_stage(native.owner,studio.NativeFinishStage(project_id=req.project_id,stage_id=req.stage_id,
+        authorization_token=first["authorization_token"],status="failed",error_code="timeout"))
+    studio.native_retry_stage(native.owner,studio.NativeRetryStage(project_id=req.project_id,stage_id=req.stage_id,acknowledge_costs=True))
+    second=studio.native_authorize(native.owner,req)
+    # the second attempt was cut off (no receipt); the creator approves a third before its failure arrives
+    studio.native_retry_stage(native.owner,studio.NativeRetryStage(project_id=req.project_id,stage_id=req.stage_id,acknowledge_costs=True))
+    late=studio.native_finish_stage(native.owner,studio.NativeFinishStage(project_id=req.project_id,stage_id=req.stage_id,
+        authorization_token=second["authorization_token"],status="failed",error_code="network_interrupted"))
+    assert late["status"]=="retry_allowed"
+    assert studio.native_authorize(native.owner,req)["execute"]
 
 
 def test_local_render_failure_can_resume_completed_claude_without_new_charge(native):

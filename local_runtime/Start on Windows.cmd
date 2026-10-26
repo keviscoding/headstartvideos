@@ -40,8 +40,7 @@ if not errorlevel 1 goto create_environment
 set "CR_PYTHON=python3"
 python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
 if not errorlevel 1 goto create_environment
-echo Install Python 3.13 from https://www.python.org/downloads/ and select Add Python to PATH. Standard mode needs Python 3.10 or newer; optional Fast mode needs 3.13 or newer. Then open this file again.
-goto failed
+goto no_python
 
 :create_environment
 echo Creating your studio environment with: %CR_PYTHON% %CR_PYTHON_ARGS%
@@ -73,6 +72,8 @@ echo Installing the graphics browser. This can take a few minutes.
 ".venv\Scripts\python.exe" -m playwright install chromium
 
 :start_studio
+rem Studio runs in Python's UTF-8 mode, as its video workers do: every file, title and tool output is UTF-8.
+set "PYTHONUTF8=1"
 ".venv\Scripts\python.exe" cr_studio.py
 set "CR_EXIT_CODE=%ERRORLEVEL%"
 echo.
@@ -93,9 +94,27 @@ goto failed
 echo Python could not create the studio environment. Check the error above, then reopen this launcher.
 goto failed
 
+:no_python
+rem Python is the one tool Studio can't install for itself (it runs on it). FFmpeg, Node.js and Claude Code are
+rem installed from Studio's setup page (Fix it), so this only ever asks for Python.
+echo ChannelRecipe Studio needs Python 3.10 or newer, and this PC doesn't have it yet.
+echo It's the one thing you install yourself:
+echo.
+echo   1. Your browser is opening python.org. Download the newest Python 3 for Windows, 3.13 or newer.
+echo      If it didn't open, go to https://www.python.org/downloads/windows/
+echo   2. Run the installer. On its first screen tick "Add python.exe to PATH", then press Install Now.
+echo   3. Close this window and double-click Start on Windows.cmd again.
+echo.
+echo FFmpeg, Node.js and Claude Code don't need installing by hand: Studio's setup page installs them, one click each.
+start "" "https://www.python.org/downloads/windows/"
+goto failed
+
 :python_failed
-echo This studio's Python environment cannot run. Standard mode needs Python 3.10 or newer; optional Fast mode needs Python 3.13 or newer.
-echo Install Python 3.13, rename .venv to .venv-old, then reopen this launcher. Your output folder and saved accounts stay in place.
+echo This Studio folder's Python environment (.venv) can't run: it needs Python 3.10 or newer (optional Fast mode needs 3.13 or newer).
+echo To fix it:
+echo   1. Install Python 3.13 or newer from https://www.python.org/downloads/windows/
+echo   2. In this folder, rename the .venv folder to .venv-old.
+echo   3. Open this launcher again. Your output folder and saved accounts stay in place.
 goto failed
 
 :libraries_failed

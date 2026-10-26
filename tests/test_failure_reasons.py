@@ -466,6 +466,12 @@ def test_a_stopped_video_sends_its_record_and_shows_the_newer_studio_line(runtim
     state = r.studio.JOBS["example"]
     assert state["error"].endswith(note) and state["lines"][-1] == note
     assert json.loads((r.job / ".cr-finish.json").read_text(encoding="utf-8"))["failure"] == report["failure"]
+    # cr_recover reads how the run ended: a provider's stop waits for the creator, never carries on by itself
+    import cr_recover
+    run = json.loads((r.job / cr_recover.RUN_FILE).read_text(encoding="utf-8"))
+    assert run["studio_pid"] == os.getpid() and run["ended"] >= run["started"]
+    assert run["state"] == "error" and run["category"] == report["failure"]["category"] and run["provider"] == "kie"
+    assert cr_recover.last_stop(r.job, r.job)["kind"] == "other"
 
 
 # ── the server ────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -31,6 +31,8 @@ def main():
     if args.operation is not None and not re.fullmatch(r"op_[a-f0-9]{24}",args.operation):
         parser.error("Use a valid explicitly created 3D operation ID.")
     command=args.command[1:] if args.command[:1]==["--"] else args.command
+    import cr_trust
+    cr_trust.install()
     import cr_workers,cr_bridge,cr_claude,cr_media,cr_render,cr_studio,cr_readiness
     if not command:parser.error("Use an original studio worker command.")
     target=Path(command[0]).resolve()
@@ -78,7 +80,7 @@ def main():
     else:
         cr_bridge._project=cr_bridge.call("projects/"+args.project)
     checks={**cr_studio.graphics_ready(),"python":sys.version_info >= (3,10),"ffmpeg":cr_studio.video_tools_ready(),
-        "node":cr_studio.tool_ready("node","--version") or cr_studio.tool_ready("deno","--version"),
+        "node":cr_studio.node_ready(),
         "local_version":json.loads((HOME/"cr-release.json").read_text(encoding="utf-8"))["version"],"account":cr_bridge.call("status")}
     ready=cr_readiness.basic(checks)
     if not ready["ready"]:

@@ -58,7 +58,7 @@ def workspace(browser):
     rows = [
         {"name": "documentary", "features": {"offered": ["youtube", "motion", "sound"], "on": ["youtube", "motion", "sound"]}},
         {"name": "3d", "tab": "3d", "features": {"offered": ["threed", "maps", "sound"], "on": ["threed", "sound"]}},
-        {"name": CLONE, "label": "My Illustrated Worlds", "custom": True,
+        {"name": CLONE, "label": "My Illustrated Worlds", "custom": True, "captions": False,   # its channel has none
          "features": {"offered": ["motion", "sound"], "on": ["motion", "sound"]}},
         {"name": "stories", "label": "2D Life Stories", "character": STORY_CAST, "character_image": "characters/stories.png",
          "features": {"offered": ["ai_images", "sound"], "on": ["ai_images", "sound"]}},
@@ -68,7 +68,9 @@ def workspace(browser):
     catalog = {"channels": cr_presentation.presentation_catalog(rows, {
         CLONE: {"cr_style_clone": {"visual_mode": "reference_only"}}}),
         "features": features, "caps": {"features": {row["key"]: {"ok": True} for row in features}},
-        "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)]}
+        "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)],
+        "footage_watcher": {"note": "On your last video, Kie's video watcher wasn't answering, so ChannelRecipe's "
+                                    "watcher watched 12 of its videos."}}
     app = Flask(__name__)
 
     @app.before_request
@@ -178,10 +180,58 @@ def workspace(browser):
         if env.mode == "presenter":
             return jsonify(projects=[{"slug": "presenter-film", "title": "The Heist", "style": "documentary",
                                       "state": "stopped", "mtime": 1, "stopped_on": "presenter"}])
+        if env.mode == "claude_stage":
+            return jsonify(projects=[{"slug": "stage-film", "title": "The Vault", "style": "documentary",
+                                      "state": "stopped", "mtime": 1}])
         return jsonify(projects=[])
+
+    # cr_recover: a video stopped on a Claude step (one honest yes), and a stopped twin of a new Create
+    env.recovery = {"stopped_on": "claude_stage", "needs_approval": True, "key": "k" * 12, "fix_first": [],
+                    "do_first": [], "media": [], "claude_stages": [{
+                        "stage_id": "cc_" + "a" * 64, "step": "a Claude step that looks at pictures (Opus)",
+                        "status": "failed", "error_code": "usage_limit", "needs_approval": True,
+                        "reason": "Claude stopped at your plan's usage limit.",
+                        "spent_note": "Whether Claude counts a refusal at the limit against your usage isn't confirmed.",
+                        "reset_label": "26 Oct, 03:00 PM (Europe/London)", "reset_passed": False}],
+                    "reset_label": "26 Oct, 03:00 PM (Europe/London)", "reset_passed": False,
+                    "auto": {"safe": False, "why": "", "count": 0, "limit": 2}}
+
+    @app.get("/cr-workspace/recovery/<slug>")
+    def recovery(slug):
+        if slug != "stage-film":
+            return jsonify(error="This isn't a saved video of this Studio."), 404
+        return jsonify(env.recovery)
+
+    @app.post("/cr-workspace/recovery/<slug>")
+    def recover(slug):
+        if (request.json or {}).get("when") == "after_reset":
+            return jsonify(scheduled=True, message="Studio carries this video on by itself after the reset.")
+        return jsonify(approved={"approved_stages": ["cc_" + "a" * 64], "set_aside": []}, resumed=True,
+                       message="Carrying on from where it stopped. Everything already made is reused.")
+    HELD = "Your Kie.ai balance ran out. Top it up, then Carry on."
+
+    @app.get("/cr-queue")
+    def queue_status():
+        held = [{"slug": "held-film", "title": "Titanic", "ranking": False, "reason": HELD}] if env.mode == "queue_held" else []
+        return jsonify(held=held, reason=HELD if held else "", code="balance" if held else "", scope="all" if held else "",
+                       waiting=1 if env.mode == "queue" else 0)
+
+    @app.post("/cr-queue/resume")
+    def queue_resume():                                        # Carry on: Studio checked them again, still blocked
+        still = "Connect ElevenLabs in Setup & accounts for this recipe's voice."
+        return jsonify(resumed=0, held=[{"slug": "held-film", "title": "Titanic", "reason": still}], reason=still,
+                       code="setup", scope="", checking=False, waiting=0)
 
     @app.get("/api/queue")
     def queue():
+        if env.mode in ("queue", "queue_held"):
+            # cr_queue's rows: the running one, each waiting one's place in line, then the held ones with why
+            rows = [{"slug": "active-film", "title": "A film in production", "style": "3d", "state": "running"}]
+            if env.mode == "queue":
+                rows.append({"slug": "queued-film", "title": "Moon landing", "state": "queued", "position": 1, "ahead": 1})
+            else:
+                rows = [{"slug": "held-film", "title": "Titanic", "state": "held", "reason": HELD}]
+            return jsonify(busy=env.mode == "queue", jobs=rows)
         if env.mode == "presenter":
             return jsonify(busy=False, jobs=[])
         if env.mode == "voice":
@@ -192,7 +242,7 @@ def workspace(browser):
 
     @app.get("/cr-workspace/activity")
     def activity():
-        return jsonify(busy=env.mode == "active", operations=[])
+        return jsonify(busy=env.mode in ("active", "queue"), operations=[])
 
     @app.get("/api/jobs")
     def jobs():
@@ -217,7 +267,8 @@ def workspace(browser):
 
     @app.get("/cr-workspace/project/<slug>")
     def saved_project(slug):
-        return jsonify(slug=slug, project_id="crv_" + "9" * 24, available_for_resume=slug in ("voice-film", "presenter-film"),
+        return jsonify(slug=slug, project_id="crv_" + "9" * 24,
+                       available_for_resume=slug in ("voice-film", "presenter-film", "stage-film"),
                        title="The Heist", status="error")
 
     @app.get("/cr-workspace/voice/<slug>")
@@ -242,8 +293,11 @@ def workspace(browser):
 
     @app.get("/api/status/<slug>")
     def progress(slug):
-        if slug == "presenter-film":
+        if slug in ("presenter-film", "stage-film"):
             return jsonify(error="no live job"), 404
+        if slug in ("queued-film", "held-film") or env.mode in ("queue", "queue_held") and slug.startswith("fresh-"):
+            return jsonify(state="held" if slug == "held-film" or env.mode == "queue_held" else "queued", done=False,
+                           lines=[], progress=0, error=None, cr_cancel={"can_cancel": slug == "queued-film"})
         if slug == "voice-film":
             return jsonify(state="error", done=True, lines=["Writing the voiceover"], progress=0.08, elapsed=60,
                            error="Kie.ai failed this narration task. Internal Error, Please try again later",
@@ -262,9 +316,15 @@ def workspace(browser):
     def run():
         if env.mode == "selected_account_missing":
             return jsonify(error="Selected options need attention.", blockers=["Your image account needs attention."]), 409
+        if env.mode == "twin" and not request.json.get("new_attempt"):
+            return jsonify(error="\u201cThe Vault\u201d stopped on 2026-10-26 08:10 with its work saved.",
+                           resume_first=[{"title": "The Vault", "slug": "stage-film", "id": "video:stage-film",
+                                          "project_id": "crv_" + "9" * 24, "stopped": "2026-10-26 08:10"}],
+                           others=[]), 409
         slug = "fresh-" + str(len(env.creates) + 1)
         env.creates.append({"slug": slug, "body": request.json})
-        return jsonify(queued=[{"slug": slug, "title": request.json["title"]}])
+        place = {"position": 2, "ahead": 2} if env.mode == "queue" else {"held": HELD} if env.mode == "queue_held" else {}
+        return jsonify(queued=[{"slug": slug, "title": request.json["title"], **place}])
 
     @app.get("/cr-cloud")
     def cloud():
@@ -420,6 +480,45 @@ def test_saved_reference_recipe_excludes_stale_unrelated_visuals(workspace):
     assert body["character_image"] == body["avatar_id"] == ""
 
 
+def test_captions_start_at_the_recipes_own_choice_and_asking_for_them_is_sent(workspace):
+    """Alex: a cloned style without captions showed "Burn captions into the video" on, and the video came out with
+    none. The switch now starts at the recipe's own choice and says so; switching it on asks for them."""
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=" + CLONE)
+    page.locator("summary", has_text="Captions & publishing").click()
+    assert not page.locator("#crw-captions").is_checked()
+    assert "This style has no captions, like its channel. Switch this on" in page.inner_text("#crw-captions-note")
+    page.locator("#crw-captions").check()
+    assert "They will be added to this video." in page.inner_text("#crw-captions-note")
+    page.locator("#crw-title").fill("A wargame battle")
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    assert env.creates[0]["body"]["burn_subs"] is True and env.creates[0]["body"]["cr_captions"] == "on"
+    page.locator(".crw-nav [data-nav=create]").click()
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === 'documentary'))")
+    assert page.locator("#crw-captions").is_checked() and page.locator("#crw-captions-note").is_hidden()
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === %s))"
+                  % json.dumps(CLONE))
+    assert page.locator("#crw-captions").is_checked(), "the creator's choice for that recipe is kept"
+
+
+def test_a_saved_captions_off_survives_reloads(workspace):
+    """A creator who switched captions off before Studio 106 (one switch for every recipe) keeps it off after the
+    page saves its draft again and reloads (review of bugs-106, fix 4)."""
+    env, page = workspace, workspace.page
+    env.open()
+    page.evaluate("localStorage.setItem('channelrecipe.workspace.v1', JSON.stringify({recipe: 'documentary', "
+                  "captions: false}))")
+    for _ in range(2):
+        env.open()
+        page.locator("summary", has_text="Captions & publishing").click()
+        assert not page.locator("#crw-captions").is_checked()
+        page.locator("#crw-title").fill("Saved again")
+        page.locator("#crw-title").dispatch_event("change")              # the page saves its draft
+        saved = page.evaluate("JSON.parse(localStorage.getItem('channelrecipe.workspace.v1'))")
+        assert saved["captions"] is False
+
+
 def test_setup_blocks_before_work_but_quota_history_is_advisory(workspace):
     env, page = workspace, workspace.page
     env.mode = "needs_setup"
@@ -481,6 +580,9 @@ def test_research_footage_says_what_its_watching_adds_and_progress_counts_the_vi
     ten = cr_watch.budget(10)
     assert f"about {ten['typical_minutes'][0]} to {ten['typical_minutes'][1]} minutes to a 10-minute video" in note.inner_text()
     assert f"up to {ten['videos']} YouTube videos" in note.inner_text()
+    # Alex: Kie was his only watcher and it was down; Create says what happens then, and what happened last time
+    assert "If Kie's video watcher isn't answering, ChannelRecipe's own watcher takes over" in note.inner_text()
+    assert "never your credits" in note.inner_text() and "watched 12 of its videos" in note.inner_text()
     page.locator("[data-minutes='20']").click()
     assert f"up to {cr_watch.budget(20)['videos']} YouTube videos" in note.inner_text()
     if os.environ.get("CR_SHOT"):
@@ -778,6 +880,57 @@ def test_trying_an_uncertain_presenter_again_asks_first_because_it_can_pay_twice
         {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
 
 
+def test_a_video_stopped_on_a_claude_step_offers_one_honest_yes_on_its_card(workspace):
+    """A failed Claude step was a dead end outside a hidden setup box (ALEX, 2026-10-26). The stopped card says what
+    stopped it and what trying again may use, and only a ticked yes allows exactly those attempts and carries on."""
+    env, page = workspace, workspace.page
+    env.mode = "claude_stage"
+    env.open("#projects")
+    page.locator('.crw-project-card[data-slug="stage-film"]').get_by_role("button", name="Review issue",
+                                                                         exact=True).click()
+    box = page.locator(".crw-recovery")
+    box.wait_for(state="visible")
+    said = box.inner_text()
+    assert "Try the stopped steps again?" in said and "usage limit" in said and "26 Oct, 03:00 PM" in said
+    assert page.locator(".crw-resume-saved").is_hidden(), "a plain Resume would stop at the same step again"
+    now = page.get_by_role("button", name="Try now: I added Claude usage")
+    later = page.get_by_role("button", name="Carry on by itself after 26 Oct, 03:00 PM (Europe/London)")
+    assert now.is_disabled() and later.is_disabled()
+    assert not [p for p in env.posts if p["path"].startswith("/cr-workspace/recovery")]
+    box.locator("input[type=checkbox]").check()
+    if os.environ.get("CR_SHOT"):
+        page.locator("#crw-progress").screenshot(path=os.environ["CR_SHOT"])
+    later.click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('after the reset')")
+    assert [p for p in env.posts if p["path"].startswith("/cr-workspace/recovery")] == [
+        {"path": "/cr-workspace/recovery/stage-film", "body": {"acknowledge_costs": True, "key": "k" * 12,
+                                                               "when": "after_reset"}}]
+
+
+def test_create_offers_to_carry_on_a_stopped_video_of_the_same_title_first(workspace):
+    """Starting the same title again made a new project and paid for every step again (6 of 26 failed videos). Create
+    now offers to carry the stopped one on; a brand-new video only when the creator insists."""
+    env, page = workspace, workspace.page
+    env.mode = "twin"
+    env.open()
+    page.locator("#crw-title").fill("The Vault")
+    asked = []
+    page.once("dialog", lambda dialog: (asked.append(dialog.message), dialog.accept()))
+    page.get_by_role("button", name="Create video").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('The Vault')")
+    assert asked and "stopped earlier with its work saved" in asked[0]
+    assert [p for p in env.posts if p["path"].startswith("/cr-workspace/recovery")] == [
+        {"path": "/cr-workspace/recovery/stage-film", "body": {"only_if_free": True}}]
+    assert env.creates == [], "no new project"
+    env.open()
+    page.locator("#crw-title").fill("The Vault")
+    answers = iter([False, True])
+    page.on("dialog", lambda dialog: dialog.accept() if next(answers) else dialog.dismiss())
+    page.get_by_role("button", name="Create video").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('new video project')")
+    assert [c["body"].get("new_attempt") for c in env.creates] == [True]
+
+
 def test_a_new_character_is_drawn_or_uploaded_and_goes_with_the_video(workspace):
     """A customer (Discord, 2026-10-24) couldn't change the character in Creative direction: new words now draw the
     character (or a picture is uploaded) and that picture goes with the video."""
@@ -912,3 +1065,80 @@ def test_progress_shows_the_real_step_under_a_general_heading(workspace):
     assert page.locator("#crw-progress-phase").inner_text() == "Timing narration and captions"
     assert page.locator("#crw-progress-detail").inner_text() == "subtitles: timing narration with whisper (2 of 3 parts)"
 
+
+
+def test_create_adds_to_the_queue_while_a_video_is_made_and_projects_show_the_line(workspace):
+    """Customer ALEX (2026-10-26) had to sit and wait to press Create again: while a video is made, Create says Add to
+    queue, and Projects show each waiting video's place in line."""
+    env, page = workspace, workspace.page
+    env.mode = "queue"
+    env.open()
+    create = page.locator("#crw-create")
+    assert create.is_enabled() and create.inner_text().strip() == "Add to queue"
+    note = page.locator("#crw-readiness").inner_text()
+    assert "1 more is waiting" in note and "starts when the ones before it finish" in note
+    page.locator("#crw-title").fill("Another one for the queue")
+    create.click()
+    page.wait_for_function("window.CR_WORKSPACE_CLIENT.state.page==='projects' && !window.CR_WORKSPACE_CLIENT.state.submitting")
+    assert len(env.creates) == 1 and env.creates[0]["body"]["title"] == "Another one for the queue"
+    assert "Added to the queue" in page.locator("#crw-toast").inner_text()
+    assert "2 videos before it" in page.locator("#crw-toast").inner_text()
+    page.wait_for_function("document.getElementById('crw-progress-phase').textContent === 'Waiting in the queue'")
+    card = page.locator(".crw-project-card", has_text="Moon landing")
+    assert "Next in line" in card.inner_text() and "Queued" in card.inner_text()
+    assert page.locator(".crw-nav [data-nav=create]").count()
+    page.locator(".crw-nav [data-nav=create]").click()
+    assert page.locator("#crw-create").inner_text().strip() == "Add to queue"
+    assert not env.errors
+
+
+def test_a_held_queue_says_why_on_its_cards_and_new_videos_join_it(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "queue_held"
+    env.open("#projects")
+    card = page.locator(".crw-project-card", has_text="Titanic")
+    assert "On hold" in card.inner_text() and "Kie.ai balance ran out" in card.inner_text()
+    page.locator(".crw-filter-group [data-project-filter=active]").click()
+    assert page.locator(".crw-project-card", has_text="Titanic").count() == 1, "held videos are still in progress"
+    page.locator(".crw-nav [data-nav=create]").click()
+    assert page.locator("#crw-create").inner_text().strip() == "Add to queue"
+    assert "The queue is on hold: Your Kie.ai balance ran out" in page.locator("#crw-readiness").inner_text()
+    page.locator("#crw-title").fill("One more")
+    page.locator("#crw-create").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('on hold with the others')")
+    assert not env.errors
+
+
+def test_a_3d_video_says_what_its_3d_adds_and_can_take_one_quicker_review_round(workspace):
+    """A customer's 2-minute 3D video took about two hours, mostly Claude (2026-10-25), with nothing said up front."""
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=3d")
+    note = page.locator("#crw-threed-note")
+    note.wait_for(state="visible")
+    assert "to a 10-minute video" in note.inner_text() and "Claude directs every shot" in note.inner_text()
+    page.locator("[data-minutes='2']").click() if page.locator("[data-minutes='2']").count() else \
+        page.locator("#crw-minutes").fill("2")
+    page.locator("#crw-minutes").dispatch_event("input")
+    two = note.inner_text()
+    assert "to a 2-minute video" in two
+    page.locator("summary:has-text('Creative direction')").click()
+    page.locator("#crw-threed-quick").check()
+    assert note.inner_text() != two, "one round: less time"
+    if os.environ.get("CR_SHOT"):
+        page.locator("#crw-threed-quick").scroll_into_view_if_needed()
+        page.screenshot(path=os.environ["CR_SHOT"], full_page=False)
+    page.locator("#crw-title").fill("How one tank stopped a column")
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    assert env.creates[0]["body"]["threed_quick"] is True
+
+
+def test_carry_on_says_why_the_videos_are_still_on_hold(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "queue_held"
+    env.open()
+    page.locator("[data-held-notice]:visible button", has_text="Carry on").first.click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('Still on hold')")
+    assert "Connect ElevenLabs" in page.locator("#crw-toast").inner_text()
+    assert "Nothing was on hold" not in page.locator("#crw-toast").inner_text()
+    assert not env.errors

@@ -1,0 +1,47 @@
+# Setup's Fix its for real: the pinned FFmpeg and Node.js downloaded from their builders, SHA-256 checked, run, and
+# captions burned with them; then Anthropic's own Claude Code installer, as setup's Install Claude Code runs it (no
+# sign-in). Hundreds of MB from other people's servers is too heavy and too flaky for every pull request (the Windows
+# Studio workflow), so this runs on pull requests that change the installer code, once a week (a moved or changed
+# upstream file shows up before a customer presses Fix it), and by hand. tests/test_studio_installs.py fakes every
+# download and runs everywhere.
+name: Setup Fix its (real downloads)
+on:
+  pull_request:
+    paths:
+      - local_runtime/cr_installs.py
+      - tests/studio_smoke/fixits_check.py
+      - .github/workflows/setup-fixits.yml
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: setup-fixits-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    name: FFmpeg, Node.js and Claude Code installed for real on Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out the files as releases have them (LF)
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: What the installer code imports
+        run: python -m pip install requests tzdata
+      - name: Install with setup's Fix its (each tried up to 3 times, a minute apart, for an upstream hiccup)
+        run: python tests\studio_smoke\fixits_check.py --claude --tries 3 --report fixits.md
+      - name: Keep the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: setup-fixits-report
+          path: fixits.md
+          if-no-files-found: ignore

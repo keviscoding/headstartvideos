@@ -20,11 +20,13 @@ import cr_media
 import cr_render
 import cr_claude
 import cr_failure
+import cr_installs
 import cr_machine
 import cr_mcp
 import cr_network
 import cr_paths
 import cr_readiness
+import cr_recover
 import cr_workers
 import cr_ui
 import cr_submission
@@ -153,11 +155,12 @@ class CreativeActivity:
                     pass
 
     def wait_for_editor(self):
-        """A queued title must not replace a still-running editor's project."""
+        """A queued title must not replace a still-running editor's project, nor start beside a style study, a 3D
+        repair, a product build or a farm render: queued behind them, it starts when they finish."""
         with self.changed:
             self.waiting_editor = True
             try:
-                while self.active or self.editor_queue_busy():
+                while self.active or self.editor_queue_busy() or self.side_work():
                     self.changed.wait(timeout=0.25)
             finally:
                 self.waiting_editor = False
@@ -175,17 +178,21 @@ class CreativeActivity:
         with condition:
             return bool(timeline._QUEUE or timeline._WORKER.get("current"))
 
+    def side_work(self):
+        """A product build or a farm render is going (neither holds a reservation)."""
+        product = getattr(self.studio, "PRODUCT_BUILD", {}).get("proc")
+        if product is not None and product.poll() is None:
+            return True
+        farm = getattr(self.studio, "FARM", {}).get("thread")
+        return bool(farm is not None and farm.is_alive())
+
     def busy(self):
         with self.lock:
             if self.active or self.studio.RUNNING.get("slug") or self.studio.QUEUE or cr_workers.busy():
                 return True
             if self.editor_queue_busy():
                 return True
-            product = getattr(self.studio, "PRODUCT_BUILD", {}).get("proc")
-            if product is not None and product.poll() is None:
-                return True
-            farm = getattr(self.studio, "FARM", {}).get("thread")
-            return bool(farm is not None and farm.is_alive())
+            return self.side_work()
 
     def install(self):
         timeline = getattr(self.studio, "timeline", None)
@@ -496,37 +503,49 @@ def sync_completion_receipt(bridge, pending):
 
 
 def tool_ready(name, flag="-version"):
-    executable = shutil.which(name)
-    if not executable:
-        return False
-    try:
-        return subprocess.run([executable, flag], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                              timeout=5).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    return cr_installs.runs(name, flag)
 
 
 def video_tools_ready(ffmpeg="ffmpeg", ffprobe="ffprobe"):
-    if not tool_ready(ffprobe):
-        return False
-    executable = shutil.which(ffmpeg)
-    if not executable:
-        return False
-    try:
-        # A minimal Homebrew build can pass -version but cannot burn captions.
-        for flag, required in (("-filters", {"subtitles"}),
-                               ("-encoders", {"libx264", "aac", "libmp3lame"})):
-            result = subprocess.run([executable, flag], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                    timeout=5)
-            names = {line.split()[1] for line in result.stdout.splitlines() if len(line.split()) > 1}
-            if result.returncode or not required <= names:
-                return False
-        return True
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    """FFmpeg and ffprobe run, and FFmpeg can burn captions (libass) and make H.264, AAC and MP3 (cr_installs)."""
+    return not cr_installs.video_tools_problem(ffmpeg, ffprobe)
+
+
+def node_ready():
+    """Node.js (any version) or Deno runs: what every video needs, as before. Downloading from YouTube needs more
+    (Node 22 or newer, node_youtube in tool_checks): cr_readiness.preset() refuses only the videos that do."""
+    return tool_ready("node", "--version") or tool_ready("deno", "--version")
+
+
+def tool_checks():
+    """Setup's FFmpeg and Node rows, with what is wrong and the fix (setup's Fix it puts both in Studio's own folder,
+    cr_installs). node: a JavaScript runtime runs (a missing one blocks setup, as it always did); node_youtube: yt-dlp
+    can use it for YouTube (Deno, or Node.js 22 or newer). An older Node is a note in setup and stops only videos that
+    download from YouTube (cr_readiness.preset), never the rest."""
+    ffmpeg = "" if video_tools_ready() else (cr_installs.video_tools_problem() or "FFmpeg isn't ready.")
+    deno = tool_ready("deno", "--version")
+    node = {"ready": True, "version": "deno", "reason": ""} if deno else cr_installs.node_status()
+    return {"ffmpeg": not ffmpeg, "ffmpeg_reason": (ffmpeg + " " + cr_installs.fix_hint("ffmpeg")) if ffmpeg else "",
+            "node": deno or node["ready"] or node_ready(), "node_youtube": node["ready"], "node_version": node["version"],
+            "node_reason": (node["reason"] + " " + cr_installs.fix_hint("node")) if not node["ready"] else "",
+            "can_fix": {name: cr_installs.can_fix(name) for name in ("ffmpeg", "node", "claude")}}
+
+
+def fix_line():
+    """Diagnostics: the setup Fix its run since Studio started (what failed and why), '' when none ran."""
+    ran = [(name, cr_installs.status(name)) for name in cr_installs.LABEL]
+    ran = [(name, fix) for name, fix in ran if fix.get("state") not in ("idle", None)]
+    if not ran:
+        return ""
+    return "Fix it: " + "; ".join("%s %s%s" % (cr_installs.LABEL[name], fix["state"],
+                                               (" (" + str(fix.get("message") or "")[:200] + (" | " + str(
+                                                   fix.get("tail") or "")[-200:] if fix.get("tail") else "") + ")")
+                                               if fix["state"] == "failed" else "") for name, fix in ran)
 
 
 def configure_video_tools():
+    # Setup's Fix it installs FFmpeg and Node.js in Studio's own tools folder: first on PATH for Studio and its workers
+    cr_installs.use_studio_tools(HOME)
     if sys.platform != "darwin" or video_tools_ready():
         return
     # Homebrew's full build can coexist with a stale binary earlier on PATH.
@@ -615,17 +634,17 @@ def create_app():
                 if not cfg.get("costs_accepted"):
                     return jsonify(error="Review your provider spending in setup before making a video."), 409
                 data = request.get_json(silent=True) or {}
-                # Do not change the shared brain project while another video is active.
-                if activity.busy():
-                    return jsonify(error="Finish your current video before starting another."), 409
+                # A video started while another is made joins the queue (cr_queue): its disk check counts what the
+                # videos before it still need, and its setup proof travels with it (g -> cr_submission).
                 checks = setup_status().get_json()
-                preflight = cr_readiness.preset(studio,checks,data)
+                preflight = cr_readiness.preset(studio,checks,data,queue_keeper.ahead_gb())
                 if not preflight["ready"]:
                     return jsonify(error="Complete this video's setup before starting.",**preflight),409
                 if preflight.get("manimgx_identity"):
                     data["manimgx_identity"] = preflight["manimgx_identity"]
                     request._cached_json = (data, data)
                 g.cr_warnings = preflight.get("warnings") or []   # said with the start (inject), never a stop
+                g.cr_setup_proof = preflight["proof"]
                 cfg = cr_bridge.load_settings()
                 cfg["setup_proof"] = preflight["proof"]
                 cr_bridge.save_settings(cfg)
@@ -671,8 +690,7 @@ def create_app():
                 and last_status.get("at", 0) > time.monotonic() - 300):
             return jsonify({**last_status["checks"], "cached": True})
         cfg = cr_bridge.load_settings()
-        checks = {"python": sys.version_info >= (3,10), "ffmpeg": video_tools_ready(),
-                  "node": tool_ready("node", "--version") or tool_ready("deno", "--version"),
+        checks = {"python": sys.version_info >= (3,10), **tool_checks(),
                   "connected": bool(cfg.get("key")), "costs_accepted": bool(cfg.get("costs_accepted"))}
         checks.update(graphics_ready())
         checks["speech_model"] = cr_whisper.status()
@@ -751,6 +769,12 @@ def create_app():
         checks["brain_mode"] = readiness["brain_mode"]
         checks["claude_code"] = readiness.pop("claude_code")
         checks["readiness"] = readiness
+        try:                                                # where setup is stuck, for the team (check keys only)
+            import cr_setup_report
+            cr_setup_report.maybe_send(readiness, checks.get("local_version", ""),
+                                       connected=bool(cfg.get("key")) and not checks.get("cr_unreachable"))
+        except Exception:                                   # noqa: BLE001 - never trouble setup
+            pass
         last_status.update(at=time.monotonic(), checks=checks)
         return jsonify(checks)
 
@@ -776,20 +800,21 @@ def create_app():
 
     @studio.app.post("/cr-submit-project")
     def submit_project():
-        if activity.busy():
-            return jsonify(error="Finish the current video before starting another."),409
         try:
             project_id=str((request.get_json(silent=True) or {}).get("project_id", ""))
             import re
             if not re.fullmatch(r"crv_[a-f0-9]{24}",project_id):
                 return jsonify(error="Use a valid saved CR project."),400
+            if queue_keeper.has_project(project_id):
+                # a saved project resumes while others are made (it joins the queue), once
+                return jsonify(error="This video is already being made or waiting in the queue."),409
             progress=cr_bridge.project_progress(project_id)
             if progress.get("purpose", "video") != "video":
                 return jsonify(error="This is a setup or creative action. Continue it in its original studio controls, not the saved-video launcher."),409
             spec=progress["job_spec"]
             if progress["project"]["status"] == "done":
                 return jsonify(error="This project already finished. Open its saved local output."),409
-            preflight=cr_readiness.preset(studio,setup_status().get_json(),spec)
+            preflight=cr_readiness.preset(studio,setup_status().get_json(),spec,queue_keeper.ahead_gb())
             if not preflight["ready"]:
                 return jsonify(error="Complete this project's setup before starting.",**preflight),409
             cfg=cr_bridge.load_settings()
@@ -798,7 +823,7 @@ def create_app():
             # Capture original normalized specs before the live dispatcher can
             # consume them, and publish only this project's fully owned items.
             payload={**spec,"steps":spec.get("steps") or ["script","voiceover","pexels","images","video","thumbnail"]}
-            response=cr_submission.submit(studio,payload,project_id)
+            response=cr_submission.submit(studio,payload,project_id,setup_proof=preflight["proof"])
             if not 200 <= response.status_code < 300:
                 return response
             queued=response.get_json().get("queued",[])
@@ -908,6 +933,54 @@ def create_app():
     def fix_browser_status():
         return jsonify(dict(BROWSER_FIX))
 
+    # Fix it for FFmpeg, Node.js and Claude Code (cr_installs): FFmpeg and Node.js into Studio's own folder, Claude
+    # Code with Anthropic's own installer. Each runs in the background; setup polls the GET for its progress line.
+    def video_running():
+        """A video (or any render) being made right now: setup's Fix its never switch FFmpeg or Node.js under it.
+        Read without the activity lock (a long setup request holds it); can't tell = don't switch."""
+        try:
+            return bool(activity.active or studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy()
+                        or activity.editor_queue_busy())
+        except Exception:                                      # noqa: BLE001
+            return True
+
+    @studio.app.post("/cr-setup/fix-ffmpeg")
+    def fix_ffmpeg_route():
+        return jsonify(cr_installs.fix_ffmpeg(home=HOME, busy=video_running)), 202
+
+    @studio.app.get("/cr-setup/fix-ffmpeg")
+    def fix_ffmpeg_status():
+        return jsonify(cr_installs.status("ffmpeg"))
+
+    @studio.app.post("/cr-setup/fix-node")
+    def fix_node_route():
+        return jsonify(cr_installs.fix_node(home=HOME, busy=video_running)), 202
+
+    @studio.app.get("/cr-setup/fix-node")
+    def fix_node_status():
+        return jsonify(cr_installs.status("node"))
+
+    @studio.app.post("/cr-setup/fix-claude")
+    def fix_claude_route():
+        return jsonify(cr_installs.fix_claude()), 202
+
+    @studio.app.get("/cr-setup/fix-claude")
+    def fix_claude_status():
+        state = {**cr_installs.status("claude"), "installed": bool(cr_claude.find_executable())}
+        if request.args.get("signin") == "1" and state["installed"]:
+            state["signed_in"] = bool(cr_claude.status().get("authenticated"))    # after the sign-in window opened
+        return jsonify(state)
+
+    @studio.app.post("/cr-setup/claude-sign-in")
+    def claude_sign_in_route():
+        try:
+            return jsonify(cr_installs.open_sign_in(home=HOME))
+        except cr_installs.Stop as stop:
+            return jsonify(error=str(stop)), 409
+        except OSError as error:
+            return jsonify(error=f"Studio couldn't open the sign-in window ({type(error).__name__}). Open Terminal "
+                                 f"(PowerShell on Windows) and run: {cr_installs.sign_in_command(cr_claude.find_executable())}"), 409
+
     @studio.app.post("/cr-setup/fix-speech-model")
     def fix_speech_model_route():
         return jsonify(fix_speech_model()), 202
@@ -945,8 +1018,10 @@ def create_app():
             "Studio: %s" % checks.get("local_version", "unknown"),
             "Computer: %s %s (%s) · Python %s" % (platform.system(), platform.release(), platform.machine(),
                                                    platform.python_version()),
-            "Tools: Python %s · FFmpeg %s · graphics browser %s · Node %s" % (
-                tick(checks.get("python")), tick(checks.get("ffmpeg")), tick(checks.get("browser")), tick(checks.get("node"))),
+            "Tools: Python %s · FFmpeg %s · graphics browser %s · Node %s%s" % (
+                tick(checks.get("python")), tick(checks.get("ffmpeg")), tick(checks.get("browser")), tick(checks.get("node")),
+                (" " + str(checks["node_version"])) if checks.get("node_version") else ""),
+            fix_line(),
             "ChannelRecipe account connected: %s" % tick(checks.get("connected")),
             "Claude Code: installed %s%s · signed in %s · tools connected %s · models verified %s" % (
                 tick(cli.get("installed")), (" " + str(cli["version"])) if cli.get("version") else "",
@@ -1384,8 +1459,9 @@ def create_app():
                                    message=f"Free sample unavailable: make one with your {label} balance (about "
                                            f"${PREVIEW_COST_USD:.2f})?")
                 target.parent.mkdir(parents=True, exist_ok=True)
+                # a page waits on this: one try, never the video's patient retries (review, 2026-10-26)
                 cr_media.run("narration", cr_media.narration_input(VOICE_SAMPLE, voice, model["id"]), target,
-                             model=model["id"], log=studio.app.logger.info, timeout_s=180)
+                             model=model["id"], log=studio.app.logger.info, timeout_s=180, retry=False)
                 paid = True
         except cr_media.AccountStop as error:
             return jsonify(error=str(error)), 409
@@ -1607,7 +1683,8 @@ def create_app():
             cfg=cr_bridge.load_settings()
             if old_backend == "manimgx" and cfg.get("brain_mode") != "claudecode":
                 raise RuntimeError("This saved Fast mode project uses your Claude Code brain. Reconnect its pinned Claude profile before editing or exporting it.")
-            setup=cfg.get("setup_proof")
+            # its own setup check, from when it was submitted (a queued video's is never another submission's)
+            setup=spec.get("cr_setup_proof") if isinstance(spec.get("cr_setup_proof"), dict) else cfg.get("setup_proof")
             cr_bridge.install(studio.mv)
             if cfg.get("brain_mode") == "claudecode":
                 pending = job / ".cr-finish-pending.json"
@@ -1636,6 +1713,8 @@ def create_app():
             cr_attempts.reserve_output(studio.mv, job, spec)
             marker.write_text(json.dumps({**project,"brain_mode":cfg.get("brain_mode","channelrecipe")}, indent=2),
                               encoding="utf-8")
+            if not spec.get("timeline"):
+                cr_recover.run_started(job, spec)          # a run that never ends here was cut off with its Studio
         except Exception as error:
             with studio.LOCK:
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=False)
@@ -1671,6 +1750,8 @@ def create_app():
                     if not complete:
                         # why it stopped, privacy-safe (cr_failure): what ChannelRecipe counts to fix the commonest stops
                         report["failure"]=cr_failure.for_job(HOME,state,spec,job,project["id"],report["error_code"])
+                    if not spec.get("timeline"):
+                        cr_recover.run_ended(job,state,report.get("failure"))     # how it ended (cr_recover reads it)
                     pending=job/".cr-finish-pending.json"
                     cr_claude._private_write(pending,report)
                     answer=cr_bridge.finish_project(report)
@@ -1694,26 +1775,59 @@ def create_app():
             else:
                 activity.release(render_token)
     def run_spec(spec):
-        activity.wait_for_editor()
-        import cr_attempts
-        queue_keeper.started(spec)
-        try:
-            with cr_attempts.bind(studio.mv, spec):
-                try:
-                    return run_owned_spec(spec)
-                finally:
-                    # Inside the attempt's binding, so job_dir names this attempt's folder (its short/error.json).
-                    queue_keeper.finished(spec, lambda: studio.mv.job_dir(str(spec.get("title") or "Your video"),
-                                                                          str(spec.get("style") or "jung")))
-        except Exception as error:
+        queue_keeper.started(spec)              # taken off the waiting line: known as the one being made from now
+        ended = []
+
+        def finished(job_of):                   # once, however it ends
+            if not ended:
+                ended.append(True)
+                queue_keeper.finished(spec, job_of)
+
+        def failed(error):
             with studio.LOCK:
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=True)
                 studio.RUNNING["slug"] = None
+        try:
+            activity.wait_for_editor()
+            import cr_attempts
+            with cr_attempts.bind(studio.mv, spec):
+                try:
+                    return run_owned_spec(spec)
+                except Exception as error:
+                    failed(error)               # before finished(): a full disk's OSError holds the queue
+                finally:
+                    # Inside the attempt's binding, so job_dir names this attempt's folder (its short/error.json).
+                    finished(lambda: studio.mv.job_dir(str(spec.get("title") or "Your video"),
+                                                       str(spec.get("style") or "jung")))
+        except Exception as error:
+            failed(error)
+            finished(lambda: None)
     studio._run_spec = run_spec
+
+    def queue_check(specs):
+        """Carry on (cr_queue): each held video's setup is checked again now (a top-up, a sign-in, room freed on the
+        disk), and the ones ready get a fresh setup proof. -> {slug: why one still can't start}."""
+        checks = setup_status().get_json()
+        problems = {}
+        for spec in specs:
+            try:
+                result = cr_readiness.preset(studio, checks, spec)
+            except Exception as error:                          # noqa: BLE001 - this one stays on hold, saying why
+                problems[spec["slug"]] = str(error)[:300] or "Its setup couldn't be checked."
+                continue
+            if result.get("ready"):
+                spec["cr_setup_proof"] = result["proof"]
+            else:
+                problems[spec["slug"]] = (" ".join(str(b) for b in result.get("blockers") or [])[:400]
+                                          or "Its setup needs attention.")
+        return problems
+    queue_keeper.check = queue_check
     import cr_3d_routes
     cr_3d_routes.install(studio, activity, setup_status)
     import cr_style_routes
     cr_style_routes.install(studio, activity, setup_status, token=token, home=HOME)
+    import cr_style_lab
+    cr_style_lab.install(studio, token, HOME)                    # Style Lab: a style's renderer worked on in Claude Code
     import cr_ranking_routes
     cr_ranking_routes.install(studio, token=token, home=HOME)
     import cr_ranking_edit
@@ -1730,6 +1844,8 @@ def create_app():
     cr_cloud.install_routes(studio, token, HOME)                 # the workspace's "Studio Cloud" choice
     import cr_claude_code
     cr_claude_code.install(studio, token, HOME)                  # Claude Code's style gallery and the studio tools' routes
+    # a stopped video: one honest yes, or on by itself (its watcher is started by main, never in tests)
+    cr_recover.install(studio, activity, token=token, home=HOME, start_watcher=False)
 
     @studio.app.get("/cr-cloud")
     def cloud_status():
@@ -1863,6 +1979,8 @@ def session_stopped(how: str, home=HOME):
 
 def main():
     import logging
+    import cr_trust
+    cr_trust.install()                                           # check certificates as the browser does (cr_trust)
     if not isinstance(sys.stdout, _RecentOutput):
         sys.stdout, sys.stderr = _RecentOutput(sys.stdout), _RecentOutput(sys.stderr)
     # Every page poll printed a line; keep the window for what matters.
@@ -1903,6 +2021,10 @@ def main():
         import cr_claude_code
         cr_claude_code.configure(HOME)                           # Claude Code in this folder: the studio tools
         studio._cr_watcher.start()                               # a desktop notification when a video is done
+    except Exception:
+        pass
+    try:
+        studio._cr_recover.start()                               # stopped videos carry on when that's clearly free
     except Exception:
         pass
     studio._ensure_dispatcher()

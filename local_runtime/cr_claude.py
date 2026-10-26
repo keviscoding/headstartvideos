@@ -31,7 +31,11 @@ MINIMUM_VERSION = (2, 1, 268)
 _real_run = subprocess.run
 _runtime = None
 _lock = threading.RLock()
-_slots = threading.BoundedSemaphore(2)
+# Claude stages at once: the 3D engine directs and reviews three sections side by side. The server allows three per
+# project from 2026-10-26; one that still allows two answers 429 to the third, and that stage waits (_authorize).
+_slots = threading.BoundedSemaphore(3)
+SLOT_POLL_S = 5            # the server's Retry-After for a project's busy stages
+SLOT_WAIT_S = 45 * 60      # longer than any one stage (an Opus 3D stage took up to 25 min): then it stops, saying why
 HOME = Path(__file__).resolve().parent
 _expected_stage = ContextVar("cr_expected_native_stage", default=None)
 
@@ -110,7 +114,7 @@ def clean_environment(source=None):
         if (upper.startswith(("ANTHROPIC_", "CLAUDE_CODE_OAUTH_", "CLAUDE_CODE_USE_",
                               "AWS_ACCESS_", "AWS_SECRET_", "AWS_SESSION_", "AZURE_"))
                 or upper.endswith(("_API_KEY", "_AUTH_TOKEN", "_ACCESS_TOKEN"))
-                or upper in {"CLAUDECODE", "GOOGLE_APPLICATION_CREDENTIALS",
+                or upper in {"CLAUDECODE", "CLAUDE_EFFORT", "GOOGLE_APPLICATION_CREDENTIALS",
                              "CLAUDE_CODE_API_KEY_HELPER_TTL_MS", "CLAUDE_CODE_PLUGIN_DIRS",
                              "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "MAX_THINKING_TOKENS",
                              "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING"}):
@@ -248,6 +252,68 @@ def _option(args, name, default=""):
         if isinstance(value, str) and value.startswith(name + "="):
             return value[len(name) + 1:]
     return default
+
+
+# How hard Claude thinks on Studio's own stages. Left to the CLI, an Opus stage thinks at length on every call: a 3D
+# review round took 10-24 minutes and a 2-minute 3D video 84 minutes of Opus (customer runs, 2026-10-25). Until an
+# A/B the owner approves shows no quality loss, every stage keeps the CLI's own effort (VISUAL_EFFORT ""): quality is
+# the product, and Claude is never limited by default. A caller's own --effort wins ("--effort default": the CLI's own
+# for that call only); call_effort() scopes one to a thread; CR_CLAUDE_EFFORT set to a level applies it to every stage.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+VISUAL_EFFORT = ""
+_effort_flag: dict = {}
+_call_effort = ContextVar("cr_call_effort", default=None)
+
+
+@contextmanager
+def call_effort(level):
+    """Every stage started by this thread inside the block asks for `level` ("default": the CLI's own, no --effort).
+    For a caller deep in the engine that can't add options to its command (Style Lab's renderer drafts); the stage's
+    fingerprint is unchanged, and other threads' stages are not affected."""
+    token = _call_effort.set(str(level or "").strip().lower())
+    try:
+        yield
+    finally:
+        _call_effort.reset(token)
+
+
+def stage_effort(role, environ=None):
+    """The effort a stage of this model role asks for, or "" for the CLI's own."""
+    chosen = str((os.environ if environ is None else environ).get("CR_CLAUDE_EFFORT") or "").strip().lower()
+    if chosen == "default":
+        return ""
+    if chosen in EFFORT_LEVELS:
+        return chosen
+    return VISUAL_EFFORT if role == "visual" else ""
+
+
+def supports_effort(exe, *, run=None, environment=None) -> bool:
+    """Whether this Claude Code takes --effort: read from its --help once (free: no request is made), so an older
+    CLI never fails a stage on an option it doesn't know."""
+    key = os.path.normcase(os.path.realpath(str(exe)))
+    if key not in _effort_flag:
+        try:
+            shown = (run or _real_run)([exe, "--help"], capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", env=clean_environment(environment), timeout=CHECK_SECONDS)
+            _effort_flag[key] = shown.returncode == 0 and "--effort" in (shown.stdout or "")
+        except (OSError, subprocess.SubprocessError):
+            return False                                   # not remembered: the next stage asks again
+    return _effort_flag[key]
+
+
+def _drop_option(args, name):
+    result, skip = [], False
+    for i, entry in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if entry == name and i + 1 < len(args):
+            skip = True
+            continue
+        if isinstance(entry, str) and entry.startswith(name + "="):
+            continue
+        result.append(entry)
+    return result
 
 
 def _replace_option(args, name, value):
@@ -513,7 +579,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.106")
+            installed_version=cfg.get("local_version","5.3-admin.107")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text(encoding="utf-8"))
@@ -530,13 +596,37 @@ class Runtime:
                 self.bridge.finish_stage(saved["receipt"])
         except Exception:
             raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
-        try:
-            approval = self.bridge.authorize_stage(stage)
-        except WorkflowError as error:
-            raise ClaudeStageStopped("ChannelRecipe stopped this stage: " + error.detail
-                                     + " No new Claude request was made.") from None
-        except Exception:
-            raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
+        # The effort, and the free --help check behind it, are settled before the stage is authorized.
+        asked = _option(args, "--effort", "")
+        scoped = _call_effort.get()
+        if asked or scoped == "default":
+            effort = ""                                    # the caller's own (or "default", dropped below)
+        else:
+            effort = scoped if scoped in EFFORT_LEVELS else stage_effort(role)
+        if effort and not supports_effort(self.executable, environment=kwargs.get("env")):
+            effort = ""
+        deadline, said = time.monotonic() + SLOT_WAIT_S, False
+        while True:
+            try:
+                approval = self.bridge.authorize_stage(stage)
+                break
+            except WorkflowError as error:
+                # 429: the project's other stages are running. Nothing was recorded or run, so asking again is free.
+                # The deadline is on the clock: each ask can itself take minutes in cr_bridge's resends.
+                if error.status == 429 and time.monotonic() < deadline:
+                    if not said:
+                        said = True
+                        try:
+                            getattr(self.engine, "log", print)("  Waiting for a Claude slot: this project's other "
+                                                               "Claude stages are running.")
+                        except Exception:                  # noqa: BLE001 - a progress line only
+                            pass
+                    time.sleep(SLOT_POLL_S)
+                    continue
+                raise ClaudeStageStopped("ChannelRecipe stopped this stage: " + error.detail
+                                         + " No new Claude request was made.") from None
+            except Exception:
+                raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
         if approval.get("reuse") and not approval.get("execute"):
             if saved.get("stdout") is not None and approval.get("result_fingerprint") == saved.get("result_fingerprint"):
                 return subprocess.CompletedProcess(args, 0, saved["stdout"], "")
@@ -550,6 +640,10 @@ class Runtime:
         # Source helpers use --strict-mcp-config and deliberately expose no MCP
         # tools. The runner calls the authenticated CR MCP before/after them.
         command = _replace_option(command, "--settings", '{"apiKeyHelper":""}')
+        if asked == "default":                             # a caller that wants the CLI's own effort for this call
+            command = _drop_option(command, "--effort")
+        if effort:
+            command = _replace_option(command, "--effort", effort)
         env = clean_environment(kwargs.get("env"))
         if maximum is not None and maximum >= LONG_ANSWER_TOKENS:
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(LONG_OUTPUT_TOKENS)

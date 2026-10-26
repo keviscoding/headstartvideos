@@ -49,6 +49,8 @@ class FakeStudio:
                       "cr_clone_abc": ""}
         self.cloud_quote = {"available": True, "balance_usd": 7.71, "topup_url": "https://channelrecipe.com/app#billing",
                             "label": "Cloud machine", "expected_minutes": 15, "expected_cents": 29, "max_cents": 78}
+        self.twins = []                                   # /cr-workspace/resume-first's stopped videos (cr_recover)
+        self.recovery = {}                                # slug -> /cr-workspace/recovery/<slug> (cr_recover.diagnose)
 
     def __call__(self, method, path, body=None, **kw):
         self.calls.append((method, path, body))
@@ -95,6 +97,19 @@ class FakeStudio:
             return {"slug": "pantry-book"}
         if path == "/api/products/build/pantry-book":
             return {"slug": "pantry-book", "running": True, "code": None, "lines": ["write: 12/60"]}
+        if path == "/cr-workspace/resume-first":
+            keys = {m["title"].casefold() for m in self.twins}
+            return {"matches": list(self.twins), "others": [t for t in body["titles"] if t.casefold() not in keys]}
+        if path.startswith("/cr-workspace/recovery/"):
+            slug = path.rsplit("/", 1)[-1]
+            if slug not in self.recovery:
+                raise tools.Refused("This isn't a saved video of this Studio.", 404)
+            answer = self.recovery[slug]
+            if method == "POST":
+                if isinstance(answer.get("post"), Exception):
+                    raise answer["post"]
+                return answer.get("post") or {"approved": {"approved_stages": [], "set_aside": []}, "resumed": True}
+            return {k: v for k, v in answer.items() if k != "post"}
         if path == "/cr-workspace/stopped":
             return {"projects": [{"slug": "zombie--abc", "title": "Zombie Outbreak", "style": "stories", "mtime": 1}]}
         if path == "/api/queue":
@@ -529,6 +544,19 @@ def test_mac_notification_quotes_its_text(monkeypatch):
     assert runs[0][:2] == ["osascript", "-e"] and '"He said \\"go\\""' in runs[0][2]
     monkeypatch.setenv("CR_NOTIFY", "0")
     assert ccc.notify("x", "y", run=lambda *a, **k: runs.append(a)) is False and len(runs) == 1
+
+
+def test_windows_notification_starts_powershell_without_powershell_7s_module_path(monkeypatch):
+    """Started from pwsh, Windows PowerShell 5.1 inherited PS7's PSModulePath and couldn't load Add-Type (2026-10-26)."""
+    runs = []
+    monkeypatch.setattr(ccc.sys, "platform", "win32")
+    monkeypatch.setattr(ccc.os, "name", "nt")
+    monkeypatch.delenv("CR_NOTIFY", raising=False)
+    monkeypatch.setenv("PSModulePath", r"C:\Program Files\PowerShell\7\Modules")
+    assert ccc.notify("Ready", "It's done", run=lambda args, **kw: runs.append((args, kw)))
+    (args, kw), = runs
+    assert args[0] == "powershell" and "''s done" in args[-1]
+    assert not any(k.upper() == "PSMODULEPATH" for k in kw["env"])
 
 
 def test_configure_tells_the_plugin_where_studio_is(tmp_path, pointer):
@@ -973,3 +1001,267 @@ def test_the_deletes_are_destructive_and_always_asked(tmp_path):
     permissions = json.loads((tmp_path / ".claude" / "settings.json").read_text())["permissions"]
     assert {"mcp__studio__delete_video", "mcp__studio__delete_style"} <= set(permissions["ask"])
     assert not {"mcp__studio__delete_video", "mcp__studio__delete_style"} & set(permissions["allow"])
+
+
+# ── a stopped video: one honest yes, never paying twice (cr_recover, 2026-10-26) ─────────────────────────────────────
+
+STAGE_STOP = {"stopped_on": "claude_stage", "needs_approval": True, "free_to_resume": False, "key": "abc123abc123",
+              "what_to_tell_them": "1 Claude step stopped and needs one more attempt.", "fix_first": [], "do_first": [],
+              "claude_stages": [{"stage_id": "cc_" + "a" * 64, "step": "a Claude writing step (Sonnet)",
+                                 "status": "failed", "error_code": "timeout", "needs_approval": True,
+                                 "reason": "Claude took too long on it and was stopped.", "spent": "yes",
+                                 "spent_note": "Claude worked on it until the time limit."}],
+              "media": [{"task": "motion", "provider": "kie", "state": "uncertain", "pays_twice": True,
+                         "needs_approval": True, "reason": "Kie.ai was sent a moving clip request but no clear answer "
+                                                           "came back."}],
+              "stopped_at": "2026-10-26 03:10", "auto": {"safe": False, "why": "a Claude step failed", "count": 0,
+                                                         "limit": 2}}
+
+
+def test_progress_names_a_stopped_claude_step_and_what_trying_again_may_use(studio):
+    studio.recovery["zombie--abc"] = dict(STAGE_STOP)
+    out = ok("progress", {"id": "video:zombie--abc"})
+    assert out["stopped_on"] == "voice", "the voice choices still own a voice stop"
+    assert out["recovery_key"] == "abc123abc123" and out["needs_approval"] is True
+    [step] = out["stuck_claude_steps"]
+    assert step["claude_usage_already_used"] == "yes" and step["error_code"] == "timeout"
+    assert out["stuck_media"][0]["trying_again_can_pay_twice"] is True
+    assert "recover_video(id, key=recovery_key)" in out["recovery_note"] and "Never approve" in out["recovery_note"]
+    studio.recovery["heist--abc"] = dict(STAGE_STOP)
+    assert ok("progress", {"id": "video:heist--abc"})["stopped_on"] == "presenter", "the presenter choices too"
+
+
+def test_progress_after_a_restart_reads_the_saved_video(studio, monkeypatch):
+    """The live job list empties on restart: progress(id) used to fail with 'unknown job'."""
+    real = studio.__call__
+
+    def restarted(method, path, body=None, **kw):
+        if path.startswith("/api/status/") and path.endswith(("/vault--abc", "/nothing--abc")):
+            raise tools.Refused("unknown job", 404)
+        if path.startswith(("/cr-workspace/voice/", "/cr-workspace/presenter-choice/")) and "zombie" not in path:
+            return {}
+        return real(method, path, body, **kw)
+
+    monkeypatch.setattr(tools, "call", restarted)
+    studio.recovery["vault--abc"] = dict(STAGE_STOP)
+    out = ok("progress", {"id": "video:vault--abc"})
+    assert out["state"] == "stopped" and out["stopped_on"] == "claude_stage" and out["stopped"] == "2026-10-26 03:10"
+    studio.recovery["vault--abc"] = {"finished": True}
+    done = ok("progress", {"id": "video:vault--abc"})
+    assert done["state"] == "done" and done["watch_url"].endswith("/f/video/vault--abc")
+    refused = tools.run_tool("progress", {"id": "video:nothing--abc"})
+    assert refused["isError"] and "no video with that id" in refused["structuredContent"]["error"]
+
+
+def test_recover_video_is_always_asked_and_sends_only_the_shown_key(studio, tmp_path):
+    studio.recovery["vault--abc"] = {**STAGE_STOP, "post": {"approved": {"approved_stages": ["cc_" + "a" * 64],
+                                                                         "set_aside": ["u.uncertain-1.json"]},
+                                                            "resumed": True, "message": "Carrying on."}}
+    out = ok("recover_video", {"id": "video:vault--abc", "key": "abc123abc123"})
+    assert out["recovered"] and out["approved_claude_steps"] == 1 and out["media_tasks_sent_again"] == 1
+    assert studio.posted("/cr-workspace/recovery/vault--abc") == [
+        {"acknowledge_costs": True, "when": "now", "added_usage": False, "key": "abc123abc123"}]
+    studio.recovery["vault--abc"]["post"] = tools.Refused("What stopped this video changed since you looked.", 409,
+                                                          {"recovery": {"key": "fff000fff000",
+                                                                        "what_to_tell_them": "Now 2 steps."}})
+    again = ok("recover_video", {"id": "video:vault--abc", "key": "abc123abc123"})
+    assert again["recovered"] is False and again["recovery_key"] == "fff000fff000" and "Nothing more" in again["next"]
+    assert tools.run_tool("recover_video", {"id": "video:vault--abc", "when": "tomorrow"})["isError"]
+    assert "recover_video" in ccc.PAID_TOOLS
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"allow": ["mcp__studio__recover_video"]}}))
+    ccc.configure(tmp_path)
+    permissions = json.loads((tmp_path / ".claude" / "settings.json").read_text())["permissions"]
+    assert "mcp__studio__recover_video" in permissions["ask"] and "mcp__studio__recover_video" not in permissions["allow"]
+    hints = tools.TOOLS["recover_video"][3]
+    assert hints["readOnlyHint"] is False and "only after they say yes" in tools.TOOLS["recover_video"][1]
+
+
+def test_resume_video_carries_on_only_when_free_and_waits_its_turn_in_the_queue(studio):
+    """While another video is made, a free resume joins Studio's queue (cr_queue) and says its place in line."""
+    studio.recovery["zombie--abc"] = {**STAGE_STOP, "post": {
+        "approved": {}, "resumed": True, "waiting": True,
+        "queued": [{"slug": "zombie--abc", "title": "Zombie Outbreak", "position": 2, "ahead": 1}]}}
+    out = ok("resume_video", {"id": "video:zombie--abc"})
+    assert out["resumed"] and out["position"] == 2 and out["videos_before_it"] == 1
+    assert "waits in Studio's queue" in out["next"]
+    assert studio.posted("/cr-workspace/recovery/zombie--abc") == [{"only_if_free": True}]
+    assert not studio.posted("/cr-submit-project")
+    studio.recovery["zombie--abc"]["post"]["queued"] = [{"slug": "zombie--abc", "title": "Zombie Outbreak",
+                                                         "held": "Your Kie.ai balance ran out."}]
+    held = ok("resume_video", {"id": "video:zombie--abc"})
+    assert held["on_hold_because"].startswith("Your Kie.ai") and "carry_on_queue" in held["next"]
+    studio.recovery["zombie--abc"]["post"] = tools.Refused("This video stopped on a step that needs your yes.", 409,
+                                                           {"recovery": STAGE_STOP})
+    refused = ok("resume_video", {"id": "video:zombie--abc"})
+    assert refused["resumed"] is False and "recover_video" in refused["next"]
+
+
+def test_make_videos_offers_to_resume_a_stopped_title_first(studio):
+    studio.twins = [{"title": "Why Rome fell", "slug": "why-rome-fell--abc", "id": "video:why-rome-fell--abc",
+                     "project_id": "crv_" + "1" * 24, "stopped": "2026-10-26 03:10"}]
+    out = ok("make_videos", {"titles": ["Why Rome fell", "Why Rome rose"], "style": "documentary", "minutes": 10,
+                             "where": "this_computer"})
+    assert out["started"] is False and out["resume_first"][0]["id"] == "video:why-rome-fell--abc"
+    assert out["other_titles"] == ["Why Rome rose"] and "new_attempt=true" in out["next"]
+    assert studio.posted("/cr-workspace/resume-first")[0] == {"titles": ["Why Rome fell", "Why Rome rose"],
+                                                              "style": "documentary", "minutes": 10, "extra": ""}
+    q = ok("quote", {"style": "documentary", "minutes": 10, "titles": 1})
+    started = ok("make_videos", {"titles": ["Why Rome fell"], "style": "documentary", "minutes": 10,
+                                 "where": "this_computer", "quote_id": q["quote_id"], "new_attempt": True,
+                                 "options": {"carry_on_after_usage_reset": True}})
+    assert started["started"] is True
+    body = studio.posted("/api/run")[0]
+    assert body["new_attempt"] is True and body["carry_on_after_reset"] is True
+# ── the queue: several videos while one is made (Studio 106) ───────────────────────────────────────────────────
+
+class QueueStudio(FakeStudio):
+    """Studio making one video with another waiting, and cr_queue's answers."""
+    def __init__(self, held=False):
+        super().__init__()
+        self.held = held
+        self.resumed = []
+
+    def __call__(self, method, path, body=None, **kw):
+        if path == "/api/queue":
+            self.calls.append((method, path, body))
+            rows = [{"slug": "rome--a", "title": "Rome falls", "state": "running", "progress": 0.4, "elapsed": 600}]
+            if self.held:
+                rows.append({"slug": "titanic--b", "title": "Titanic", "state": "held",
+                             "reason": "Your Kie.ai balance ran out. Top it up, then Carry on."})
+            else:
+                rows.append({"slug": "titanic--b", "title": "Titanic", "state": "queued", "position": 1, "ahead": 1})
+            return {"jobs": rows, "busy": True}
+        if path.startswith("/cr-queue"):
+            self.calls.append((method, path, body))
+            held = [{"slug": "titanic--b", "title": "Titanic", "reason": "Your Kie.ai balance ran out."}] if self.held else []
+            if path == "/cr-queue/resume":
+                self.resumed.append(body)
+                self.held = False
+                return {"resumed": 1, "held": [], "reason": "", "code": ""}
+            if path == "/cr-queue/drop":
+                self.held = False
+                return {"removed": 1, "held": []}
+            return {"held": held, "reason": "Your Kie.ai balance ran out." if held else "", "code": "balance" if held else "",
+                    "scope": "all" if held else "", "waiting": 0 if held else 1, "ahead_gb": 6.5}
+        if path == "/api/run":
+            self.calls.append((method, path, body))
+            if self.held:
+                return {"queued": [{"slug": "moon--c", "title": "Moon landing", "held": "Your Kie.ai balance ran out."}]}
+            return {"queued": [{"slug": "moon--c", "title": "Moon landing", "position": 2, "ahead": 2}]}
+        if path == "/api/status/titanic--b":
+            self.calls.append((method, path, body))
+            return {"state": "held" if self.held else "queued", "done": False, "progress": 0, "lines": []}
+        return super().__call__(method, path, body, **kw)
+
+
+@pytest.fixture
+def queued(monkeypatch, tmp_path):
+    fake = QueueStudio()
+    monkeypatch.setattr(tools, "call", fake)
+    monkeypatch.setattr(tools, "STATE", tmp_path / "state")
+    monkeypatch.setattr(tools, "thumbnail", lambda row: "")
+    return fake
+
+
+def test_make_videos_while_one_is_made_queues_them_with_their_place_in_line(queued, monkeypatch):
+    import cr_machine
+    monkeypatch.setattr(cr_machine, "free_disk_gb", lambda *a: 12.0)
+    q = ok("quote", {"style": "documentary", "minutes": 10, "titles": 1})
+    assert q["queue"]["videos_before_these"] == 2 and "queue" in q["this_computer"]
+    assert "already in the queue need about 6.5 GB" in q["disk"]["warning"], "the disk check counts the queue"
+    out = ok("make_videos", {"titles": ["Moon landing"], "style": "documentary", "minutes": 10,
+                             "where": "this_computer", "quote_id": q["quote_id"]})
+    assert out["started"] is True
+    assert out["videos"] == [{"id": "video:moon--c", "title": "Moon landing", "position": 2, "videos_before_it": 2}]
+    assert "behind 2 videos" in out["next"] and "doesn't need to wait" in out["next"]
+
+
+def test_a_video_made_while_the_queue_is_held_says_so(queued):
+    queued.held = True
+    q = ok("quote", {"style": "documentary", "minutes": 10, "titles": 1})
+    out = ok("make_videos", {"titles": ["Moon landing"], "style": "documentary", "minutes": 10,
+                             "where": "this_computer", "quote_id": q["quote_id"]})
+    assert out["videos"][0]["on_hold_because"] == "Your Kie.ai balance ran out."
+    assert "carry_on_queue" in out["next"] and "Never carry on for them" in out["next"]
+
+
+def test_queue_and_progress_show_the_line_and_the_holds(queued):
+    line = ok("queue", {})
+    assert [(v["title"], v["state"]) for v in line["videos"]] == [("Rome falls", "running"), ("Titanic", "queued")]
+    assert line["videos"][1]["position"] == 1 and line["videos"][1]["videos_before_it"] == 1
+    assert "by itself" in line["next"]
+    assert ok("progress", {"id": "video:titanic--b"})["videos_before_it"] == 1
+    queued.held = True
+    line = ok("queue", {})
+    assert line["hold"]["reason"] == "Your Kie.ai balance ran out." and line["on_hold"] == 1
+    assert line["videos"][1]["on_hold_because"].startswith("Your Kie.ai balance")
+    one = ok("progress", {"id": "video:titanic--b"})
+    assert one["state"] == "held" and "carry_on_queue" in one["note"]
+    assert ok("progress", {})["hold_note"].startswith("These videos are on hold")
+
+
+def test_carry_on_queue_goes_on_or_removes_only_when_asked_and_credits_only_for_clip_watches(queued):
+    assert ok("carry_on_queue", {}) == {"carried_on": 0, "message": "Nothing is on hold."}
+    queued.held = True
+    refused = tools.run_tool("carry_on_queue", {"use_credits": True})
+    assert refused["isError"] and "clip watches" in refused["structuredContent"]["error"]
+    got = ok("carry_on_queue", {})
+    assert got["carried_on"] == 1 and queued.resumed == [{"use_credits": False}]
+    queued.held = True
+    assert ok("carry_on_queue", {"remove": True})["removed"] == 1
+    assert "carry_on_queue" in ccc.PAID_TOOLS and "queue" in ccc.FREE_TOOLS
+    settings = ccc.folder_settings({"permissions": {"allow": ["mcp__studio__carry_on_queue"]}})
+    assert "mcp__studio__carry_on_queue" in settings["permissions"]["ask"]
+    assert "mcp__studio__carry_on_queue" not in settings["permissions"]["allow"]
+
+
+def test_setup_check_offers_the_ffmpeg_node_and_claude_fixes_and_they_run_in_studio(studio, monkeypatch):
+    """A new customer's missing FFmpeg, too-old Node.js or missing claude command: Studio installs them itself
+    (cr_installs), never Claude Code's own shell (2026-10-26)."""
+    real_call = tools.call
+    calls = []
+    answers = {"/cr-setup/fix-ffmpeg": {"state": "starting"}, "/cr-setup/fix-node": {"state": "starting"},
+               "/cr-setup/fix-claude": {"state": "starting"}}
+
+    def call(method, path, body=None, **kw):
+        calls.append((method, path))
+        if path == "/cr-status":
+            return {"local_version": "5.3-admin.106", "readiness": {"ready": False, "blockers": ["x"]},
+                    "ffmpeg": False, "ffmpeg_reason": "This computer's FFmpeg can't burn captions. Press Fix it.",
+                    "node": True, "node_youtube": False,
+                    "node_reason": "Node.js 20.11.1 is too old for the YouTube downloader.",
+                    "can_fix": {"ffmpeg": True, "node": True, "claude": True},
+                    "claude_code": {"installed": False, "authenticated": False}}
+        if path in answers:
+            return answers[path]
+        return real_call(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", call)
+    out = ok("setup_check", {})
+    assert out["video_tools"]["ready"] is False and "burn captions" in out["video_tools"]["why"]
+    assert "Call fix_ffmpeg" in out["video_tools"]["fix"] and "Never install it from this shell" in out["video_tools"]["fix"]
+    assert "Call fix_node" in out["node"]["fix"] and "too old" in out["node"]["why"]
+    assert out["node"]["blocks_every_video"] is False and "Only videos that download from YouTube" in out["node"]["note"]
+    assert out["claude_code"]["installed"] is False and "Call fix_claude_cli" in out["claude_code"]["fix"]
+    for name, path in (("fix_ffmpeg", "/cr-setup/fix-ffmpeg"), ("fix_node", "/cr-setup/fix-node")):
+        fixed = ok(name, {})
+        assert fixed["state"] == "starting" and ("POST", path) in calls and "setup_check" in fixed["message"]
+    claude = ok("fix_claude_cli", {})
+    assert claude["state"] == "starting" and ("POST", "/cr-setup/fix-claude") in calls
+    assert "sign-in window" in claude["message"] and "never sign in for them" in claude["message"]
+    answers["/cr-setup/fix-node"] = {"state": "failed", "message": "Studio couldn't download Node.js 24.22.1."}
+    assert ok("fix_node", {}) == {"state": "failed", "message": "Studio couldn't download Node.js 24.22.1."}
+    for name in ("fix_ffmpeg", "fix_node", "fix_claude_cli"):
+        assert name in ccc.FREE_TOOLS and f"mcp__studio__{name}" in ccc.folder_settings({})["permissions"]["allow"]
+
+
+def test_setup_check_on_a_computer_studio_cant_fix_says_so(studio, monkeypatch):
+    real_call = tools.call
+    monkeypatch.setattr(tools, "call", lambda method, path, body=None, **kw: {
+        "local_version": "5.3-admin.106", "readiness": {"ready": False, "blockers": []}, "ffmpeg": False,
+        "node": True, "can_fix": {"ffmpeg": False, "node": False, "claude": True},
+        "claude_code": {"installed": True}} if path == "/cr-status" else real_call(method, path, body, **kw))
+    out = ok("setup_check", {})
+    assert "package manager" in out["video_tools"]["fix"]
+    assert out["node"] == {"ready": True, "why": "", "fix": "", "blocks_every_video": False, "note": ""}
+    assert out["claude_code"]["fix"] == ""

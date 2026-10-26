@@ -147,3 +147,17 @@ def test_without_spaces_the_bundle_stays_on_this_computer(tmp_path, monkeypatch)
     record = staging.save(9, "job9_1", "job9", clips, [])
     assert record["clip_count"] == 1 and record["clips_key"].startswith("/api/files/")
     assert staging.clips_link(staging.load(9, "job9_1")) == record["clips_key"]
+
+
+def test_a_bundle_on_another_drive_than_the_app_still_gets_a_link(tmp_path, monkeypatch):
+    """Windows CI: the app on C:, the test's temporary folder on D:. os.path.relpath raises across drives."""
+    monkeypatch.setattr(staging.storage, "is_remote", lambda: False)
+    def other_drive(path, start=None):
+        raise ValueError("path is on mount 'C:', start on mount 'D:'")
+    monkeypatch.setattr(staging.storage.os.path, "relpath", other_drive)
+    clips = tmp_path / "output" / "s" / "clips"
+    clips.mkdir(parents=True)
+    (clips / "001_scene.mp4").write_bytes(b"v" * 300)
+    record = staging.save(9, "job9_2", "job9", clips, [])
+    assert record["clips_key"].startswith("/api/files/") and record["clips_key"].endswith("clips_bundle.zip")
+

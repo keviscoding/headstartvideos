@@ -538,7 +538,8 @@ def install(home: Path = HOME) -> bool:
 TASK = {"state": "idle", "message": "", "title": "", "error": "", "at": 0.0}
 MAX_TITLES = 5                  # prepared here one after another, then rendered side by side (the farm's max_pods is 3)
 FARM_FIELDS = ("title", "style", "minutes", "script", "extra", "burn_subs", "force", "thumb_count", "features",
-               "character", "avatar_id", "avatar_s", "avatar_count", "auto_style")
+               "character", "avatar_id", "avatar_s", "avatar_count", "auto_style",
+               "cr_captions")    # sent along; the farm's own spec builder keeps only the fields it knows (Create says so)
 
 
 def blocked(p: dict) -> str:

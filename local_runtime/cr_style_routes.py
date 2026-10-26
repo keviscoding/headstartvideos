@@ -225,6 +225,20 @@ def install(studio, activity, setup_status, *, token, home=None):
         except Exception as error:
             return error_response(error)
 
+    @app.get("/cr-style-clone/<operation>/renderer-picture/<kind>/<int:index>")
+    def cr_style_renderer_picture(operation, kind, index):
+        """One of the renderer's test shots or the channel's frames beside them, by index (never by path)."""
+        try:
+            local_access()
+            if kind not in ("shot", "channel"):
+                raise ValueError("Choose a test shot or a channel frame.")
+            pictures = cr_style_clone.renderer_pictures(home, operation, cr_bridge)["shots" if kind == "shot" else "channel"]
+            if not 0 <= index < len(pictures):
+                return jsonify(error="No such picture."), 404
+            return no_store(send_file(pictures[index], mimetype="image/jpeg", conditional=False))
+        except Exception as error:
+            return error_response(error)
+
     @app.get("/cr-style-clone/look/<look_id>/sheet/<video_id>")
     def cr_style_look_sheet(look_id, video_id):
         try:

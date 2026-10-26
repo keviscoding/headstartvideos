@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.106"
+VERSION = "5.3-admin.107"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -221,6 +221,31 @@ def private_animated2d_resources(root: Path):
     return resources
 
 
+ANIMATED3D_FILES = ("core3d.js", "example3d.js", "AUTHORING.md")
+
+
+def private_animated3d_resources(root: Path):
+    """The animated 3D kit (Studio 105), shipped under animated3d/: its page runtime, example renderer and guide. The
+    3D page reads three.js from the 3D engine Studio already ships (threed/engine/vendor/three)."""
+    folder = root / "data/frontier/animated3d"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("The animated 3D kit must be an ordinary owned folder.")
+    resources = []
+    for path in sorted(p for p in folder.rglob("*") if p.is_file() or p.is_symlink()):
+        rel = path.relative_to(folder).as_posix()
+        if path.name.startswith("."):
+            continue
+        if path.is_symlink() or path.stat().st_size > 1024 * 1024 or rel not in ANIMATED3D_FILES:
+            raise ValueError("Unexpected file in the animated 3D kit: " + rel)
+        resources.append((path, "animated3d/" + rel))
+    missing = sorted(set(ANIMATED3D_FILES) - {dest.split("/", 1)[1] for _, dest in resources})
+    if resources and missing:
+        raise ValueError("The animated 3D kit is incomplete: " + ", ".join(missing))
+    return resources
+
+
 def merge_catalog(contents: bytes, root: Path = None) -> bytes:
     """The engine's static catalog (what the 3D director may build) with the designed-cast kit's kinds and look preset."""
     extra = (root or ROOT) / "data/frontier/threed" / THREED_CATALOG
@@ -345,10 +370,15 @@ ENGINE_PATCHES = {
     # (LaMa, which paints it out, is a model file fetched on first use). Pinned: 1.3+ caps Python below 3.13 and renamed
     # the detector (text_detector -> text_det), so Python 3.12 customers got another API than 3.13 ones; 1.2.3 is
     # pure Python and installs on 3.10-3.14 (checked on PyPI, 2026-10-21).
+    # truststore: Studio's Python checks certificates with the computer's own store, as the browser does (cr_trust),
+    # so an antivirus or company firewall that inspects secure connections no longer fails every download. 0.10.5 or
+    # later: before it, connections sharing one context could turn each other's certificate check off when they shook
+    # hands at once (reproduced 2026-10-26); pure Python, 3.10+ (checked on PyPI, 2026-10-26).
     "requirements.txt": [
         ('yt-dlp>=2025.10.22; python_version >= "3.10"',
          'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"\n'
-         'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove'),
+         'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove\n'
+         'truststore>=0.10.5; python_version >= "3.10"   # Studio trusts this computer\'s certificates, as the browser does'),
     ],
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',
@@ -534,6 +564,13 @@ ENGINE_PATCHES = {
         ("    if _num_env(\"YT_SLEEP\") > 0:\n",
          "    if _env(\"YT_FORCE_IPV4\") not in (\"\", \"0\", \"no\", \"off\", \"false\"):\n"
          "        cmd += [\"--force-ipv4\"]\n    if _num_env(\"YT_SLEEP\") > 0:\n"),
+        # yt-dlp runs as a process of its own: Studio's copy goes through cr_ytdlp so it trusts this computer's
+        # certificates too (an antivirus that scans secure connections failed every YouTube search and download)
+        ("        except ImportError:\n            return []\n    if not shutil.which(\"deno\"):\n",
+         "        except ImportError:\n            return []\n"
+         "    try:\n        import cr_trust\n        cmd = cr_trust.ytdlp_command(cmd)\n"
+         "    except Exception:\n        pass\n"
+         "    if not shutil.which(\"deno\"):\n"),
         ("        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n",
          "        except subprocess.TimeoutExpired:\n            return []\n        if p.returncode:\n"
          "            _note_err(p.stderr)\n        for line in p.stdout.splitlines():\n"),
@@ -557,6 +594,12 @@ ENGINE_PATCHES = {
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",
          "def _wait_machine(log=print, min_level: int = 20, min_free_gb: float = 3.0) -> None:"),
         ("    lvl = 45 if light else 40\n", "    lvl = 25 if light else 20\n"),
+        # The HUD registers Montserrat-Book.ttf, which no release ever shipped (it isn't in the engine source either):
+        # reading it failed, so every QUEST video came out without its game HUD ("QUEST: HUD not laid —
+        # FileNotFoundError ... Montserrat-Book.ttf", sweep 2026-10-26). A face that isn't there is left out; the
+        # browser draws that weight with the nearest Montserrat the release has.
+        ("             for fam, f, d in FONT_FACES]\n",
+         "             for fam, f, d in FONT_FACES if (FONTS / f).is_file()]   # a face the release lacks: the nearest weight draws\n"),
     ],
 }
 
@@ -662,7 +705,7 @@ def build(source: Path, target: Path, previous: Path | None = None, with_shorts:
     recipes = [r for r in private_recipe_resources(ROOT) if shorts or not r[1].startswith("styles/cr-shorts-")]
     preview_resources = (private_preview_resources(ROOT) + private_sound_resources(ROOT)
                          + recipes + (private_shorts_resources(ROOT) if shorts else []) + private_threed_resources(ROOT)
-                         + private_animated2d_resources(ROOT))
+                         + private_animated2d_resources(ROOT) + private_animated3d_resources(ROOT))
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     transformed_files = []

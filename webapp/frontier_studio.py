@@ -30,20 +30,21 @@ from pydantic import BaseModel, ConfigDict, Field
 import config
 from webapp import milestones
 from webapp import studio_failures
+from webapp import studio_setup
 from webapp import database as db
 from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.106"
+VERSION = "5.3-admin.107"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.106.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.107.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104", "5.3-admin.105", "5.3-admin.106")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104", "5.3-admin.105", "5.3-admin.106", "5.3-admin.107")
 # Releases that may also START or RESUME a video: every release from MIN_SUPPORTED_RELEASE to the newest. A new release
 # never forces an update (2026-10-24: with "the newest two", five releases in one night made creators stop their work
 # to update, twice). Raise the minimum only on purpose, when older Studios can no longer work with this server, and say
@@ -57,6 +58,11 @@ SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cad
 # waited for a slot (about 20 of a customer's 116-minute 2-minute 3D video, 2026-10-25). Studios up to 105 cap
 # themselves at 2, so raising this changes nothing for them; Studio 106 asks for 3.
 NATIVE_STAGE_LIMIT = 3
+# How many times one Claude stage may run: its first run, then one more for each recovery the creator explicitly
+# approves (acknowledge_costs). It was one recovery: a stage that stopped twice (a usage limit met again before
+# its reset) left the whole video unfinishable, and creators remade it from scratch, paying for every stage and
+# picture again (6 of 26 failed videos, 2026-10-26). Never more without a new approval for each attempt.
+MAX_STAGE_ATTEMPTS = 3
 # A Studio update reads the release in many byte ranges with one link, and storage is in San Francisco: from Europe
 # a slow connection outlived a 10-minute link and every retry was refused ("the update keeps getting interrupted").
 DOWNLOAD_LINK_SECONDS = 3600
@@ -1024,7 +1030,8 @@ def native_progress(user, project_id):
     for row in rows:
         stage = dict(row)
         stage["usage"] = json.loads(stage.pop("usage_json"))
-        stage["can_retry"] = stage["status"] in {"failed","authorized"} and stage["attempts"] == 1
+        stage["can_retry"] = stage["status"] in {"failed","authorized"} and 1 <= stage["attempts"] < MAX_STAGE_ATTEMPTS
+        stage["attempts_left"] = max(0, MAX_STAGE_ATTEMPTS - stage["attempts"])
         stages.append(stage)
     p["receipt_note"] = "Locally reported Claude Code usage; your Claude and media accounts determine actual charges."
     purpose = json.loads(session["setup_json"]).get("purpose", "video")
@@ -1108,10 +1115,10 @@ def native_finish_stage(user, req: NativeFinishStage):
                              (req.project_id, req.stage_id)).fetchone()
         if not stage or not secrets.compare_digest(stage["authorization_hash"], token_hash):
             raise HTTPException(409, "This stage result has no matching execution authorization.")
-        late_receipt = stage["status"] == "retry_allowed" and stage["attempts"] == 1
+        late_receipt = stage["status"] == "retry_allowed" and stage["attempts"] >= 1
         if late_receipt and req.status == "failed":
-            # A delayed first-attempt failure must not revoke an approved retry
-            # or account for the same execution again.
+            # A delayed failure of the attempt before must not revoke an approved
+            # retry or account for the same execution again.
             return {"saved": True, "reused": True, "status": "retry_allowed", "stage_id": req.stage_id}
         if stage["status"] != "authorized" and not late_receipt:
             if (stage["status"] == req.status and stage["result_fingerprint"] == req.result_fingerprint
@@ -1194,7 +1201,8 @@ def native_retry_stage(user,req:NativeRetryStage):
         lock=" FOR UPDATE" if db.IS_PG else ""
         p=conn.execute(db._q("SELECT * FROM frontier_projects WHERE id=? AND user_id=?")+lock,(req.project_id,user["id"])).fetchone()
         stage=conn.execute(db._q("SELECT * FROM frontier_native_stages WHERE project_id=? AND stage_id=?"),(req.project_id,req.stage_id)).fetchone()
-        if not stage or stage["status"] not in {"authorized","failed"} or stage["attempts"] != 1 or p["status"] == "done" or p["calls"] >= p["max_calls"]:
+        if (not stage or stage["status"] not in {"authorized","failed"} or not 1 <= stage["attempts"] < MAX_STAGE_ATTEMPTS
+                or p["status"] == "done" or p["calls"] >= p["max_calls"]):
             raise HTTPException(409,"This stage has no additional recovery attempt available.")
         now=time.time()
         conn.execute(db._q("UPDATE frontier_native_stages SET status='retry_allowed',updated_at=? WHERE project_id=? AND stage_id=?"),(now,req.project_id,req.stage_id))
@@ -1365,6 +1373,12 @@ def make_router(session_user, *, prefix="/api/frontier"):
     @router.post("/stages/retry")
     def runtime_retry(req:NativeRetryStage,user=Depends(access)):
         return native_retry_stage(user,req)
+
+    @router.post("/setup-report")
+    def report_setup(req: studio_setup.SetupReport, user=Depends(access)):
+        """What this Studio's setup still lacks (check keys, ready, computer family, version): the team's counts."""
+        studio_setup.record(user["id"], req)
+        return {"saved": True}
 
     @router.post("/failures")
     def report_failure(req: FailureReport, user=Depends(access)):

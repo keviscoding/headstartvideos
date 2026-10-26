@@ -113,11 +113,12 @@ def test_every_channel_that_animates_its_characters_fits_and_its_conventions_are
 
 def test_the_animated_route_says_what_writing_the_animation_costs(kit):
     plan = cm.plan_style(dart(), tsm.STYLES)
-    question = next(q for q in plan["questions"] if q["id"] == "animation")
-    assert "minutes of Claude usage" in question["ask"] and question["options"][0] == cm.ANIMATED_CODE
+    question = next(q for q in plan["questions"] if q["id"] == "made")
+    assert "minutes of Claude usage" in question["ask"] and question["options"][0] == cm.MADE_CODE
+    assert not any(q["id"] == "animation" for q in plan["questions"]), "one question decides how videos are made"
     route = plan["route"]
     assert route["engine"] == "animated2d" and "medium_gap" not in route
-    assert "Claude Code writes this channel's animation" in route["why"] and "$0.02" in route["why"]
+    assert "Claude Code writes this channel's own renderer" in route["why"] and "$0.02" in route["why"]
     look = plan["overrides"]["look"]
     assert look["visuals"] == a2d.VISUALS and plan["overrides"]["features"]["on"] == ["sound"]
     assert plan["overrides"]["pacing"]["clips_per_min"] == 0.0 and plan["cost"]["clips_per_min"] == 0
@@ -580,3 +581,152 @@ def test_a_look_with_one_reference_borrows_the_studys_own_frames_to_hold_some_ou
     refs = [Path(p).name for p in got["references"]]
     assert refs[:4] == [p.name for p in look] and len(refs) == 9 and "k00.jpg" not in refs and "k03.jpg" not in refs
     assert got["names"] == ["Day One Films"]
+
+
+# ── the 107 review: never drawn with anything else, nothing written outside, nothing sent out ────────────────────
+
+def test_a_style_studied_without_a_renderer_keeps_the_way_it_was_approved(kit):
+    """The 107 review's blocker: Save completed style and Improve graphics plan a finished study again. One approved
+    before 107 wrote no renderer and has no `made` answer: planned as code, a documentary became stick figures."""
+    drawn = tsm.profile({"generated": 0.9, "graphic": 0.1})
+    assert cm.plan_style(drawn, tsm.STYLES)["route"].get("coded")
+    kept = cm.plan_style(drawn, tsm.STYLES, code=False)
+    assert kept["route"]["engine"] == "pictures" and kept["overrides"]["look"].get("visuals") not in a2d.PLUGINS
+    stick = cm.plan_style(dart(), tsm.STYLES, code=False)
+    assert stick["route"]["engine"] == "animated2d" and not stick["route"].get("coded"), \
+        "a stick-fight channel from before 104 is still animated the way it was approved"
+    other = cm.plan_style(dart(), tsm.STYLES, code=False, answers={"made": cm.MADE_OTHER})
+    assert other["route"]["engine"] == "pictures", "pictures chosen instead of code stay chosen"
+
+
+def test_a_style_written_in_code_is_never_drawn_with_the_kits_stick_fights(tmp_path, monkeypatch):
+    coded = {"look": {"visuals": a2d.VISUALS, "animated2d": {}},
+             "cr_style_clone": {"learned_v2": {"route": {"engine": "animated2d", "coded": True}}}}
+    with pytest.raises(a2d.AnimationStopped, match="no renderer saved"):
+        a2d.renderer_for(coded, tmp_path)
+    monkeypatch.setattr(a2d, "available", lambda home=None: True)
+    assert "no renderer saved" in a2d.renderer_problem(coded, tmp_path)
+    missing = {"look": {"visuals": a2d.VISUALS,
+                        "animated2d": {"renderer": {"state": "missing", "why": "the study wrote no working renderer"}}}}
+    with pytest.raises(a2d.AnimationStopped, match="no working renderer"):
+        a2d.renderer_for(missing, tmp_path)
+    assert "couldn't write a working animation" in a2d.renderer_problem(missing, tmp_path)
+    assert a2d.renderer_problem({"look": {"animated2d": {}}}, tmp_path) == "", "a style from before 104 keeps its kit"
+
+
+def test_an_improved_copy_keeps_its_sources_renderer_as_last_saved(tmp_path):
+    code = "Kit.renderer({name: 'mine', frame() {}});"
+    digest = hashlib.sha256(code.encode()).hexdigest()
+    source = tmp_path / "assets" / "styles" / "learned" / "cr_clone_src"
+    source.mkdir(parents=True)
+    (source / "renderer-v3.js").write_text(code)
+    record = {"file": "styles/learned/cr_clone_src/renderer-v3.js", "sha256": digest, "version": 3, "state": "passed",
+              "from": "style_lab", "manifest": {"name": "mine"}}
+    style = a2d.carry({"name": "cr_clone_new", "look": {"animated2d": {}}}, record, tmp_path)
+    got = style["look"]["animated2d"]["renderer"]
+    assert got["file"] == "styles/learned/cr_clone_new/renderer-v1.js" and got["sha256"] == digest
+    assert got["carried_from"] == record["file"] and got["state"] == "passed"
+    assert a2d.renderer_for(style, tmp_path) == (code, {"name": "mine"}), "its own copy: the source may be deleted"
+    failed = a2d.carry({"name": "cr_clone_new2", "look": {}}, {"state": "failed", "why": "no draft drew"}, tmp_path)
+    assert failed["look"]["animated2d"]["renderer"] == {"state": "failed", "why": "no draft drew"}
+    (source / "renderer-v3.js").write_text(code + "// changed")
+    with pytest.raises(a2d.AnimationStopped, match="missing or changed"):
+        a2d.carry({"name": "cr_clone_new3"}, record, tmp_path)
+
+
+def test_a_video_keeps_the_renderer_it_started_with(tmp_path, monkeypatch):
+    """The 107 review: a Style Lab save in the middle of a video (or before resume_video) switched its renderer under
+    the cast it had designed, and a changed plates.prompt drew its quoted backdrops again."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(a2d, "HERE", tmp_path)
+    folder = tmp_path / "assets" / "styles" / "learned" / "cr_clone_x"
+    folder.mkdir(parents=True)
+
+    def version(n):
+        code = f"Kit.renderer({{name: 'x', version: {n}, frame() {{}}}});"
+        (folder / f"renderer-v{n}.js").write_text(code)
+        return code, {"file": f"styles/learned/cr_clone_x/renderer-v{n}.js", "version": n, "state": "passed",
+                      "sha256": hashlib.sha256(code.encode()).hexdigest(), "manifest": {"name": "x", "version": n}}
+    first, record = version(1)
+    look = {"visuals": a2d.VISUALS, "animated2d": {"renderer": record}}
+    engine = SimpleNamespace(STYLE_INFO={"cr_clone_x": {"look": look}}, _extra_block=lambda: "", step=lambda m: None)
+    job = tmp_path / "job"
+    assert a2d._style_renderer(engine, "cr_clone_x", job) == (first, record["manifest"])
+    monkeypatch.setattr(a2d, "_prompt", lambda name, home=None: "cast [SCRIPT]")
+    asked = []
+    engine.claude = lambda prompt, model, **kw: asked.append(prompt) or json.dumps(
+        {"cast": {"bean": {"name": "Bean", "color": "#ff0000"}}, "sets": {"street": {"prompt": "a street"}}})
+    cast = a2d.cast_and_sets(engine, "a script", job, "cr_clone_x", "t", record["manifest"])
+    second, look["animated2d"]["renderer"] = version(2)              # Style Lab saves a new version mid-video
+    assert a2d._style_renderer(engine, "cr_clone_x", job)[0] == first, "the version the video started with"
+    assert a2d.cast_and_sets(engine, "a script", job, "cr_clone_x", "t", record["manifest"]) == cast and len(asked) == 1
+    assert a2d._style_renderer(engine, "cr_clone_x", tmp_path / "next")[0] == second, "new videos use the new one"
+    (job / "animated2d" / "renderer.js").write_text(first + "//")
+    with pytest.raises(a2d.AnimationStopped, match="changed on disk"):
+        a2d._style_renderer(engine, "cr_clone_x", job)
+
+
+def test_a_renderers_sounds_are_checked_again_before_anything_is_written(tmp_path, monkeypatch):
+    """The 107 review: the page's answer is the renderer's to shape (it can replace Object.entries or RegExp before
+    the page's own checks run), so Python checks every name, type and size again, and writes only inside out_dir."""
+    import base64
+    from types import SimpleNamespace
+    pcm = base64.b64encode(b"\x00\x10" * 4410).decode()
+    made = {"thud": {"pcm": pcm, "rate": 44100, "peak": 0.5},
+            "../../escape": {"pcm": pcm, "rate": 44100, "peak": 0.5},
+            "/tmp/absolute": {"pcm": pcm, "rate": 44100, "peak": 0.5},
+            "Loud": {"pcm": pcm, "rate": 44100, "peak": 0.5},
+            "long": {"pcm": base64.b64encode(b"\x00\x10" * int(44100 * 4.2)).decode(), "rate": 44100, "peak": 0.5},
+            "rate": {"pcm": pcm, "rate": "44100", "peak": 0.5},
+            "junk": {"pcm": "not base64!", "rate": 44100, "peak": 0.5},
+            "row": "not a sound"}
+
+    class Box:
+        def __init__(self, *a, **k):
+            self.page = SimpleNamespace(evaluate=lambda script: made)
+
+        def error(self):
+            return ""
+
+        def close(self):
+            pass
+    monkeypatch.setattr(a2d, "_Sandbox", Box)
+    monkeypatch.setattr(a2d, "page", lambda *a, **k: "")
+    out = tmp_path / "a" / "b" / "out"
+    files, problems = a2d.make_sounds("code", out)
+    assert set(files) == {"thud"} and [p.name for p in out.iterdir()] == ["thud.wav"]
+    assert [p.name for p in tmp_path.rglob("*.wav")] == ["thud.wav"], "nothing written anywhere else"
+    assert len(problems) == len(made) - 1 and any("longer than 4 s" in p for p in problems)
+
+
+def test_a_renderer_has_no_webrtc_or_name_lookup_way_out(home):
+    """The 107 review: requests are refused, but WebRTC (UDP to a STUN server) and DNS lookups are side channels a
+    renderer could use. The sandbox's browser sends no UDP and looks up no names."""
+    assert set(a2d.NO_NET_ARGS) == {"--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+                                    "--host-resolver-rules=MAP * ~NOTFOUND"}
+    sneaky = (r"""window.__cands = null;
+(async () => {
+  try {
+    const pc = new RTCPeerConnection({iceServers: [{urls: "stun:127.0.0.1:9"}]}), got = [];
+    pc.createDataChannel("x");
+    pc.onicecandidate = (e) => { if (e.candidate && e.candidate.candidate) got.push(e.candidate.candidate); };
+    await pc.setLocalDescription(await pc.createOffer());
+    await new Promise((r) => setTimeout(r, 1500));
+    window.__cands = got;
+  } catch (e) { window.__cands = ["refused: " + e]; }
+})();
+""" + BEAN)
+
+    def run():
+        box = a2d._Sandbox(a2d.page({**BEAN_SCENE, "width": 640, "height": 360}, sneaky, home), 640, 360)
+        try:
+            for _ in range(75):
+                cands = box.page.evaluate("window.__cands")
+                if cands is not None:
+                    return cands
+                time.sleep(0.2)
+            return ["no answer"]
+        finally:
+            box.close()
+    cands = _chromium(run)
+    assert not any("typ" in c for c in cands), cands

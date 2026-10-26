@@ -243,6 +243,19 @@ def _stills(sections, measured, folder: Path, video_id: str, per_video: int = 4)
                        capture_output=True, timeout=60)
 
 
+def _vertical(folder: Path):
+    """The share of the look's frames that are portrait (a Shorts channel: 1.0), or None without frames."""
+    from PIL import Image
+    sizes = []
+    for f in sorted(Path(folder).glob("*.jpg")):
+        try:
+            with Image.open(f) as im:
+                sizes.append(im.size)
+        except OSError:
+            continue
+    return round(sum(1 for w, h in sizes if h > w * 1.1) / len(sizes), 2) if sizes else None
+
+
 def _transcript(video_id, work):
     try:
         import youtube
@@ -332,6 +345,9 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
             ref["watch"] = watched.get(ref["id"]) or {"windows": [], "missing": ["not watched"]}
         progress("profile")
         profile = cr_style_profile.build(built)
+        tall = _vertical(path / "frames")
+        if tall is not None:                                   # a Shorts channel's videos are made vertical too
+            profile.setdefault("format", {})["vertical"] = {"value": tall, "confidence": 0.95, "from": ["measured"]}
         mapping = cr_style_map.plan_style(profile, _styles(home))
         _write(path / "references.json", {"references": built})
         saved.update(state="done", phase="done", profile=profile, mapping=mapping, finished_at=now(),
@@ -357,6 +373,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Look at approved reference videos before a style study.")
     parser.add_argument("--look", required=True)
     args = parser.parse_args(argv)
+    import cr_trust
+    cr_trust.install()
     import cr_bridge
     run(HOME, args.look, call=cr_bridge.call)
     return 0

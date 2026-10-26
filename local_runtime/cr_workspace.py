@@ -19,6 +19,7 @@ import cr_bridge
 import cr_favicon
 import cr_presentation
 import cr_preview
+import cr_recover
 import cr_style_clone
 import cr_trash
 
@@ -133,6 +134,8 @@ def install(studio, activity, *, token, home=None):
             info = styles.get(row.get("name")) if isinstance(styles, dict) else None
             # a recipe that shows the creator's own comic panels instead of drawing pictures (cr_panels)
             row["panels"] = bool(isinstance(info, dict) and isinstance(info.get("look"), dict) and info["look"].get("panels"))
+            import cr_captions
+            row["captions"] = cr_captions.style_default(info)       # Create's captions switch starts at this
             # a story recipe's pictures a minute, with its quality floor (create page slider)
             import cr_media
             span = None if row["panels"] else cr_media.picture_range(info if isinstance(info, dict) else {})
@@ -145,6 +148,9 @@ def install(studio, activity, *, token, home=None):
             cost = shorts.get("cost_usd") if isinstance(shorts, dict) else None
             row["short_cost_usd"] = (float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool)
                                      and 0 <= cost < 100 else None)
+            # a style drawn by its own renderer: its background pictures and its own music score, for quotes
+            import cr_animated2d
+            row["coded_media"] = cr_animated2d.media_usd(info) if isinstance(info, dict) else {}
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,
@@ -154,6 +160,8 @@ def install(studio, activity, *, token, home=None):
         # what Research footage may watch for each length, 1 to 60 minutes (Create says it before a video starts)
         import cr_watch
         data["footage_watch"] = [cr_watch.budget(minutes) for minutes in range(1, 61)]
+        # the last video's footage watching when Kie's watcher failed in it (moved to ChannelRecipe's, or stopped)
+        data["footage_watcher"] = cr_watch.last_outcome(home)
         return cr_presentation.plain_copy(data)
 
     def selected_preset():
@@ -491,7 +499,6 @@ def install(studio, activity, *, token, home=None):
         try:
             local_access()
             import cr_media
-            live = getattr(studio, "JOBS", {}) or {}
             rows = []
             for job in (studio.mv.list_jobs() if hasattr(studio.mv, "list_jobs") else []):
                 try:
@@ -505,9 +512,10 @@ def install(studio, activity, *, token, home=None):
                     saved = _read(marker)
                     project_id = saved.get("id")
                     # the same rule as the project's Resume button (cr_workspace_project), so every card can resume
+                    # a saved "running" with no live job is stale: that video's Studio closed mid-run (cr_recover)
                     if (not isinstance(project_id, str) or not _PROJECT.fullmatch(project_id)
                             or saved.get("brain_mode") != "claudecode" or saved.get("purpose", "video") != "video"
-                            or ((live.get(slug) or {}).get("state") or saved.get("status")) in {"done", "queued", "running"}):
+                            or cr_recover.effective_state(studio, slug, saved) in {"done", "queued", "running", "held"}):
                         continue
                     spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
                     title_file = job / "title.txt"
@@ -774,11 +782,12 @@ def install(studio, activity, *, token, home=None):
             project_id = saved.get("id")
             valid = isinstance(project_id, str) and bool(_PROJECT.fullmatch(project_id))
             live = getattr(studio, "JOBS", {}).get(slug) or {}
-            state = _text(live.get("state") or saved.get("status"), 32)
+            # a saved "running" with no live job is stale: that video's Studio closed mid-run, so it can resume
+            state = _text(cr_recover.effective_state(studio, slug, saved), 32)
             spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
             available = (valid and saved.get("brain_mode") == "claudecode"
                          and saved.get("purpose", "video") == "video"
-                         and state not in {"done", "queued", "running"})
+                         and state not in {"done", "queued", "running", "held"})
             qc = _read(job / "sound_qc.json") if (job / "sound_qc.json").is_file() else {}
             sound = [{"state": _text(r.get("state"), 8), "text": _text(r.get("text"), 200)}
                      for r in (qc.get("lines") or []) if isinstance(r, dict)][:4]

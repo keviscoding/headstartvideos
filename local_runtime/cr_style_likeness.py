@@ -124,7 +124,7 @@ def _designed(style) -> dict:
 def _animated(style) -> dict:
     """The animation conventions of a style whose characters are animated in code (cr_animated2d), else None."""
     look = style.get("look") or {}
-    if look.get("visuals") == "cr_animated2d":
+    if look.get("visuals") in ("cr_animated2d", "cr_animated3d"):
         return look.get("animated2d") if isinstance(look.get("animated2d"), dict) else {}
     return None
 

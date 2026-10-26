@@ -162,7 +162,7 @@ def test_kie_motion_cost_choice_and_pending_task_are_preserved_on_resume(hub, mo
     monkeypatch.setattr(media.requests, "post", lambda *a, **k: creates.append(k["json"]) or
                         response({"code": 200, "data": {"taskId": "motion-task"}}))
     monkeypatch.setattr(media.requests, "get", lambda *a, **k: (_ for _ in ()).throw(media.requests.ReadTimeout()))
-    clock = iter(range(0, 12000, 2000))
+    clock = iter(range(0, 10 ** 7, 2000))                    # Studio checks an accepted task for 2 hours, then stops
     monkeypatch.setattr(media.time, "monotonic", lambda: next(clock))
     for _ in range(2):
         with pytest.raises(media.AccountStop, match="pending"):
@@ -558,6 +558,11 @@ def test_a_shorts_voice_rides_out_a_passing_kie_timeout_like_a_long_video(hub, m
     media.run("narration", dialogue, hub / "voice_raw.wav", model="google/gemini-3-8-flash-tts", log=said.append)
     assert len(creates) == 2 and creates[0] == creates[1] and (hub / "voice_raw.wav").read_bytes() == b"generated media"
     assert pauses == [30] and any("trying again in 30 s" in line for line in said)
+    # a page waiting on a voice (Setup's preview) gets one try
+    once = kie_tasks(monkeypatch, [timeout, "success"])
+    with pytest.raises(media.TaskFailed):
+        media.run("narration", dialogue, hub / "preview.wav", model="google/gemini-3-8-flash-tts", retry=False)
+    assert len(once) == 1
     # a picture's failure is never submitted again here (pictures keep their own model fallbacks)
     picture = kie_tasks(monkeypatch, [timeout, "success"])
     with pytest.raises(media.TaskFailed):
