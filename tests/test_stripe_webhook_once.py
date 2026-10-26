@@ -153,8 +153,9 @@ def test_on_postgres_the_lock_comes_first_and_the_record_after_the_event_applied
     conn = _PgConn(seen=False)
     _pg(monkeypatch, conn)
     with db.stripe_event_once("evt_1", "invoice.paid") as fresh:
-        assert fresh and len(conn.sql) == 2, "nothing recorded while the event applies"
-    lock, check, record = conn.sql
+        assert fresh and len(conn.sql) == 3, "nothing recorded while the event applies"
+    wait, lock, check, record = conn.sql
+    assert wait == ("SET LOCAL lock_timeout = '20000ms'", ()), "the lock is never waited for for ever"
     assert lock == (f"SELECT pg_advisory_xact_lock({db.STRIPE_EVENT_LOCK})", ())
     assert "SELECT 1 FROM stripe_events WHERE event_id = %s" in check[0] and check[1] == ("evt_1",)
     assert "ON CONFLICT (event_id) DO NOTHING" in record[0] and record[1][:2] == ("evt_1", "invoice.paid")
@@ -172,3 +173,54 @@ def test_on_postgres_a_failed_or_repeated_event_records_nothing(monkeypatch):
     with db.stripe_event_once("evt_3", "invoice.paid") as fresh:
         assert fresh is False
     assert not any("INSERT" in sql for sql, _ in repeat.sql)
+
+
+class _Busy(Exception):
+    sqlstate = "55P03"                                       # Postgres lock_not_available: lock_timeout ran out
+
+
+def test_on_postgres_a_lock_wait_that_runs_out_is_busy_not_an_error(monkeypatch):
+    conn = _PgConn(seen=False)
+
+    def execute(sql, params=()):
+        conn.sql.append((sql, params))
+        if "pg_advisory_xact_lock" in sql:
+            raise _Busy("canceling statement due to lock timeout")
+        return conn
+    conn.execute = execute
+    _pg(monkeypatch, conn)
+    with pytest.raises(db.StripeEventBusy):
+        with db.stripe_event_once("evt_4", "invoice.paid", lock_timeout_s=3.5):
+            pytest.fail("never applied without the lock")
+    assert conn.sql[0] == ("SET LOCAL lock_timeout = '3500ms'", ())
+
+
+def test_a_delivery_that_cant_get_this_containers_turn_answers_503_and_applies_on_the_retry(stripe_sends, monkeypatch):
+    """One stalled event must not queue every later delivery for ever: after the wait, 503, and Stripe retries."""
+    user_id = _customer()
+    event = _topup(user_id)
+    monkeypatch.setattr(server, "STRIPE_LOCK_WAIT_SECONDS", 0.2)
+    assert server._stripe_event_lock.acquire(timeout=5)
+    try:
+        started = time.monotonic()
+        busy = stripe_sends(event)
+        assert busy.status_code == 503 and busy.headers["retry-after"] == "30" and time.monotonic() - started < 3
+    finally:
+        server._stripe_event_lock.release()
+    assert db.get_user_by_id(user_id)["credits"] == 0, "nothing applied while busy"
+    assert stripe_sends(event).json() == {"ok": True} and db.get_user_by_id(user_id)["credits"] == 5
+
+
+def test_a_delivery_that_cant_get_the_database_lock_answers_503_and_frees_its_turn(stripe_sends, monkeypatch):
+    waits = []
+
+    @contextmanager
+    def busy(event_id, event_type="", lock_timeout_s=20.0):
+        waits.append(lock_timeout_s)
+        raise db.StripeEventBusy("held elsewhere")
+        yield                                                    # pragma: no cover
+    monkeypatch.setattr(server, "stripe_event_once", busy)
+    answer = stripe_sends(_topup(_customer()))
+    assert answer.status_code == 503 and waits and 1.0 <= waits[0] <= server.STRIPE_LOCK_WAIT_SECONDS
+    assert server._stripe_event_lock.acquire(timeout=1), "this container's turn was given back"
+    server._stripe_event_lock.release()

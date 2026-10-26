@@ -22,6 +22,7 @@ from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Header,
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from fastapi.concurrency import run_in_threadpool
 from sse_starlette.sse import EventSourceResponse
 from contextlib import asynccontextmanager
 
@@ -243,12 +244,19 @@ async def _app_lifespan(app: FastAPI):
     if _startup_fn is not None:
         await _startup_fn()
     try:
-        from webapp.mcp_server import mcp as _cr_mcp
-        async with _cr_mcp.session_manager.run():
+        try:
+            from webapp.mcp_server import mcp as _cr_mcp
+            async with _cr_mcp.session_manager.run():
+                yield
+        except Exception as e:
+            print(f"[mcp] running without session manager: {e}")
             yield
-    except Exception as e:
-        print(f"[mcp] running without session manager: {e}")
-        yield
+    finally:
+        try:
+            from webapp.frontier_studio import close_relay_client
+            await close_relay_client()                          # the media relay's shared connections to Kie
+        except Exception as e:
+            print(f"[relay] closing the shared client failed: {e}")
 
 
 # The API reference stays private: set CR_API_DOCS=1 to serve /docs and /openapi.json (local development).
@@ -533,10 +541,11 @@ from webapp.database import (
     append_niche_hunt_progress, get_niche_hunt_run_by_job_id, get_latest_running_niche_hunt,
     cancel_niche_hunt_run, cancel_all_running_niche_hunts,
     ensure_user_mcp_api_key, rotate_user_mcp_api_key, get_user_by_mcp_api_key,
-    stripe_event_once, cancel_cook_job_with_refund,
+    stripe_event_once, StripeEventBusy, cancel_cook_job_with_refund,
 )
 from webapp import storage
 from webapp import storyboard_staging as _sb_staging
+from webapp import stripe_customers as _stripe_customers
 from webapp import job_queue
 from webapp import plans
 from webapp.cook_runner import run_cook_job, hydrate_job_from_row, job_credits_charged
@@ -1209,12 +1218,6 @@ def _invoice_subscription_id(invoice: dict) -> str:
     return ""
 
 
-def _stripe_customer_key(user_id) -> str:
-    """The idempotency key for creating an account's Stripe customer: one customer per account, whichever web
-    container or page asks first (Stripe keeps a key for 24 hours)."""
-    return f"cr-customer-{int(user_id)}"
-
-
 def _find_user_for_stripe(*, sub_id: str = "", customer_id: str = "") -> dict | None:
     row = get_user_by_sub_id(sub_id) if sub_id else None
     if row:
@@ -1260,12 +1263,8 @@ def create_checkout(req: CheckoutRequest, request: Request):
     trial_days = int(getattr(config, "FREE_TRIAL_DAYS", 0) or 0)
     want_skip_trial = bool(req.skip_trial) or already_trialed or trial_days <= 0
 
-    customer_id = user.get("stripe_customer_id")
-    if not customer_id:
-        # Two checkouts at once (a double click reaching both web containers) get the same Stripe customer.
-        customer = stripe.Customer.create(email=user["email"], idempotency_key=_stripe_customer_key(user["id"]))
-        customer_id = customer.id
-        update_user(user["id"], stripe_customer_id=customer_id)
+    # One Stripe customer per account, even for two checkouts at once (webapp/stripe_customers.py); never a failure.
+    customer_id = _stripe_customers.customer_for(stripe, user)
 
     base_url = str(request.base_url).rstrip("/")
     session_kwargs = {
@@ -1326,12 +1325,8 @@ def create_topup(req: TopupRequest, request: Request):
     if not plans.is_paid_plan(user.get("plan")):
         raise HTTPException(403, "Top-ups require an active subscription.")
 
-    customer_id = user.get("stripe_customer_id")
-    if not customer_id:
-        # Two checkouts at once (a double click reaching both web containers) get the same Stripe customer.
-        customer = stripe.Customer.create(email=user["email"], idempotency_key=_stripe_customer_key(user["id"]))
-        customer_id = customer.id
-        update_user(user["id"], stripe_customer_id=customer_id)
+    # One Stripe customer per account, even for two checkouts at once (webapp/stripe_customers.py); never a failure.
+    customer_id = _stripe_customers.customer_for(stripe, user)
 
     base_url = str(request.base_url).rstrip("/")
     session = stripe.checkout.Session.create(
@@ -1350,7 +1345,8 @@ async def stripe_webhook(request: Request):
     """Handle Stripe webhook events. Only the body is read here: checking the signature and applying the event (the
     database, Stripe and email calls) runs in a worker thread, so a slow call never holds up the event loop."""
     payload = await request.body()
-    return await asyncio.to_thread(_stripe_webhook_sync, payload, request.headers.get("stripe-signature", ""))
+    # FastAPI's threadpool (WEB_SYNC_THREADS), not the loop's default executor the progress streams poll through
+    return await run_in_threadpool(_stripe_webhook_sync, payload, request.headers.get("stripe-signature", ""))
 
 
 def _stripe_webhook_sync(payload: bytes, sig: str) -> dict:
@@ -1380,6 +1376,10 @@ _STRIPE_EVENTS_APPLIED = frozenset({
 })
 # One webhook at a time in this container: each one waiting for the database lock holds a pooled connection.
 _stripe_event_lock = threading.Lock()
+# The longest a delivery waits for its turn (this container's lock, then the database's, one budget): past it the
+# answer is 503 and Stripe delivers it again later, instead of a stalled event queueing every delivery for ever.
+STRIPE_LOCK_WAIT_SECONDS = 20.0
+_STRIPE_BUSY = "Another billing event is being applied; Stripe will deliver this one again."
 
 
 def _apply_stripe_event_once(event_dict: dict) -> dict:
@@ -1394,12 +1394,25 @@ def _apply_stripe_event_once(event_dict: dict) -> dict:
     if evt_type not in _STRIPE_EVENTS_APPLIED:
         print(f"[stripe] webhook {evt_type} id={evt_id} (not used)")
         return {"ok": True}
-    with _stripe_event_lock:
-        with stripe_event_once(evt_id, evt_type) as fresh:
-            if not fresh:
-                print(f"[stripe] webhook {evt_type} id={evt_id} already applied; skipped")
-                return {"ok": True, "duplicate": True}
-            return _apply_stripe_event(event_dict)
+    started = time.monotonic()
+    if not _stripe_event_lock.acquire(timeout=STRIPE_LOCK_WAIT_SECONDS):
+        print(f"[stripe] webhook {evt_type} id={evt_id} waited {STRIPE_LOCK_WAIT_SECONDS:.0f}s for this container's "
+              "turn; 503 so Stripe retries")
+        raise HTTPException(503, _STRIPE_BUSY, headers={"Retry-After": "30"})
+    try:
+        left = max(1.0, STRIPE_LOCK_WAIT_SECONDS - (time.monotonic() - started))
+        try:
+            with stripe_event_once(evt_id, evt_type, lock_timeout_s=left) as fresh:
+                if not fresh:
+                    print(f"[stripe] webhook {evt_type} id={evt_id} already applied; skipped")
+                    return {"ok": True, "duplicate": True}
+                return _apply_stripe_event(event_dict)
+        except StripeEventBusy:
+            print(f"[stripe] webhook {evt_type} id={evt_id} waited {left:.0f}s for the database lock; 503 so Stripe "
+                  "retries")
+            raise HTTPException(503, _STRIPE_BUSY, headers={"Retry-After": "30"}) from None
+    finally:
+        _stripe_event_lock.release()
 
 
 def _apply_stripe_event(event_dict: dict) -> dict:

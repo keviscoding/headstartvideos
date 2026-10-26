@@ -153,11 +153,8 @@ def checkout_session(user: dict, usd: int, base_url: str, *, stripe=None):
             raise HTTPException(503, "Payments aren't set up yet.")
         stripe_module.api_key = config.STRIPE_SECRET_KEY
         stripe = stripe_module
-    customer_id = user.get("stripe_customer_id")
-    if not customer_id:
-        # one customer per account however many top-ups start at once (the same key as the site's checkouts)
-        customer_id = stripe.Customer.create(email=user["email"], idempotency_key=f"cr-customer-{int(user['id'])}").id
-        db.update_user(user["id"], stripe_customer_id=customer_id)
+    from webapp import stripe_customers
+    customer_id = stripe_customers.customer_for(stripe, user)       # one per account, the site's checkouts' key
     session = stripe.checkout.Session.create(
         customer=customer_id, mode="payment",
         line_items=[{"price_data": {"currency": "usd", "unit_amount": usd * 100,

@@ -383,6 +383,35 @@ def test_kies_files_come_through_the_relay_for_a_studio_that_cant_reach_kies_fil
     assert len(asked) == 2, "nothing else is ever fetched"
 
 
+def test_relays_share_one_client_per_event_loop_closed_at_shutdown():
+    """A client per relay built a TLS context on the event loop each time (about 9 ms); one is shared and kept open
+    between relays, and the server closes it when it stops."""
+    import asyncio
+
+    async def life():
+        first, again = studio.relay_client(), studio.relay_client()
+        assert first is again and not first.is_closed
+        await studio.close_relay_client()
+        assert first.is_closed and studio.relay_client() is not first
+        await studio.close_relay_client()
+    asyncio.run(life())
+
+
+def test_a_finished_relay_leaves_the_shared_client_open(env, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    shared = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"voice")))
+    monkeypatch.setattr(studio, "relay_client", lambda: shared)
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: user(1, "daily"), prefix="/api/studio"))
+    client = TestClient(app)
+    for _ in range(2):
+        got = client.get("/api/studio/media-relay", params={"url": "https://tempfile.aiquickdraw.com/r/v.mp3"})
+        assert got.status_code == 200 and got.content == b"voice"
+    assert not shared.is_closed
+
+
 def test_a_relay_never_follows_a_redirect_and_frees_its_slot_on_every_answer(env, monkeypatch):
     """Kie's host answering a redirect, an error or a file over the limit: refused, and the account's six slots all
     come back (a seventh relay still gets through)."""

@@ -183,3 +183,88 @@ def test_a_completed_checkout_stores_the_customer_it_paid_as(db, monkeypatch):
                                                          "metadata": {"user_id": str(uid), "topup_credits": "5"}}}})
     row = db.get_user_by_id(uid)
     assert row["stripe_customer_id"] == "cus_paid" and row["credits"] == 5
+
+
+class IdempotencyError(Exception):
+    """Stripe's answer to a second request with a key whose first request is still in flight (409)."""
+
+
+class _BusyStripe:
+    """Customer.create answers IdempotencyError `busy` times, then the customer (as Stripe replays the first answer)."""
+
+    def __init__(self, busy, on_busy=None):
+        self.busy, self.on_busy, self.calls = busy, on_busy, []
+        outer = self
+
+        class Customer:
+            @staticmethod
+            def create(**kw):
+                outer.calls.append(kw)
+                if outer.busy and "idempotency_key" in kw:    # only a request with the same key is refused
+                    outer.busy -= 1
+                    if outer.on_busy:
+                        outer.on_busy()
+                    raise IdempotencyError("There is currently another in-progress request using this Idempotent Key")
+                return types.SimpleNamespace(id="cus_" + ("keyed" if "idempotency_key" in kw else "unkeyed"))
+        self.Customer, self.IdempotencyError = Customer, IdempotencyError
+
+
+def _member(db):
+    uid = _user(db, credits=0)
+    return {"id": uid, "email": "a@x.test", "stripe_customer_id": ""}
+
+
+def test_a_double_click_whose_first_request_is_in_flight_waits_and_gets_the_same_customer(db):
+    from webapp import stripe_customers
+    member, stripe = _member(db), _BusyStripe(busy=2)
+    assert stripe_customers.customer_for(stripe, member, sleep=lambda s: None) == "cus_keyed"
+    assert len(stripe.calls) == 3 and all(c["idempotency_key"] == f"cr-customer-{member['id']}" for c in stripe.calls)
+    assert db.get_user_by_id(member["id"])["stripe_customer_id"] == "cus_keyed"
+
+
+def test_a_double_click_uses_the_customer_the_first_request_stored(db):
+    from webapp import stripe_customers
+    member = _member(db)
+    stripe = _BusyStripe(busy=5, on_busy=lambda: db.update_user(member["id"], stripe_customer_id="cus_first"))
+    assert stripe_customers.customer_for(stripe, member, sleep=lambda s: None) == "cus_first"
+    assert len(stripe.calls) == 1, "no second customer"
+
+
+def test_a_checkout_never_fails_on_a_busy_key(db, monkeypatch):
+    """Stripe stays busy for the whole wait: one customer without the key rather than a failed checkout."""
+    from webapp import stripe_customers
+    member, stripe = _member(db), _BusyStripe(busy=99)
+    naps = []
+    assert stripe_customers.customer_for(stripe, member, sleep=naps.append) == "cus_unkeyed"
+    assert len(naps) == stripe_customers.ATTEMPTS - 1 and "idempotency_key" not in stripe.calls[-1]
+
+
+def test_any_other_stripe_error_still_reaches_the_customer(db):
+    from webapp import stripe_customers
+
+    class CardError(Exception):
+        pass
+
+    class Stripe:
+        class Customer:
+            @staticmethod
+            def create(**kw):
+                raise CardError("declined")
+    with pytest.raises(CardError):
+        stripe_customers.customer_for(Stripe, _member(db), sleep=lambda s: None)
+
+
+def test_checkout_and_topup_ride_out_a_busy_key(db, monkeypatch):
+    stripe = _BusyStripe(busy=1)
+    stripe.checkout = types.SimpleNamespace(Session=types.SimpleNamespace(
+        create=lambda **kw: types.SimpleNamespace(url="https://checkout.stripe.test/s")))
+    stripe.api_key = ""
+    monkeypatch.setitem(sys.modules, "stripe", stripe)
+    monkeypatch.setattr(server.config, "STRIPE_SECRET_KEY", "sk_test_x")
+    monkeypatch.setattr(server.config, "FREE_TRIAL_DAYS", 0)
+    monkeypatch.setattr(server.plans, "price_for", lambda tier, interval: "price_x")
+    monkeypatch.setattr("webapp.stripe_customers.time.sleep", lambda s: None)
+    member = _member(db)
+    monkeypatch.setattr(server, "_current_user", lambda request: {**member, "plan": "free", "trial_used": 0})
+    assert server.create_checkout(server.CheckoutRequest(plan="studio_pro_monthly"), _Req())["url"]
+    assert db.get_user_by_id(member["id"])["stripe_customer_id"] == "cus_keyed"

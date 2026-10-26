@@ -16,6 +16,7 @@ import re
 import secrets
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Literal
 
@@ -1241,9 +1242,30 @@ MEDIA_UPLOAD_PATHS = ("/api/file-stream-upload", "/api/file-base64-upload")
 MEDIA_UPLOAD_PARALLEL, MEDIA_UPLOAD_MAX_BYTES = 4, 200 * 1024 * 1024
 
 
+# One HTTP client for every relayed download in this process (one per event loop: a client belongs to the loop it
+# runs on). Built per relay, each one made a fresh TLS context on the event loop (about 9 ms: twenty parallel fetches
+# held the loop 0.2 s) and a new connection to Kie's host; shared, both are reused. Closed when the server stops.
+_relay_clients: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
 def relay_client():
-    """The HTTP client for one relayed download from Kie's file host (tests swap in a stand-in transport)."""
-    return httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0, pool=10.0))
+    """The shared HTTP client for relayed downloads from Kie's file host (tests swap in a stand-in transport)."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    client = _relay_clients.get(loop)
+    if client is None or client.is_closed:
+        client = _relay_clients[loop] = httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0, pool=10.0),
+            limits=httpx.Limits(max_connections=256, max_keepalive_connections=32))
+    return client
+
+
+async def close_relay_client() -> None:
+    """At shutdown: close this event loop's shared relay client (its connections to Kie's host)."""
+    import asyncio
+    client = _relay_clients.pop(asyncio.get_running_loop(), None)
+    if client is not None:
+        await client.aclose()
 
 
 def studio_access(session_user):
@@ -1469,7 +1491,6 @@ def make_router(session_user, *, prefix="/api/frontier"):
         except BaseException as error:
             if upstream is not None:
                 await upstream.aclose()
-            await client.aclose()
             slot.release()
             if isinstance(error, httpx.HTTPError):
                 raise HTTPException(502, "Kie's file host didn't answer. Try again shortly.") from None
@@ -1490,8 +1511,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
                         break
                     yield chunk
             finally:
-                await upstream.aclose()
-                await client.aclose()
+                await upstream.aclose()                         # the connection goes back to the shared client
                 slot.release()
         return StreamingResponse(chunks(), status_code=upstream.status_code, headers=out,
                                  media_type=upstream.headers.get("Content-Type") or "application/octet-stream")

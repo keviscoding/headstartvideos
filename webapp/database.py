@@ -355,10 +355,14 @@ _POOL = None
 _POOL_LOCK = threading.Lock()
 
 
+DB_POOL_MAX_FLOOR = 2
+
+
 def _pool_max() -> int:
-    """DB_POOL_MAX from the environment (at least 1); a missing or unreadable value keeps the default."""
+    """DB_POOL_MAX from the environment, at least 2; a missing or unreadable value keeps the default. One connection
+    could deadlock the site: the Stripe webhook holds one for its lock while applying the event needs another."""
     try:
-        return max(1, int(os.getenv("DB_POOL_MAX", "") or DB_POOL_MAX_DEFAULT))
+        return max(DB_POOL_MAX_FLOOR, int(os.getenv("DB_POOL_MAX", "") or DB_POOL_MAX_DEFAULT))
     except ValueError:
         return DB_POOL_MAX_DEFAULT
 
@@ -426,15 +430,28 @@ def schema_lock(conn, name: str = "core") -> None:
 STRIPE_EVENT_LOCK = 726346117
 
 
+class StripeEventBusy(Exception):
+    """Another Stripe event held the lock longer than this one may wait: answer 503 and Stripe retries it."""
+
+
 @contextmanager
-def stripe_event_once(event_id: str, event_type: str = ""):
+def stripe_event_once(event_id: str, event_type: str = "", lock_timeout_s: float = 20.0):
     """`with stripe_event_once(id, type) as fresh:` fresh is False when this event already applied. When it is True,
     the block applies the event and, once it finishes without an error, the id is recorded (an error records nothing,
     so Stripe's retry applies it). The advisory lock is held on one connection for the whole block, so events apply
-    one after another across containers, in the order they took the lock. Without an id nothing is recorded."""
+    one after another across containers, in the order they took the lock. Without an id nothing is recorded.
+
+    The lock is waited for at most `lock_timeout_s` (StripeEventBusy after that): one stalled event must never queue
+    every later delivery and retry on both containers, each holding a worker thread, for ever."""
     with _conn() as conn:
         if IS_PG:
-            conn.execute(f"SELECT pg_advisory_xact_lock({STRIPE_EVENT_LOCK})")
+            conn.execute(f"SET LOCAL lock_timeout = '{max(1, int(lock_timeout_s * 1000))}ms'")
+            try:
+                conn.execute(f"SELECT pg_advisory_xact_lock({STRIPE_EVENT_LOCK})")
+            except Exception as error:
+                if getattr(error, "sqlstate", "") == "55P03":               # lock_not_available: the wait ran out
+                    raise StripeEventBusy("another Stripe event holds the lock") from None
+                raise
         seen = event_id and conn.execute(_q("SELECT 1 FROM stripe_events WHERE event_id = ?"),
                                          (event_id,)).fetchall()
         if seen:

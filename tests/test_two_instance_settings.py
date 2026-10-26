@@ -48,8 +48,9 @@ def pool(monkeypatch):
     return make
 
 
-@pytest.mark.parametrize("env,size", [(None, 12), ("6", 6), ("2", 2), ("lots", 12), ("0", 1)])
-def test_the_pool_honours_db_pool_max(pool, monkeypatch, env, size):
+@pytest.mark.parametrize("env,size", [(None, 12), ("6", 6), ("2", 2), ("lots", 12), ("1", 2), ("0", 2)])
+def test_the_pool_honours_db_pool_max_but_never_goes_below_two(pool, monkeypatch, env, size):
+    """One connection would deadlock the webhook: its lock holds one while applying the event needs another."""
     if env is None:
         monkeypatch.delenv("DB_POOL_MAX", raising=False)
     else:
