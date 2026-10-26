@@ -11,25 +11,26 @@ Work through these steps in order. Check before installing; skip anything that
 already passes.
 
 1. **Find their computer.** Use `uname -s` (Mac/Linux) or check for Windows.
-2. **Check the tools Studio needs:**
-   - Python 3.10 or newer (3.13 recommended, and required for optional Fast mode):
-     `python3 --version` on Mac, `py -3 --version` or `python --version` on Windows.
-   - Node.js LTS: `node --version`.
-   - FFmpeg and ffprobe with subtitle support: `ffmpeg -hide_banner -filters`
-     must list `subtitles` and `ass`; `ffprobe -version` must run.
-3. **Install what's missing.**
-   - **Mac:** if Homebrew exists (`brew --version`), use
-     `brew install python@3.13 node ffmpeg-full`. If Homebrew is missing, its
-     installer needs the customer's Mac password, so ask them to run the
-     command from https://brew.sh themselves in Terminal, then continue.
-     A python.org installer also works for Python.
-   - **Windows:** use winget, one package at a time:
-     `winget install -e --id Python.Python.3.13`,
-     `winget install -e --id OpenJS.NodeJS.LTS`,
-     `winget install -e --id Gyan.FFmpeg`.
-     New tools appear on PATH only in a new terminal; tell the customer that,
-     and re-check in a new shell before moving on.
+2. **Check Python, the one tool Studio can't install itself** (its launcher
+   needs it first): Python 3.10 or newer (3.13 recommended, and required for
+   optional Fast mode): `python3 --version` on Mac, `py -3 --version` or
+   `python --version` on Windows.
+3. **Install Python if it's missing.**
+   - **Mac:** the python.org installer (https://www.python.org/downloads/macos/):
+     the customer opens it and clicks through; it asks for their Mac password
+     (that is Apple's installer). With Homebrew (`brew --version`),
+     `brew install python@3.13` works too.
+   - **Windows:** the python.org installer (https://www.python.org/downloads/windows/,
+     tick "Add python.exe to PATH"), or `winget install -e --id Python.Python.3.13`.
+     A new Python appears on PATH only in a new terminal.
    - Never use sudo or change system security settings without asking first.
+   - **FFmpeg, Node.js and Claude Code: never install these from your own
+     shell; Studio installs them itself** (next steps). No brew, winget, npm or
+     curl installs for them: Claude Code's shell can be sandboxed so an install
+     lands where Studio can't see it, Homebrew and winget can ask for the
+     customer's password, and Studio's own installs are pinned, checksum-checked
+     and go into its own folder. Copies the customer already has are used when
+     they work (setup shows them as ready).
 4. **Start Studio.** Mac: `open "Start on Mac.command"`. Windows:
    `start "" "Start on Windows.cmd"`. The launcher window must stay open; its
    first run installs libraries and a graphics browser, which takes a few
@@ -38,15 +39,22 @@ already passes.
    when that command ends or times out, Studio closes, and any video it is
    making stops with it. Only the launcher's own window keeps it running.
 5. **Open setup.** When the launcher says it's ready, open
-   http://127.0.0.1:7860/cr-setup and tell the customer, in plain words, it's
-   three buttons, top to bottom:
+   http://127.0.0.1:7860/cr-setup. If "Make sure the tools are ready" shows
+   Video tools (FFmpeg) or YouTube helper (Node) needing attention, they press
+   **Fix it** next to it (or call `fix_ffmpeg` / `fix_node`, below): Studio
+   downloads it into its own folder, no password. Then tell the customer, in
+   plain words, it's three buttons, top to bottom:
    1. **Connect my ChannelRecipe account**: it opens channelrecipe.com; they
       sign in if asked and press Approve, then land back on setup. No key to
       copy. (If that fails, "Paste a key instead" takes the key from the
       Studio page on channelrecipe.com.)
    2. **Set up Claude for videos**: connects Claude Code, picks the models and
-      runs a tiny check. Claude Code must be signed in first (`claude`, then
-      the browser login).
+      runs a tiny check. Studio needs Claude Code's command-line tool (the
+      Claude desktop app alone isn't enough) and signed in: if it isn't
+      installed, step 2 shows **Install Claude Code** (Studio runs Anthropic's
+      official installer; or call `fix_claude_cli`), then **Open the sign-in
+      window** for the one-time browser login with their Claude Pro or Max
+      account.
    3. **Paste a Kie.ai key** in step 3 (get one at https://kie.ai/api-key) and
       press the connect button.
    Keys go into the setup page only, never into this chat.
@@ -83,6 +91,15 @@ Studio through its own checks, so nothing needs the Studio web page.
 - If `setup_check` says the graphics browser isn't ready, call `fix_graphics_browser` (Studio installs it itself) and
   check again after a couple of minutes. Never install it with pip/playwright from your own shell: Claude Code's shell
   can be sandboxed, so the install lands where Studio can't see it. Setup's page has the same Fix it button.
+- `setup_check`'s `video_tools` or `node` not ready (FFmpeg missing or unable to burn captions; Node.js missing or
+  older than 22, which the YouTube downloader needs): call `fix_ffmpeg` or `fix_node`. Studio downloads a pinned,
+  checksum-checked build into its own folder (no password, the customer's own copies untouched) and uses it first;
+  call `setup_check` again after a minute or two. Never install these from your own shell; call the fix tool (same
+  rule as the graphics browser). If the fix says `failed`, read its message to the customer.
+- `setup_check`'s `claude_code.installed` false: Studio runs the `claude` command-line tool, even for customers who use
+  the Claude desktop app. Call `fix_claude_cli`: Studio runs Anthropic's official installer itself. Never install
+  Claude Code from your own shell; call the fix tool. Then they sign in once: setup page, step 2, **Open the sign-in
+  window**, and the browser login with their Claude Pro or Max account. Never ask for or handle their password.
 - `setup_check`'s `speech_model` not ready: while it says downloading or checking, Studio is fetching it by itself;
   otherwise call `fix_speech_model` (same rule: never install it from your shell).
 - `setup_check`'s `network` lists services this computer can't reach. Tell them in plain words: `blocked` ones stop

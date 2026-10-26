@@ -303,10 +303,10 @@ window.CRLocalStudio = (() => {
                 '<div class="ls-option recommended"><span class="ls-option-tag">Easiest</span><h4>Let Claude Code install it</h4>'+
                     '<p>Open the extracted folder in Claude Code. In the Claude desktop app, choose <b>Code</b> and select the folder, then paste:</p>'+
                     '<div class="ls-prompt-box"><code>'+esc(CLAUDE_PROMPT)+'</code><button class="btn-ghost" data-ls-copy-prompt>'+icon('copy')+'Copy</button></div>'+
-                    '<p class="ls-step-note">No Claude Code yet? <a href="https://claude.com/download" target="_blank" rel="noopener">Download the Claude app</a> and sign in with your Claude account.</p></div>'+
+                    '<p class="ls-step-note">No Claude Code yet? <a href="https://claude.com/download" target="_blank" rel="noopener">Download the Claude app</a> and sign in with your Claude account. Studio also needs Claude Code’s command-line tool: its setup page installs it for you with one button.</p></div>'+
                 '<div class="ls-option"><h4>Or install it yourself</h4>'+
                     '<p>In the extracted folder, double-click <b>'+launcher+'</b>'+(platform==='mac'?' (if macOS blocks it, right-click → Open)':'')+'. The first launch takes a few minutes. Keep that window open. Your setup page opens in the browser.</p>'+
-                    '<details class="ls-mini"><summary>It says something is missing</summary><p>Studio needs Python 3.10 or newer (3.13 recommended'+(platform==='windows'?'; tick “Add Python to PATH” when installing':'')+'), Node.js LTS and FFmpeg. The setup page links each one. Easiest fix: use the Claude Code option, which installs them for you.</p></details></div>'+
+                    '<details class="ls-mini"><summary>It says something is missing</summary><p>Studio needs Python 3.10 or newer (3.13 recommended'+(platform==='windows'?'; tick “Add Python to PATH” when installing':'')+'). It’s the only tool you install yourself: the setup page installs FFmpeg, Node.js and Claude Code’s command-line tool with a Fix it button each, no password needed.</p></details></div>'+
                 '</div></div></div>'+
             '<div class="ls-step"><span class="ls-step-n">3</span><div class="ls-step-body"><h3>Connect your account</h3>'+
                 '<p>On the setup page, press <b>Connect my ChannelRecipe account</b> and approve. No key to copy.</p>'+

@@ -37,8 +37,9 @@ TOP = "ChannelRecipe studio/"
 STUDIO_PORT = 7860
 BACKUPS = ".cr-update-backups"
 KEEP_BACKUPS = 2
-# Never written by an update, even if a download unexpectedly contained them.
-PROTECTED_DIRS = {"output", ".venv", "presets", "samples", BACKUPS, ".cr-update-staging"}
+# Never written by an update, even if a download unexpectedly contained them. tools: the FFmpeg and Node.js setup's
+# Fix it installed (cr_installs), never part of a download.
+PROTECTED_DIRS = {"output", ".venv", "presets", "samples", "tools", BACKUPS, ".cr-update-staging"}
 PROTECTED_FILES = {".env", ".mcp.json"}
 # Shipped files creators are meant to customise. An edited one is kept and the
 # new version saved beside it. Everything else (code, release metadata) is
