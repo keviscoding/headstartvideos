@@ -1524,7 +1524,9 @@ def param_spec(raw) -> dict:
         out = {"type": kind}
         if m.group(2) and kind in ("text", "texts"):
             out["max"] = max(1, min(400, int(m.group(2))))
-        hint = text[m.end():].strip(" ,;:-()")
+        hint = re.sub(r"^[-\u2013]\s+", "", text[m.end():].strip(" ,;:"))
+        if hint.startswith("(") and hint.endswith(")"):
+            hint = hint[1:-1].strip()
         return {**out, "hint": hint[:80]} if hint else out
     if "|" in text and len(text) < 160 and re.fullmatch(r"[\w\s|'-]+", text):
         return {"type": "options", "options": [o.strip().strip("'").lower() for o in text.split("|") if o.strip()][:24]}
@@ -2234,8 +2236,8 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
                   .replace("[FX]", "\n".join(vocabulary_lines(man, "fx")) or "(none)")
                   .replace("[NOTES]", docs["notes"] or "(none)")
                   .replace("[MEDIUM]", "3D" if dims_of(spec) == 3 else "2D").replace("[PACE]", pace_words(spec))
-                  .replace("[PLACE]", str((vocabulary(docs["actions"]).get("place") or {}).get("does")
-                                          or "{x, face: left|right}"))
+                  .replace("[PLACE]", next((line[len("- place "):] for line in vocabulary_lines(man, "actions")
+                                            if line.startswith("- place ")), "") or "{x, face: left|right}")
                   .replace("[NEWSETS]", ("NEW PLACES: when the narration goes somewhere none of the places above is (a "
                                          "hatch, a tunnel, the surface), add it under \"sets\" in your reply, at most "
                                          f"{NEW_SETS}, with a place's fields (prompt, inside, walls, sky, floor_colors, "
