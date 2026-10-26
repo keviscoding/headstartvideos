@@ -746,10 +746,42 @@ def status(home, operation_id, bridge):
                 result["route"]["medium_gap"] = cr_style_map.MEDIUM_GAP
         renderer = renderer_verdict(style)
         if renderer:
+            seen = renderer_pictures(home, operation_id, bridge, style=style)
+            renderer.update(shots=len(seen["shots"]), channel_frames=len(seen["channel"]))
             result["renderer"] = renderer
             if renderer.get("say"):
                 result["message"] = renderer["say"]
     return result
+
+
+def renderer_pictures(home, operation_id, bridge, *, style=None) -> dict:
+    """{"shots": [...], "channel": [...]}: the style's renderer's test shots (Style Lab's latest preview of the saved
+    version, else the study's best draft) and a few of the channel's own frames, to show side by side before a video
+    is made. Paths inside this Studio only; the page asks for them by index."""
+    folder, saved = _saved(home, operation_id, bridge)
+    spec = saved.get("spec") or {}
+    if style is None:
+        style = _read(Path(home) / "styles" / (str(spec.get("style_id") or "") + ".json"))
+    record = ((style.get("look") or {}).get("animated2d") or {}).get("renderer") or {}
+    shots = []
+    if record.get("from") == "style_lab":
+        lab = _read(Path(home) / "style-lab" / str(spec.get("style_id") or "") / "lab.json")
+        done = next((h for h in reversed(lab.get("history") or []) if h.get("kind") == "preview" and h.get("ok")
+                     and h.get("sha256") == record.get("sha256")), {})
+        shots = [Path(p) for p in done.get("stills") or []]
+    if not shots:
+        built = _read(folder / "renderer" / "build.json")
+        shots = [folder / "renderer" / p for p in built.get("stills") or []]
+    root = Path(home).resolve()
+    shots = [p for p in shots if p.is_file() and p.resolve().is_relative_to(root)][:4]
+    channel = []
+    if spec.get("look_id"):
+        try:
+            channel = [Path(p) for p in renderer_frames(folder, spec)][:3]
+        except Exception:                                   # noqa: BLE001 - the shots still show without them
+            channel = []
+    channel = [p for p in channel if p.is_file() and p.resolve().is_relative_to(root)]
+    return {"shots": shots, "channel": channel}
 
 
 def renderer_verdict(style) -> dict:

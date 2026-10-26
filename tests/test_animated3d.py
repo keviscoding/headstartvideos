@@ -481,6 +481,35 @@ def test_a_quote_counts_a_coded_styles_backdrops_and_its_own_music():
     assert tools.media_estimate(cat, {"name": "plain"}, 1, {})["per_video_usd"] == 0.0
 
 
+def test_the_study_result_shows_the_renderers_test_shots_beside_the_channels_frames(tmp_path, monkeypatch):
+    """Before a long video is made, the creator sees what the renderer draws next to the channel: the study's best draft,
+    or the version they saved from Style Lab; never a picture from outside the Studio."""
+    import cr_style_clone as clone
+    from PIL import Image
+    home = tmp_path / "home"
+    folder = home / "output" / "cr-style-clone" / ("op_" + "a" * 24)
+    (folder / "renderer" / "round-2").mkdir(parents=True)
+    for k in range(3):
+        Image.new("RGB", (54, 96), (10 * k, 80, 40)).save(folder / "renderer" / "round-2" / f"shot_{k}.jpg")
+    (folder / "renderer" / "build.json").write_text(json.dumps({"stills": [f"round-2/shot_{k}.jpg" for k in range(3)]}))
+    frames = tsm_frames(home / "looks" / "frames", 9)
+    saved = {"spec": {"style_id": "cr_clone_x", "look_id": "lk_x"}}
+    monkeypatch.setattr(clone, "_saved", lambda h, op, bridge: (folder, saved))
+    monkeypatch.setattr(clone, "renderer_frames", lambda folder, spec: frames + [tmp_path / "elsewhere.jpg"])
+    got = clone.renderer_pictures(home, "op_" + "a" * 24, None, style={"look": {"animated2d": {"renderer": {"sha256": "s1"}}}})
+    assert [p.name for p in got["shots"]] == ["shot_0.jpg", "shot_1.jpg", "shot_2.jpg"] and len(got["channel"]) == 3
+    lab = home / "style-lab" / "cr_clone_x"
+    (lab / "preview" / "abc").mkdir(parents=True)
+    Image.new("RGB", (54, 96)).save(lab / "preview" / "abc" / "shot_0.jpg")
+    (lab / "lab.json").write_text(json.dumps({"history": [{"kind": "preview", "ok": True, "sha256": "s2",
+                                                           "stills": [str(lab / "preview" / "abc" / "shot_0.jpg"),
+                                                                      str(tmp_path / "outside.jpg")]}]}))
+    (tmp_path / "outside.jpg").write_bytes(b"x")
+    labbed = {"look": {"animated2d": {"renderer": {"sha256": "s2", "from": "style_lab"}}}}
+    got = clone.renderer_pictures(home, "op_" + "a" * 24, None, style=labbed)
+    assert [str(p) for p in got["shots"]] == [str(lab / "preview" / "abc" / "shot_0.jpg")], "Style Lab's version, inside the Studio only"
+
+
 def test_round_files_belong_to_their_build(tmp_path):
     out = tmp_path / "renderer"
     (out / "round-1").mkdir(parents=True)
