@@ -381,8 +381,9 @@ def receipts(job):
 
 def stuck_media(job, *, since=0.0, message="") -> list:
     """Each paid media task of this video that isn't finished: sent with no answer (uncertain), accepted and still
-    being made (checking: free), or failed. A failed one is listed when it failed during the last run; a skipped
-    picture's failure is the engine's choice, so pictures only when the stop names a picture task."""
+    being made (checking: free), or failed. A failed one is listed only when it stopped the video: it failed during the
+    last run and the stop names its kind of task (cr_media's "failed this images task"), newest of that kind. A picture
+    or clip the engine skipped and went on without (cr_media.skippable) never holds the video up."""
     import cr_media
     job = Path(job)
     voice_stop = (job / cr_media.VOICE_FAILED).is_file()
@@ -401,12 +402,12 @@ def stuck_media(job, *, since=0.0, message="") -> list:
         row = {"receipt": path.relative_to(job).as_posix(), "task": task, "provider": provider,
                "credits": r.get("credits"), "at": _mtime(path), "do_first": ""}
         if status == "submitting" and not r.get("id"):
-            row.update(state="uncertain", free=False, may_have_spent=True, money=True, needs_approval=True, pays_twice=True,
-                       reason=f"{label} was sent a {what} request but no clear answer came back, so it may have "
+            row.update(state="uncertain", free=False, may_have_spent=True, money=True, needs_approval=True,
+                       pays_twice=True, reason=f"{label} was sent a {what} request but no clear answer came back, so it may have "
                               f"started and been charged. Check its task log; trying again can pay for it twice.")
         elif r.get("id") and status in ("pending", "generated", "submitting"):
-            row.update(state="checking", free=True, may_have_spent=True, money=True, needs_approval=False, pays_twice=False,
-                       reason=f"A {what} task {label} accepted was still being made (or its file didn't download). "
+            row.update(state="checking", free=True, may_have_spent=True, money=True, needs_approval=False,
+                       pays_twice=False, reason=f"A {what} task {label} accepted was still being made (or its file didn't download). "
                               "Carrying on checks the same task; nothing is paid again.")
         elif status == "failed":
             if _mtime(path) < since - 5:
@@ -439,13 +440,11 @@ def stuck_media(job, *, since=0.0, message="") -> list:
         else:
             continue
         out.append(row)
-    if failed:
-        pictures = [r for r in failed if r["task"] == "images"]
-        others = [r for r in failed if r["task"] != "images"]
-        picture_stop = bool(re.search(r"(?i)\bimages? (task|request)\b|this images", message or ""))
-        if picture_stop and pictures:
-            others.append(max(pictures, key=lambda r: r["at"]))
-        out += others
+    for task in dict.fromkeys(r["task"] for r in failed):
+        named = (r"image generation stopped|\bimages? (?:task|request)\b" if task == "images"
+                 else rf"\b{re.escape(task)} (?:task|request)\b")
+        if re.search(named, message or "", re.I):
+            out.append(max((r for r in failed if r["task"] == task), key=lambda r: r["at"]))
     return out
 
 

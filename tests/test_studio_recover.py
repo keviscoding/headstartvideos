@@ -149,21 +149,28 @@ def test_media_tasks_are_told_apart_uncertain_checking_free_and_charged(tmp_path
     old = receipt(job, "motion", "old.json", model="bytedance/v1-pro-fast-image-to-video", status="failed", id="t5",
                   credits=40)
     os.utime(old, (run["started"] - 3600, run["started"] - 3600))
-    d = recover.diagnose(tmp_path, job, server_stages=[])
+    d = recover.diagnose(tmp_path, job, server_stages=[], message="Kie.ai failed this motion task. generation failed")
     rows = {r["receipt"]: r for r in d["media"]}
-    assert set(rows) == {"motion/.cr-tasks/u.json", "images/.cr-tasks/p.json", "audio-hub-voice/.cr-tasks/f.json",
-                         "motion/.cr-tasks/c.json"}, "complete, uploads, set aside and older failures left out"
+    assert set(rows) == {"motion/.cr-tasks/u.json", "images/.cr-tasks/p.json", "motion/.cr-tasks/c.json"}, \
+        "complete, uploads, set aside, older failures and failures the stop doesn't name left out"
     assert rows["motion/.cr-tasks/u.json"]["state"] == "uncertain" and rows["motion/.cr-tasks/u.json"]["pays_twice"]
     assert rows["images/.cr-tasks/p.json"]["state"] == "checking" and not rows["images/.cr-tasks/p.json"]["needs_approval"]
-    assert rows["audio-hub-voice/.cr-tasks/f.json"]["free"] and not rows["audio-hub-voice/.cr-tasks/f.json"]["pays_twice"]
     assert rows["motion/.cr-tasks/c.json"]["needs_approval"] and "charged 40 credits" in rows["motion/.cr-tasks/c.json"]["reason"]
     assert d["stopped_on"] == "media" and d["needs_approval"] and uncertain.is_file()
+    voice = recover.diagnose(tmp_path, job, server_stages=[], message="Kie.ai failed this narration task. Internal Error")
+    [free] = [r for r in voice["media"] if r["task"] == "narration"]
+    assert free["free"] and not free["pays_twice"] and not free["needs_approval"]
 
 
 def test_a_skipped_pictures_failure_is_not_offered_again_unless_a_picture_stopped_it(tmp_path):
     job = make_job(tmp_path)
     receipt(job, "images", "a.json", model=PICTURE, status="failed", id="t1", credits=None, failure_code="501")
+    receipt(job, "motion", "m.json", model="bytedance/v1-pro-fast-image-to-video", status="failed", id="t2",
+            credits=None, failure_code="501")                  # a clip the engine showed as its first frame
     assert recover.diagnose(tmp_path, job, server_stages=[])["media"] == []
+    crashed = recover.diagnose(tmp_path, job, server_stages=[], message="The local video worker stopped: a library "
+                                                                         "it uses crashed.")
+    assert crashed["media"] == [] and crashed["free_to_resume"], "a skipped clip never holds up a free Resume"
     d = recover.diagnose(tmp_path, job, server_stages=[], message="Kie.ai failed this images task. generation failed")
     assert [r["task"] for r in d["media"]] == ["images"] and d["media"][0]["needs_approval"]
 
@@ -175,7 +182,8 @@ def test_a_rejected_task_charged_nothing_and_says_what_to_fix(tmp_path):
     (job / "audio-hub-voice" / ".cr-tasks" / "r.json").touch()
     import cr_media
     (job / cr_media.VOICE_FAILED).unlink(missing_ok=True)
-    d = recover.diagnose(tmp_path, job, server_stages=[])
+    d = recover.diagnose(tmp_path, job, server_stages=[], message="Kie.ai refused this narration request. Top up this "
+                                                                  "account, then resume.")
     [r] = d["media"]
     assert not r["pays_twice"] and not r["needs_approval"] and r["do_first"].startswith("Top up your Kie.ai")
     assert d["do_first"] and not d["fix_first"] and not d["needs_approval"] and d["free_to_resume"]
