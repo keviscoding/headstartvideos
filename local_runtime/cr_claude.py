@@ -16,7 +16,7 @@ import subprocess
 import threading
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 
 try:
@@ -55,6 +55,9 @@ class ClaudeStageStopped(BaseException):
 def failure_info(stdout="",stderr=""):
     """Classify failures without displaying upstream bodies or credentials."""
     diagnostic=(str(stdout)+" "+str(stderr)).lower()
+    if "went to sleep mid-response" in diagnostic:
+        # Claude Code: "API Error: Your computer went to sleep mid-response." (sweep, 2026-10-26: a closed lid)
+        return "network_interrupted","This computer went to sleep while Claude was answering. Keep it awake (plugged in, lid open) while a video is made, then resume: your work is saved."
     if any(x in diagnostic for x in ("usage limit","session limit","weekly limit","rate limit","limit reached","out of extra usage","hit your limit","usage exceeded","rate_limit","too many requests")):
         return "usage_limit","Your Claude account reached its usage limit. Check its reset or usage allowance, then review this saved stage in setup."
     if any(x in diagnostic for x in ("authentication","oauth","not logged in","invalid token","please log in")):
@@ -355,6 +358,56 @@ LONG_OUTPUT_TOKENS = 128000         # may use this much output in one message (C
 CONTINUED = "Output token limit hit"
 
 
+# Windows starts a program with one command line of at most 32,767 characters, and npm's claude.cmd goes through
+# cmd.exe, which stops at 8,191 and cuts an argument at its first newline. FOLIO hands Claude its drawing rules as
+# --system-prompt (42 KB for the storyboard, 54 KB for each drawing), so on Windows every FOLIO video stopped at its
+# first storyboard call: "cli_failed" in 0 seconds, 6 of 6 customer FOLIO videos (census, 2026-10-25). A system
+# prompt the command line can't carry goes in a file (Claude Code's --system-prompt-file) for that one run; the
+# stage's identity is the original request, so nothing already made or paid for changes. (Multi-line prompts move
+# only on Windows: elsewhere a newline in an argument is harmless.)
+PROMPT_FILE_FLAGS = {"--system-prompt": "--system-prompt-file", "--append-system-prompt": "--append-system-prompt-file"}
+
+
+def prompts_on_disk(command, folder, *, windows=None):
+    """(command, files): the command with each system prompt too long (or, on Windows, multi-line) for the command
+    line moved into a UTF-8 file in `folder`, and the files to delete after the run. Every run gets its own file:
+    FOLIO draws three shots at once with the same 54 KB rules, and a file shared between them could be deleted or
+    rewritten while another stage's Claude was still reading it (review, 2026-10-26)."""
+    windows = os.name == "nt" if windows is None else windows
+    limit = 8000          # on every computer, so a Mac runs FOLIO exactly as a Windows PC does
+    out, files = [], []
+    i = 0
+    while i < len(command):
+        arg = str(command[i])
+        flag, value, step = arg, None, 1
+        if arg in PROMPT_FILE_FLAGS and i + 1 < len(command):
+            value, step = str(command[i + 1]), 2
+        elif "=" in arg and arg.split("=", 1)[0] in PROMPT_FILE_FLAGS:
+            flag, value = arg.split("=", 1)
+        if value is not None and (len(value) > limit or (windows and ("\n" in value or "\r" in value))):
+            folder = Path(folder)
+            folder.mkdir(parents=True, exist_ok=True)
+            handle, name = tempfile.mkstemp(prefix=".prompt-", suffix=".txt", dir=folder)    # this run's own file
+            os.close(handle)
+            path = Path(name)
+            files.append(path)
+            try:
+                with open(path, "w", encoding="utf-8", newline="") as stream:     # the exact text, \n kept as \n
+                    stream.write(value)
+            except BaseException:
+                for written in files:
+                    try:
+                        written.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise
+            out += [PROMPT_FILE_FLAGS[flag], str(path)]
+        else:
+            out += [str(c) for c in command[i:i + step]]
+        i += step
+    return out, files
+
+
 def _stream_rows(stdout):
     rows = []
     for line in str(stdout).splitlines():
@@ -427,7 +480,9 @@ class Runtime:
     def run(self, args, *positional, **kwargs):
         if not self.handles(args):
             return self.real_run(args, *positional, **kwargs)
-        with _slots:
+        # the stage's own calls to ChannelRecipe ride out a lost answer for about 3 minutes (cr_bridge)
+        patient = getattr(self.bridge, "patient_stage_calls", None)
+        with _slots, (patient() if callable(patient) else nullcontext()):
             return self.execute(args,*positional,**kwargs)
 
     def execute(self,args,*positional,**kwargs):
@@ -525,7 +580,15 @@ class Runtime:
         failure_message="Claude could not finish this stage. Review recovery in ChannelRecipe."
         completed=None
         try:
-            completed = self.real_run(command, **options)
+            run_command, prompt_files = prompts_on_disk(command, cache.parent)
+            try:
+                completed = self.real_run(run_command, **options)
+            finally:
+                for prompt_file in prompt_files:
+                    try:
+                        prompt_file.unlink(missing_ok=True)
+                    except OSError:
+                        pass            # a file Windows still holds open: never turns a finished run into a failure
             if streamed and completed is not None:
                 # The stream lists rate-limit events on every run: classify a failure by its result alone.
                 whole = _whole_answer(getattr(completed, "stdout", "") or "")
