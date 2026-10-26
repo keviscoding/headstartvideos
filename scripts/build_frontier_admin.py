@@ -371,13 +371,14 @@ ENGINE_PATCHES = {
     # the detector (text_detector -> text_det), so Python 3.12 customers got another API than 3.13 ones; 1.2.3 is
     # pure Python and installs on 3.10-3.14 (checked on PyPI, 2026-10-21).
     # truststore: Studio's Python checks certificates with the computer's own store, as the browser does (cr_trust),
-    # so an antivirus or company firewall that inspects secure connections no longer fails every download. 0.10.4 is
-    # the release Hugging Face's httpx2 already brings; pure Python, 3.10+ (checked on PyPI, 2026-10-24).
+    # so an antivirus or company firewall that inspects secure connections no longer fails every download. 0.10.5 or
+    # later: before it, connections sharing one context could turn each other's certificate check off when they shook
+    # hands at once (reproduced 2026-10-26); pure Python, 3.10+ (checked on PyPI, 2026-10-26).
     "requirements.txt": [
         ('yt-dlp>=2025.10.22; python_version >= "3.10"',
          'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"\n'
          'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove\n'
-         'truststore>=0.10.4; python_version >= "3.10"   # Studio trusts this computer\'s certificates, as the browser does'),
+         'truststore>=0.10.5; python_version >= "3.10"   # Studio trusts this computer\'s certificates, as the browser does'),
     ],
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',

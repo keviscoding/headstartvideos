@@ -34,8 +34,9 @@ _lock = threading.Lock()
 DOWNLOAD = r"""
 import sys
 try:                                    # this computer's certificates, as the browser trusts them (cr_trust)
-    import truststore
-    truststore.inject_into_ssl()
+    import truststore                   # 0.10.5+ only: older ones could switch checks off under parallel downloads
+    if tuple(int(p) for p in truststore.__version__.split(".")[:3]) >= (0, 10, 5):
+        truststore.inject_into_ssl()
 except Exception:
     pass
 from huggingface_hub import snapshot_download

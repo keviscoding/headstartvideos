@@ -597,7 +597,7 @@ def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
     # one RapidOCR for every Python: 1.3+ caps Python below 3.13 and renamed the detector the Studio calls
     assert 'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"' in patched
     # Studio's Python trusts the certificates this computer trusts (an antivirus that scans secure connections)
-    assert 'truststore>=0.10.4; python_version >= "3.10"' in patched
+    assert 'truststore>=0.10.5; python_version >= "3.10"' in patched
 
 
 def test_the_engines_ytdlp_runs_studios_copy_trusting_this_computers_certificates(monkeypatch, tmp_path):
