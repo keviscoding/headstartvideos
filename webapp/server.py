@@ -346,6 +346,11 @@ async def _startup_tasks():
     except Exception as e:
         print(f"[db] cleanup_expired failed: {e}")
 
+    try:                                   # made once here, so two workers' first stopped videos never race to make it
+        _studio_failures.initialize()
+    except Exception as e:
+        print(f"[studio-failures] table not ready: {type(e).__name__}")
+
     try:                                   # Ranking clip watches a deploy stranded are picked up before anyone polls
         _studio_ranking.start_supervisor()
     except Exception as e:

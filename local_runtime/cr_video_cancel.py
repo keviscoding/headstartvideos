@@ -125,11 +125,28 @@ def crash_message(log_path, code) -> str:
             f"to carry on from where it stopped.{detail} (Copy diagnostics in Setup includes the full log.)")
 
 
+# an exception's last line: "MemoryError", "RuntimeError: …", "playwright._impl._errors.TargetClosedError: …"
+_ERROR_LINE = re.compile(r"^(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*(?:Error|Exception|Interrupt|Exit|Fault|Warning)|ERROR)\b:?\s*(.*)$")
+
+
+def _error_line(last: str) -> str:
+    """The worker log's last line as a failure record may hold it: an exception's type and the start of its message
+    (cr_failure cleans that again). Any other line (a step's progress, a scene's or a title's words) is the video's
+    own, so it is left out."""
+    found = _ERROR_LINE.match(last or "")
+    if not found:
+        return ""
+    said = " ".join(found.group(2).split()[:12])[:120]
+    return found.group(1) + (f": {said}" if said else "")
+
+
 def crash_failure(log_path, code) -> dict:
-    """The worker's stop for the failure record (cr_failure): its cause and last message, without the advice."""
+    """The worker's stop for the failure record (cr_failure): its cause and, when its log ended with an exception, that
+    exception, without the advice."""
     tail, last = _log_tail(log_path)
     reason, category = crash_cause(tail, code)
-    return {"category": category, "message": f"The video worker stopped: {reason}." + (f" Last message: {last[:240]}"
+    last = _error_line(last)
+    return {"category": category, "message": f"The video worker stopped: {reason}." + (f" Last message: {last}"
                                                                                         if last else "")}
 
 

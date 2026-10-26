@@ -2,9 +2,9 @@
 
 A stopped project's finish (cr_bridge.finish_project) carries `failure`: the step it stopped at, the kind of problem,
 the service involved, one cleaned line of its message (at most MAX_MESSAGE characters), and this Studio's version, the
-computer's family (windows, mac or linux) and the recipe. Never the video's content: web addresses, file paths (the
-home folder becomes ~ and folder names are dropped), emails, keys, tokens and the video's title are taken out of the
-message, and nothing of the script, voice or pictures is read.
+computer's family (windows, mac or linux) and the recipe. Never the video's content: web addresses, file paths (only
+a file's extension stays: "[path].mp4"), emails, names, keys, tokens, the video's title and any quoted or labelled
+words of its prompts or narration are taken out of the message, and nothing of the script, voice or pictures is read.
 
 Before these records, a server refused a finish carrying one; cr_bridge.finish_project then sends the same finish
 again without it. A server that takes the record and answers nothing more changes nothing here.
@@ -32,9 +32,12 @@ SOURCES = ("video", "short", "timeline", "style_study", "threed", "cloud")
 
 # ── the message, cleaned ──────────────────────────────────────────────────────────────────────────────────────────
 
+MAX_INPUT = 4000                      # a message is cut to this before any cleaning: a long traceback stays quick
+MAX_TITLE = 300
+
 _URL = re.compile(r"(?i)\b(?:https?|wss?|ftp|file)://[^\s\"'<>)\]]+|\bwww\.[^\s\"'<>)\]]+")
 _HOST_PATH = re.compile(r"(?i)\b((?:[a-z0-9-]+\.)+[a-z]{2,})/[^\s\"'<>)\]]*")
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_EMAIL = re.compile(r"(?<![\w.+%-])[\w.+%-]+(?:@|%40|%2540)[\w-]+(?:\.[\w-]+)+")     # jane@…, jane%40… in a link
 _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[^\s,;\"']+")
 _ASSIGNED = re.compile(r"(?i)\b([\w-]*(?:api[_-]?key|apikey|key|token|secret|password|passwd|authorization|cookie"
                        r"|signature|credential)s?)(['\"]?\s*[=:]\s*['\"]?)[^\s,;\"'&}]+")
@@ -44,20 +47,37 @@ _UUID = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 _HEX_ID = re.compile(r"(?i)\b(?:crv_|op_|video_|b_|cc_)?[0-9a-f]{12,}\b")
 _LONG_TOKEN = re.compile(r"(?<![\w~…])(?=[A-Za-z0-9_\-+/=]*\d)(?=[A-Za-z0-9_\-+/=]*[A-Za-z])[A-Za-z0-9_\-+/=]{24,}")
 _IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-_EMAIL_NAME = re.compile(r"(?:\"[^\"\n]{1,60}\"\s*|(?:[A-Z][\w'’.\-]*\s+){1,4})<\s*\[email\]\s*>")
+# eight groups, or fewer around a "::" (a time like 12:30:45 or ffmpeg's 0:a:0 has neither; std::bad_alloc is a word's)
+_IPV6 = re.compile(r"(?i)(?<![\w:.])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}::"
+                   r"(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?|::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})(?:%[\w.]+)?(?![\w:])")
+# "Jane Doe <…>", "jane doe <…>", "\"J. Doe\" <…>": a name before an email
+_EMAIL_NAME = re.compile(r"(?:\"[^\"\n]{1,60}\"\s*|(?<![\w'’.\-])(?:(?:[A-Z][\w'’.\-]*\s+){1,4}"
+                         r"|(?:[^\W\d_][\w'’.\-]*\s+){1,2}))<\s*\[email\]\s*>")
+_HANDLE = re.compile(r"(?<![\w@.%/])@(?=[\w.\-]*[A-Za-z])[A-Za-z0-9_](?:[\w.\-]{0,28}\w)?(?![\w@/\-]|\.\w)")  # not @scope/pkg
 _ACCOUNT_NO = re.compile(r"(?i)\b(user|account|customer|member|subscriber)((?:[ _-]?id)?\s*[#:=]?\s*)\d{2,}\b")
 _PC_NAME = re.compile(r"\b(?:DESKTOP|LAPTOP|WIN)-[A-Z0-9]{5,}\b")
-_LONG_QUOTE = re.compile(r"(?<!\w)(?:\"[^\"\n]{48,}\"|'[^'\n]{48,}'|“[^”\n]{48,}”)(?!\w)")
-# a home folder, the user's name with it (no space in a Mac or Linux name; a Windows one ends at its backslash)
-_HOMES = (re.compile(r"(?i)\b[A-Z]:[\\/]+(?:Users|Documents and Settings)[\\/]+[^\\/\r\n\"']+?(?=[\\/]|$)"),
-          re.compile(r"(?<![\w.])/(?:Users|home)/[^/\s\"']+"),
-          re.compile(r"(?<![\w.])/root(?=/)"))
-# what is left that looks like a path: from ~, a drive, … or a slash. A folder's name may have a space or two
-# ("ChannelRecipe studio"); the file's name has none.
+# Where a path starts: a drive (C:\ or C:/), a share (\\computer\share), file://, ~, ./ or ../, … or the places a Mac
+# or Linux keeps people's files. From there a folder's name may hold anything (spaces, apostrophes, dashes), so all of
+# it up to the last separator goes, and of the file only its extension stays: "[path].mp4".
+_ROOT = re.compile(r"(?i)(?<![\w.:/\\~…-])(?:file:/{2,3}(?:[a-z]:)?|[a-z]:(?=[\\/])|\\{2,}(?=[^\\/\s]+[\\/])"
+                   r"|(?:~|\.{1,2}|…)(?=[\\/])"
+                   r"|(?=[\\/](?:users|home|volumes|private|tmp|var|root|mnt|media|srv)(?:[\\/]|$)))")
+_EXT = re.compile(r"\.((?=[A-Za-z0-9]{0,4}[A-Za-z])[A-Za-z0-9]{1,5})(?!\w|\.\w)")
+# what is left that looks like a path (the computer's own folders: /opt/homebrew/bin/ffmpeg): folders go, the file's
+# name stays unless it holds the title
 _SEG = r"[^\\/\s\"'<>|:!,;()\[\]{}]+"
-_PATH = re.compile(r"(?<![\w:/\\~…])(?P<root>~|[A-Za-z]:|…|\.{1,2})?"
-                   r"(?P<dirs>(?:[\\/]" + _SEG + r"(?: " + _SEG + r"){0,2}(?=[\\/]))*)"
+_PATH = re.compile(r"(?<![\w:/\\~…\]])(?P<dirs>(?:[\\/]" + _SEG + r"(?: " + _SEG + r"){0,2}(?=[\\/]))*)"
                    r"[\\/](?P<base>[^\\/\s\"'<>|:,;()\[\]{}]+)?")
+# A label for the video's own words ("text: …", 'prompt': '…', scene 4: …): what it labels is theirs, to the end of
+# its clause.
+_LABEL = re.compile(r"(?i)(?<![\w\[-])['\"]?(?:text|prompt|negative[_ ]prompt|script|title|narration|captions?"
+                    r"|description|transcript|lyrics|query|topic|subject|story|sentence"
+                    r"|(?:scene|beat|chapter|shot|clip|slide|segment)(?:\s*#?\d+)?)['\"]?(?:\s*[:=]\s*|\s+(?=['\"“‘]))")
+# quoted words, three or more: a prompt, a line of narration, a scene's or a title's words. 'beats', 'api.kie.ai' and
+# "you're" stay. A quote the message's end cut off counts too.
+_QUOTED = re.compile(r"(?<![\w'\"‘’“”`])(?:'(?P<a>(?:[^'\n]|(?<=\w)'(?=\w))*)(?:'(?!\w)|$)|\"(?P<b>[^\"\n]*)(?:\"|$)"
+                     r"|“(?P<c>[^”\n]*)(?:”|$)|‘(?P<d>(?:[^’\n]|(?<=\w)’(?=\w))*)(?:’(?!\w)|$)|`(?P<e>[^`\n]*)(?:`|$))")
+_CLOSES = {"'": "'", '"': '"', "“": "”", "‘": "’", "`": "`"}
 _BOILERPLATE = [re.compile(p, re.I) for p in (
     r"Wait a few minutes[^.]*(?:\.|$)", r"Saved work is kept[^.]*\.", r"Your (?:local |saved |generated )?(?:output|progress|work|study|scenes and voice)"
     r"[^.]{0,40}(?:saved|kept|intact)[^.]*\.", r"Check Video tools in Setup & accounts\.",
@@ -115,70 +135,186 @@ def _names(home) -> list:
     return sorted(found, key=len, reverse=True)
 
 
+def _quote_end(text: str, i: int, close: str) -> int:
+    """Where the quote opened just before `i` closes (an apostrophe inside a word, "Jane's", doesn't), or -1."""
+    while True:
+        i = text.find(close, i)
+        if i < 0 or close not in "'’" or not (text[i - 1:i].isalnum() and text[i + 1:i + 2].isalnum()):
+            return i
+        i += 1
+
+
+def _clause_end(text: str, i: int) -> int:
+    """Where the clause from `i` ends: at a ";" or "|", a bracket it didn't open, or the end."""
+    depth = 0
+    for j in range(i, len(text)):
+        c = text[j]
+        if c in ";|" and not depth:
+            return j
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if not depth:
+                return j
+            depth -= 1
+    return len(text)
+
+
+def _path_end(text: str, i: int) -> int:
+    """Where the path whose root ends at `i` ends: at a quote (not an apostrophe inside a word: "Jane's Channel"), a
+    colon, semicolon or bar before a space, a bracket it didn't open, a space before another path or a link, or the
+    end."""
+    depth, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"`“”" or c in "'‘’" and not (text[i - 1:i].isalnum() and text[i + 1:i + 2].isalnum()):
+            return i
+        if c in ":;|" and text[i + 1:i + 2] in (" ", ""):
+            return i
+        if c in "([{<":
+            depth += 1
+        elif c in ")]}>":
+            if not depth:
+                return i
+            depth -= 1
+        elif c == " " and (_ROOT.match(text, i + 1) or _URL.match(text, i + 1)):
+            return i
+        i += 1
+    return n
+
+
+def _paths(text: str) -> str:
+    """Every path from a root (_ROOT) becomes "[path]" and its file's extension: "[path].mp4". The words after a file's
+    extension stay ("[path].mp3 failed"); with no extension, the path runs to its end (_path_end)."""
+    out, pos = [], 0
+    while True:
+        found = _ROOT.search(text, pos)
+        if not found:
+            break
+        start, end = found.start(), _path_end(text, found.end())
+        cut = max(text.rfind("/", start, end), text.rfind("\\", start, end))
+        base = text[cut + 1:end] if cut >= start else ""
+        ext = _EXT.search(base)
+        out.append(text[pos:start] + ("[path]." + ext.group(1) + base[ext.end():] if ext else "[path]"))
+        pos = end
+    return "".join(out) + text[pos:]
+
+
 def _bodies(text: str) -> str:
     """A provider's answer pasted into a message ({...}) keeps only its code, status and message fields: a request
-    body may hold the prompt, the narration or a link."""
+    body may hold the prompt, the narration or a link. A list of quoted or comma-separated items ([...]) goes whole;
+    a bracketed word like "[Errno 28]" or "[youtube]" stays."""
+    pairs, stacks = {}, {"{": [], "[": []}                       # each bracket's closing one, found in one pass
+    for n, c in enumerate(text):
+        if c in stacks:
+            stacks[c].append(n)
+        elif c in "}]" and stacks["{" if c == "}" else "["]:
+            pairs[stacks["{" if c == "}" else "["].pop()] = n + 1
     out, i = [], 0
     while i < len(text):
-        if text[i] != "{":
-            out.append(text[i])
+        c = text[i]
+        if c not in "{[":
+            out.append(c)
             i += 1
             continue
-        depth, j = 0, i
-        while j < len(text):
-            depth += {"{": 1, "}": -1}.get(text[j], 0)
-            j += 1
-            if depth == 0:
-                break
+        j = pairs.get(i, 0 if c == "[" else len(text))
         body = text[i:j]
+        if c == "[":
+            if not j or not re.search(r"['\"‘’“”`]|,", body[1:-1]):
+                out.append(c)
+                i += 1
+            else:
+                out.append("[…]")
+                i = j
+            continue
         fields = [f"{k}: {(a or b or c).strip()}" for k, a, b, c in _FIELDS.findall(body) if (a or b or c).strip()][:4]
         out.append("(" + "; ".join(fields) + ")" if fields else "(…)")
         i = j
     return "".join(out)
 
 
-def _title_forms(titles) -> list:
-    """Regular expressions for a title as a message may hold it: whole, as a folder name (slug), or cut short (three
-    or more of its words in a row, and the start of the next one before an ellipsis). A run of short words only ("is
-    not a") says nothing of the title and is common in error messages, so a run needs a word of four letters or more.
-    The forms covering the most of the title's words come first, so no word of it is left over."""
-    forms: dict = {}
+def _labelled(text: str) -> str:
+    """What a label for the video's own words (_LABEL) is followed by becomes "…": a quoted value whatever its length,
+    otherwise the rest of its clause."""
+    out, pos = [], 0
+    while True:
+        found = _LABEL.search(text, pos)
+        if not found:
+            break
+        i = found.end()
+        close = _CLOSES.get(text[i:i + 1])
+        end = _quote_end(text, i + 1, close) if close else -1
+        if end >= 0:
+            out.append(text[pos:i + 1] + "…" + close)
+            pos = end + 1
+        else:
+            end = _clause_end(text, i)
+            out.append(text[pos:i] + "…")
+            pos = end
+    return "".join(out) + text[pos:]
+
+
+def _quoted(match) -> str:
+    whole = match.group(0)
+    inner = next(g for g in match.groups() if g is not None)
+    if len(inner.split()) < 3:
+        return whole
+    return whole[0] + "…" + (whole[-1] if len(whole) == len(inner) + 2 else "")
+
+
+_JOIN = r"[\W_]{1,3}"
+
+
+def _title_pattern(titles):
+    """One regular expression for the titles as a message may hold them: whole, as a folder name (slug), or cut short.
+    A cut-short title is three of its words in a row, then any more of its words and the start of one before an
+    ellipsis. Three short words only ("is not a") say nothing of a title and are common in error messages, so a run
+    needs a word of four letters or more. At most MAX_TITLE characters of a title, so at most a hundred or so runs:
+    one pattern, built once a message, keeps a long title quick. None when there is no title."""
+    seeds, words = {}, set()
     for title in titles or ():
-        title = " ".join(str(title or "").split())
-        if len(title) < 3:
+        title = " ".join(str(title or "").split())[:MAX_TITLE]
+        found = [w.lower() for w in re.findall(r"[^\W_]+", title)]
+        if len(title) < 3 or not found:
             continue
-        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-        words = re.findall(r"\w+", title)[:40]
-        for form in (title, slug, slug.replace("-", "_")):
-            if len(form) >= 3:
-                forms[re.escape(form)] = len(words) + 1
-        size = min(3, len(words))
-        for i in range(len(words)):
-            for j in range(i + size, len(words) + 1):
-                if not any(len(w) >= 4 for w in words[i:j]):
-                    continue
-                run = r"\W{1,3}".join(re.escape(w) for w in words[i:j])
-                if j < len(words):
-                    nxt = words[j]
-                    run += r"(?:\W{1,3}(?:" + "|".join(re.escape(nxt[:k]) for k in range(len(nxt), 0, -1)) + r")(?=…|\.\.\.))?"
-                run = r"\b" + run
-                forms[run] = max(forms.get(run, 0), j - i)
-    return [form for form, _ in sorted(forms.items(), key=lambda item: (-item[1], -len(item[0])))]
+        words.update(found)
+        seeds[_JOIN.join(map(re.escape, found))] = len(found)          # the whole title, however short its words
+        for i in range(len(found) - 2):
+            if any(len(w) >= 4 for w in found[i:i + 3]):
+                seeds.setdefault(_JOIN.join(map(re.escape, found[i:i + 3])), 3)
+    if not seeds:
+        return None
+    alternatives = "|".join(sorted(seeds, key=lambda s: (-seeds[s], -len(s))))
+    more = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
+    return re.compile(r"(?<![^\W_])(?:" + alternatives + r")(?![^\W_])(?:" + _JOIN + r"(?:" + more + r")(?![^\W_]))*"
+                      r"(?:" + _JOIN + r"[^\W_]{1,30}(?=…|\.\.\.))?", re.I)
 
 
 def _title_words(titles) -> set:
-    return {w for t in titles or () for w in re.findall(r"[a-z0-9]{4,}", str(t or "").lower())}
+    return {w for t in titles or () for w in re.findall(r"[a-z0-9]{4,}", str(t or "").lower()[:MAX_TITLE])}
 
 
 def sanitize(text, *, titles=(), secrets=None, home=None, names=None, limit=MAX_MESSAGE) -> str:
-    """One line of `text` that is safe to send: no URLs, file paths (home -> ~, folder names dropped), emails, names,
-    keys, tokens, ids or titles, at most `limit` characters. `names` defaults to this computer's (_names)."""
-    text = " ".join(str(text or "").split())
+    """One line of `text` that is safe to send: no URLs, file paths ("[path].mp4"), emails, names, handles, keys,
+    tokens, ids, addresses, titles or the video's own words (quoted or labelled), at most `limit` characters. `names`
+    defaults to this computer's (_names). Only the first MAX_INPUT characters are read."""
+    text = " ".join(str(text or "")[:MAX_INPUT].split())
     if not text:
         return ""
     for secret in (secrets if secrets is not None else _secrets()):
         if secret:
             text = text.replace(secret, "[hidden]")
+    try:
+        home = str(home if home is not None else Path.home()).rstrip("\\/")
+    except (RuntimeError, OSError):
+        home = ""
+    # this Studio's folder and the home folder become ~, wherever they are, so their paths go too
+    for root in sorted({str(HOME).rstrip("\\/"), home}, key=len, reverse=True):
+        if len(root) < 3:
+            continue
+        for form in {root, root.replace("\\", "/"), root.replace("/", "\\")}:
+            text = re.sub(r"(?<![\w.:/\\~…-])" + re.escape(form) + r"(?=[\\/\s\"',;:)]|$)", "~", text, flags=re.I)
+    text = _paths(text)
     text = _URL.sub("[link]", text)
     text = _EMAIL.sub("[email]", text)
     text = _EMAIL_NAME.sub("[email]", text)                         # "Jane Doe <jane@…>"
@@ -187,45 +323,33 @@ def sanitize(text, *, titles=(), secrets=None, home=None, names=None, limit=MAX_
     text = _ASSIGNED.sub(r"\1\2[hidden]", text)
     text = _PREFIXED.sub("[hidden]", text)
     text = _bodies(text)
-    try:
-        home = str(home if home is not None else Path.home()).rstrip("\\/")
-    except (RuntimeError, OSError):
-        home = ""
-    studio = str(HOME).rstrip("\\/")
-    inside = bool(home) and studio.lower().startswith(home.lower())
-    for root, mark in sorted(((studio, "~/…" if inside else "…"), (home, "~")), key=lambda r: -len(r[0])):
-        if len(root) < 3:
-            continue
-        for form in {root, root.replace("\\", "/"), root.replace("/", "\\")}:
-            text = re.sub(re.escape(form) + r"(?=[\\/\s\"',;:)]|$)", lambda _m, mark=mark: mark, text, flags=re.I)
-    for pattern in _HOMES:
-        text = pattern.sub("~", text)
-    words = _title_words(titles)
-    forms = _title_forms(titles)
+    text = _labelled(text)
+    text = _QUOTED.sub(_quoted, text)
+    words, title = _title_words(titles), _title_pattern(titles)
 
     def path(match):
-        root, base = match.group("root") or "", match.group("base") or ""
+        base = match.group("base") or ""
         folders = [p for p in re.split(r"[\\/]+", match.group("dirs")) if p]
-        if not base and not folders or not root and not folders:
+        if not folders:
             return match.group(0)                                  # "/" or "and/or": not a path
-        if words and any(w in base.lower() for w in words) or any(re.search(f, base, re.I) for f in forms):
+        if words and any(w in base.lower() for w in words) or title and title.search(base):
             suffix = Path(base).suffix
             base = "[file]" + (suffix if re.fullmatch(r"\.[A-Za-z0-9]{1,5}", suffix) else "")
-        lead = "~/" if root == "~" else ""
-        return lead + ("…/" + base if folders or root not in ("", "~") else base)
+        return "…/" + base
     text = _PATH.sub(path, text)
-    for form in forms:
-        text = re.sub(form, "[title]", text, flags=re.I)
+    if title:
+        text = title.sub("[title]", text)
     # after paths and titles, so a name in a folder or a title goes with it
     for name in (names if names is not None else _names(home)):
         text = re.sub(r"(?<![\w\[])" + re.escape(name) + r"(?![\w\]])", "[name]", text, flags=re.I)
+    text = _HANDLE.sub("[handle]", text)
     text = _PC_NAME.sub("[computer]", text)
     text = _UUID.sub("[id]", text)
     text = _HEX_ID.sub("[id]", text)
     text = _ACCOUNT_NO.sub(r"\1\2[id]", text)
     text = _LONG_TOKEN.sub("[hidden]", text)
     text = _IPV4.sub("[ip]", text)
-    text = _LONG_QUOTE.sub('"…"', text)
+    text = _IPV6.sub("[ip]", text)
     for pattern in _BOILERPLATE:
         text = pattern.sub("", text)
     text = " ".join(text.split()).strip(" -:;,")
@@ -353,7 +477,8 @@ def last_header(lines) -> str:
 def _neutral(text, titles=()) -> str:
     """The words a stop is classified by: its message without paths, titles or keys (a folder called "YouTube ideas"
     says nothing about YouTube), plus the services its links went to."""
-    hosts = {m.group(1).lower() for m in re.finditer(r"(?i)\b(?:https?|wss?)://([^/\s:\"'<>]+)", str(text or ""))}
+    hosts = {m.group(1).lower() for m in re.finditer(r"(?i)\b(?:https?|wss?)://([^/\s:\"'<>]+)",
+                                                     str(text or "")[:MAX_INPUT])}
     return (sanitize(text, titles=titles, secrets=[], names=(), limit=0) + " " + " ".join(sorted(hosts))).strip()
 
 
