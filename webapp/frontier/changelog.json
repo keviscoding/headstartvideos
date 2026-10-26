@@ -1,5 +1,22 @@
 [
   {
+    "build": 107,
+    "date": "2026-10-26",
+    "title": "Claude codes your channel's look, plus a queue",
+    "items": [
+      "New: cloned channels are drawn by code your Claude Code writes. Every channel you clone, 3D and documentaries included, gets its own renderer written in code by default; AI pictures only if you choose them. If a clone falls short of the channel's own frames, improve it with Style Lab in Claude Code.",
+      "New: queue videos while one is being made. Add to queue starts each one by itself in turn, and when something stops them all (a Claude usage limit, an empty balance, a full disk) the queue waits on hold until you press Carry on.",
+      "New: a stopped video can be recovered with one clear yes. Studio says what stopped it and what carrying on may cost, and can carry on by itself after a usage limit resets if you tick that box. Making a video with the same title again offers Resume first.",
+      "New: setup installs FFmpeg, Node and Claude Code for you. One press each, checked against their published fingerprints, into Studio's own folder.",
+      "Faster 3D videos. Three Claude steps run at once, Create says how long 3D adds before you start, and Quicker 3D review takes one review round instead of several.",
+      "Cloned styles learn the channel's sound: its own music score and its own sound effects, made in code; no generic braams or bells unless the channel uses them.",
+      "Fixed: captions follow your switch, also when you resume a video. Research footage carries on through ChannelRecipe's watcher when Kie's isn't answering (at most 20 clip watches a video, never your credits), and archive.org outages are skipped.",
+      "Fixed: Quest videos show their game screen again, and 3D reviews run their repair round. The narrator no longer reads out sound cues left in a script.",
+      "Studio trusts your computer's own certificates, as your browser does. An antivirus web shield or a company firewall that checks secure connections no longer breaks downloads.",
+      "To fix setup for everyone, Studio tells ChannelRecipe which setup checks fail on your computer: only the check names, your Studio version and Mac or Windows."
+    ]
+  },
+  {
     "build": 106,
     "date": "2026-10-26",
     "title": "Kie narrates with Gemini voices",
