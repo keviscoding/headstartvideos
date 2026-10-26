@@ -590,6 +590,8 @@ def save(home, style: str) -> dict:
     data = _style(home, style)
     spec = _spec(data)
     found = a2d.manifest(code, home, lab["dims"])
+    scene = _read(lab_dir / "scene.json")
+    found["examples"] = a2d.examples_from(scene.get("stress"), scene)    # how the director calls each action
     checked = _last(lab, "check", sha)
     target = Path(home) / "assets" / "styles" / "learned" / style
     target.mkdir(parents=True, exist_ok=True)

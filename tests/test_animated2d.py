@@ -271,6 +271,48 @@ def test_the_channels_recurring_characters_are_in_every_video():
     assert a2d.recurring_words({}, {}).startswith("none")
 
 
+def test_a_plan_that_holds_repeats_or_idles_is_sent_back_in_the_directors_terms():
+    """The bunker video held one still figure for long stretches, repeated shots and left out the channel's mascot."""
+    shots = [{"start": 0.0, "end": 9.0, "set": "hall", "framing": "wide", "cast": ["mara"]},
+             {"start": 9.0, "end": 11.0, "set": "hall", "framing": "close:mara", "cast": ["mara"]},
+             {"start": 11.0, "end": 14.0, "set": "hall", "framing": "close:mara", "cast": ["mara"]}]
+    plan = {"duration": 14.0, "shots": shots, "fx": [],
+            "actions": [{"at": 0, "who": "mara", "move": "place"}, {"at": 7.5, "who": "mara", "move": "wave"}]}
+    cast = {"cast": {"you": {"name": "You", "recurring": True}, "mara": {"name": "Mara"}}}
+    notes = a2d.plan_notes(plan, cast, {"shot_s": 2.0}, t0=60.0)
+    assert notes == ["60.0 s to 69.0 s: one shot holds 9 s on the same view; cut on the words to another framing, place "
+                     "or person",
+                     "71.0 s: this shot repeats the one before it (the same place, framing and people)",
+                     "60.0 s to 67.5 s: nobody does anything for 8 s; give the people on screen actions that show the words",
+                     "67.5 s to 74.0 s: nobody does anything for 6 s; give the people on screen actions that show the words",
+                     "60.0 s to 74.0 s: the channel's recurring character (you) is in none of the shots"]
+    busy = {"duration": 6.0, "fx": [], "shots": [{"start": 0, "end": 3, "set": "hall", "framing": "wide", "cast": ["you"]},
+                                                  {"start": 3, "end": 6, "set": "pantry", "framing": "wide", "cast": ["you"]}],
+            "actions": [{"at": t, "who": "you", "move": "walk"} for t in (0.5, 2.5, 4.5)]}
+    assert a2d.plan_notes(busy, cast, {}) == []
+
+
+def test_the_swept_frames_find_a_frozen_picture_words_off_the_frame_or_over_others_and_shots_that_look_alike():
+    moves = [(k * 0.25, 0.0 if 2.0 <= k * 0.25 <= 5.5 else 1.2) for k in range(1, 40)]
+    sig_a, sig_b = [100] * 144, [100] * 143 + [104]
+    look = {"moves": moves, "sigs": {0.75: sig_a, 3.0: sig_a, 6.0: sig_b, 8.5: [10] * 144},
+            "texts": [{"kind": "over", "text": "DAY DAY 1", "other": "6:42 PM", "t": 0.5},
+                      {"kind": "over", "text": "DAY DAY 1", "other": "6:42 PM", "t": 0.75},
+                      {"kind": "off", "text": "a title sliding in", "t": 2.0}],
+            "overflow": [{"text": "until then, the bunker decides who stays", "t": 6.0}]}
+    plan = {"duration": 10.0, "shots": [{"start": 0, "end": 2, "set": "hall", "framing": "wide"},
+                                        {"start": 2, "end": 4, "set": "pantry", "framing": "wide"},
+                                        {"start": 4, "end": 8, "set": "pantry", "framing": "close:you"},
+                                        {"start": 8, "end": 10, "set": "hatch", "framing": "wide"}]}
+    notes = a2d.frame_notes(look, plan)
+    assert "1.8 s to 5.5 s: nothing on screen moves (a frozen picture); give someone an action there" in notes
+    assert any('"DAY DAY 1" are drawn over "6:42 PM"' in n for n in notes)
+    assert not any("sliding" in n for n in notes), "words off the frame in one sampled frame are a slide-in, not a fault"
+    assert any("until then, the bunker decides who stays\" don't fit their box" in n for n in notes)
+    assert "2.0 s: this shot looks the same as the one before it" in notes and \
+        "4.0 s: this shot looks the same as the one before it" in notes and len([n for n in notes if "same" in n]) == 2
+
+
 def test_long_narration_is_choreographed_in_even_stretches_between_lines():
     lines = [(i * 5.0, i * 5.0 + 4.5, f"line {i}", []) for i in range(20)]
     parts = a2d.chunks(lines, 100.0)
@@ -310,7 +352,7 @@ def test_the_builder_ships_the_kit_and_its_sounds(tmp_path):
     kit_dir = tmp_path / "data/frontier/animated2d"
     (kit_dir / "sounds").mkdir(parents=True)
     for name in ("core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "stage.js", "bind.js", "example-stick.js",
-                 "example-own.js", "cast.txt", "director.txt", "build.txt", "AUTHORING.md"):
+                 "example-own.js", "cast.txt", "director.txt", "build.txt", "review.txt", "AUTHORING.md"):
         (kit_dir / name).write_text("x", encoding="utf-8")
     (kit_dir / "sounds" / "punch.mp3").write_bytes(b"mp3")
     shipped = {dest for _, dest in builder.private_animated2d_resources(tmp_path)}
@@ -643,6 +685,47 @@ def test_every_video_casts_and_directs_in_the_saved_renderers_own_vocabulary_and
     monkeypatch.setattr(a2d, "blank_runs", lambda samples, duration, step=0.25: [(0.5, 4.0)])
     with pytest.raises(a2d.AnimationStopped, match="would show nothing from 0:00 to 0:04.*Nothing was drawn"):
         a2d.assemble(engine, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", True, True)
+
+
+def test_each_stretch_is_looked_at_before_it_is_drawn_and_re_planned_once(home, tmp_path, monkeypatch):
+    """Nothing judged the bunker video's frames. Claude now looks at a few frames of each stretch before it is drawn
+    (Claude usage only): what the director can fix is re-planned once; what only the renderer draws wrong is said."""
+    folder = tmp_path / "op"
+    (folder / "renderer").mkdir(parents=True)
+    (folder / "renderer" / "renderer.js").write_text(BEAN, encoding="utf-8")
+    man = _chromium(lambda: a2d.manifest(BEAN, home))
+    (folder / "renderer" / "build.json").write_text(json.dumps({"state": "passed", "overall": 7, "bar": 6.5,
+        "sha256": hashlib.sha256(BEAN.encode()).hexdigest(), "manifest": man}))
+    style = a2d.attach({"name": "cr_clone_beans", "look": {"visuals": "cr_animated2d", "animated2d": {}}}, folder, home)
+    monkeypatch.setattr(a2d, "HERE", home)
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "script.txt").write_text("The bean wakes up and hops for joy.", encoding="utf-8")
+    (job / "title.txt").write_text("A Bean's Morning\n", encoding="utf-8")
+    (job / "subs.srt").write_text("1\n00:00:00,000 --> 00:00:01,200\nThe bean wakes up\n", encoding="utf-8")
+    engine = Engine("cr_clone_beans", style["look"])
+    looked = []
+
+    def claude_vision(prompt, images, model=None, max_tokens=2000):
+        looked.append((prompt, images))
+        return json.dumps({"problems": [{"moment": 1, "kind": "PLACE", "fix": "director", "what": "a void, not the kitchen"},
+                                        {"moment": 1, "kind": "STRAY", "fix": "renderer", "what": "a red band floats"}]})
+    engine.claude_vision = claude_vision
+    import cr_claude
+    monkeypatch.setattr(cr_claude, "VISUAL_MODEL", "opus", raising=False)
+    a2d.assemble(engine, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
+    assert len(looked) == 1 and len(looked[0][1]) == 1 and Path(looked[0][1][0]).is_file()
+    assert 'shot in "void"' in looked[0][0] and "The bean wakes up" in looked[0][0]
+    fix_prompt = engine.prompts[-1]
+    assert len(engine.prompts) == 3 and "A CHECK OF YOUR PLAN" in fix_prompt and "place: a void, not the kitchen" in fix_prompt
+    assert "red band" not in fix_prompt, "what only the renderer draws wrong is not the director's to fix"
+    review = json.loads((job / "animated2d" / "delivery.json").read_text())["review"]
+    assert review[0]["replanned"] and review[0]["renderer"] == ["1.2 s: stray: a red band floats"]
+    assert any("Improve this style" in m for k, m in engine.calls if k == "step")
+    again = Engine("cr_clone_beans", style["look"])
+    again.claude_vision = lambda *a, **k: pytest.fail("a stretch is looked at once")
+    a2d.assemble(again, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
+    assert again.prompts == [], "a resumed video asks Claude nothing again"
 
 
 def test_a_style_from_before_renderers_keeps_the_kits_stick_fights(home, monkeypatch):

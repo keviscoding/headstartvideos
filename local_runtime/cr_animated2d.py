@@ -40,7 +40,7 @@ KIT_API = 1                            # the page runtime's interface a renderer
 KIT_FILES = ("core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "stage.js", "bind.js")
 EXAMPLE = "example-stick.js"             # the kit's own stick fights (styles from before renderers)
 EXAMPLE_OWN = "example-own.js"          # what Claude is shown: a renderer that draws everything itself
-PROMPTS = ("cast.txt", "director.txt", "build.txt", "AUTHORING.md", EXAMPLE_OWN)
+PROMPTS = ("cast.txt", "director.txt", "build.txt", "review.txt", "AUTHORING.md", EXAMPLE_OWN)
 VISUALS = "cr_animated2d"
 VISUALS3D = "cr_animated3d"            # the same plugin for a 3D channel's renderer (cr_animated3d.py)
 PLUGINS = (VISUALS, VISUALS3D)
@@ -1102,11 +1102,14 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
         return result
     (out / "renderer.js").write_text(best_code, encoding="utf-8")
     _write(out / "test-scene.json", _test_scene(best_scene, spec))
+    _write(out / "stress-scene.json", _stress_scene(best_scene, spec))
     try:
         found = manifest(best_code, home, dims_of(spec))
     except Exception as error:                              # noqa: BLE001 - it drew, so this is the browser's fault
         found = {}
         log(f"  renderer: its manifest could not be read ({str(error)[:120]})")
+    if found:                                               # how its author calls each action: the director's model
+        found["examples"] = examples_from(best_scene.get("stress") if isinstance(best_scene, dict) else None, best_scene)
     result = {"key": key, "state": "passed" if best["overall"] >= best.get("bar", bar) else "below_bar",
               "round": best["round"], "overall": best["overall"], "characters": best["characters"],
               "bar": best.get("bar", bar), "control": best.get("control"), "rounds": rows,
@@ -1833,12 +1836,42 @@ def _style_renderer(engine, style: str, job=None) -> tuple:
         return code, pin.get("manifest") or {}
     code, man = renderer_for(engine.STYLE_INFO.get(style) or {})
     saved = ((((engine.STYLE_INFO.get(style) or {}).get("look") or {}).get("animated2d") or {}).get("renderer") or {})
+    if isinstance(man, dict) and not man.get("examples"):
+        found = author_examples(engine.STYLE_INFO.get(style) or {}, style, code)
+        if found["actions"] or found["fx"]:
+            man = {**man, "examples": found}
     folder.mkdir(parents=True, exist_ok=True)
     path.write_text(code, encoding="utf-8")
     _write(folder / "renderer.json", {"sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
                                       "file": str(saved.get("file") or "the kit's stick fights"),
                                       "version": saved.get("version"), "manifest": man})
     return code, man
+
+
+def author_examples(info: dict, style: str, code: str, home=None) -> dict:
+    """How a renderer saved before Studio 109 calls its own actions: the test and stress scenes its author wrote with
+    this exact code, in the study that built it (its winning round's answer) or the Style Lab workspace that saved it.
+    {"actions": {}, "fx": {}} when neither holds this code."""
+    root, sha = Path(home or HERE), hashlib.sha256(str(code).encode("utf-8")).hexdigest()
+    scenes = []
+    op = str(((info or {}).get("cr_style_clone") or {}).get("operation_id") or "")
+    if re.fullmatch(r"op_[a-f0-9]{24}", op):
+        folder = root / "output" / "cr-style-clone" / op / "renderer"
+        built = _read(folder / "build.json")
+        if built.get("sha256") == sha:
+            reply = folder / f"round-{built.get('round')}.txt"
+            scene = _blocks(reply.read_text(encoding="utf-8"))[1] if reply.is_file() else {}
+            scenes += [scene.get("stress"), scene, _read(folder / "test-scene.json")]
+    lab = root / "style-lab" / re.sub(r"[^a-z0-9_-]", "", str(style or ""))[:80]
+    try:
+        same = (lab / "renderer.js").is_file() and \
+            hashlib.sha256((lab / "renderer.js").read_text(encoding="utf-8").encode("utf-8")).hexdigest() == sha
+    except (OSError, UnicodeDecodeError):
+        same = False
+    if same:
+        scene = _read(lab / "scene.json")
+        scenes += [scene.get("stress"), scene]
+    return examples_from(*[x for x in scenes if isinstance(x, dict)])
 
 
 def cast_and_sets(engine, script: str, job: Path, style: str, title: str = "", man: dict = None) -> dict:
@@ -2101,6 +2134,203 @@ def ending(plan: dict) -> str:
             + ". Place everyone again at the start of this stretch where it makes sense.")
 
 
+# ── the frame check before a stretch is drawn (Studio 109) ─────────────────────────────────────────────────────────
+# The owner's Windows test: nothing judged the finished video's frames; only the study's test shots were scored. Each
+# stretch is now checked before it is drawn in full: its plan (holds, repeats, quiet stretches, the recurring cast),
+# its frames swept in the sandbox (frozen pictures, words off the frame or over other words, words cut to fit, repeated
+# looks) and a few of its frames looked at by Claude (the wrong place, stray things, text, missing people, meaning).
+# What the director can fix is re-planned ONCE; what only the renderer can fix is recorded and said. Costs: the sweep
+# is free; the look is one Claude vision call a stretch (a minute of narration at most) and the re-plan one director
+# call, both Claude usage on the creator's own Claude Code, no money.
+
+HOLD_S = 7.0                           # one shot longer than this (or 3 of the channel's own shots) holds a view too long
+QUIET_S = 5.0                          # this long with no action and no effect at all: nothing happens on screen
+SAME_LOOK = 3.0                        # two shots whose 16x9 thumbnails differ less than this (0-255) look the same
+REVIEW_FRAMES = 8                      # moments of a stretch Claude looks at before it is drawn (one vision call)
+REVIEW_WIDTH = 768                     # the width they are sent at
+
+
+def _s(t: float) -> str:
+    return f"{float(t):.1f} s"
+
+
+def plan_notes(plan: dict, casting: dict, spec: dict, t0: float = 0.0) -> list:
+    """What a stretch's plan does that the channel's best videos don't, in the director's terms (seconds on the
+    narration's clock): a view held too long, a shot that repeats the one before, a stretch where nobody does
+    anything, the channel's recurring character left out."""
+    notes, shots = [], plan.get("shots") or []
+    shot_s = spec.get("shot_s") if isinstance(spec, dict) else None
+    hold = max(HOLD_S, 3 * shot_s) if isinstance(shot_s, (int, float)) and shot_s > 0 else HOLD_S
+    for sh in shots:
+        if sh["end"] - sh["start"] > hold:
+            notes.append(f"{_s(t0 + sh['start'])} to {_s(t0 + sh['end'])}: one shot holds {sh['end'] - sh['start']:.0f} s "
+                         "on the same view; cut on the words to another framing, place or person")
+    for a, b in zip(shots, shots[1:]):
+        if (a["set"], a["framing"], sorted(a["cast"]), a.get("crowd")) == (b["set"], b["framing"], sorted(b["cast"]), b.get("crowd")):
+            notes.append(f"{_s(t0 + b['start'])}: this shot repeats the one before it (the same place, framing and people)")
+    events = sorted({round(a["at"], 2) for a in plan.get("actions") or [] if a.get("move") != "place"} |
+                    {round(f["at"], 2) for f in plan.get("fx") or []})
+    marks = [0.0] + events + [float(plan.get("duration") or 0)]
+    for a, b in zip(marks, marks[1:]):
+        if b - a > QUIET_S:
+            notes.append(f"{_s(t0 + a)} to {_s(t0 + b)}: nobody does anything for {b - a:.0f} s; give the people on "
+                         "screen actions that show the words")
+    rec = [k for k, c in (casting.get("cast") or {}).items() if isinstance(c, dict) and c.get("recurring")]
+    if rec and float(plan.get("duration") or 0) > 12 and any(sh["cast"] for sh in shots) and \
+            not any(set(sh["cast"]) & set(rec) for sh in shots):
+        notes.append(f"{_s(t0)} to {_s(t0 + float(plan['duration']))}: the channel's recurring character "
+                     f"({', '.join(rec)}) is in none of the shots")
+    return notes
+
+
+def frame_notes(look: dict, plan: dict, t0: float = 0.0, step: float = SWEEP_STEP) -> list:
+    """What a stretch's swept frames show: nothing moving for seconds, words that run off the frame or over other
+    words (seen in at least two sampled frames), words cut to fit their box, two shots that look the same."""
+    notes = []
+    moves = look.get("moves") or []
+    start = None
+    for t, change in list(moves) + [(float(plan.get("duration") or 0) + step, 99.0)]:
+        if change < STILL:
+            start = t - step if start is None else start
+        elif start is not None:
+            if t - step - start >= FROZEN_S:
+                notes.append(f"{_s(t0 + start)} to {_s(t0 + t - step)}: nothing on screen moves (a frozen picture); "
+                             "give someone an action there")
+            start = None
+    seen = {}
+    for row in look.get("texts") or []:
+        if isinstance(row, dict) and row.get("kind") in ("off", "over"):
+            seen.setdefault((row["kind"], str(row.get("text")), str(row.get("other") or "")), []).append(float(row.get("t") or 0))
+    for (kind, text, other), times in seen.items():
+        if len(set(times)) < 2:
+            continue
+        where = _s(t0 + min(times))
+        notes.append(f"{where}: the words \"{text}\" run off the edge of the frame; shorter words" if kind == "off" else
+                     f"{where}: the words \"{text}\" are drawn over \"{other}\"; shorter words, or don't send what the "
+                     "renderer writes itself")
+    for row in (look.get("overflow") or [])[:4]:
+        if isinstance(row, dict) and row.get("text"):
+            notes.append(f"{_s(t0 + float(row.get('t') or 0))}: the words \"{row['text']}\" don't fit their box at a "
+                         "readable size; say it in fewer words")
+    sigs = look.get("sigs") or {}
+    if sigs:
+        keys = sorted(sigs)
+
+        def near(t):
+            return sigs[min(keys, key=lambda k: abs(k - t))]
+        shots = plan.get("shots") or []
+        for a, b in zip(shots, shots[1:]):
+            x, y = near((a["start"] + a["end"]) / 2), near((b["start"] + b["end"]) / 2)
+            planned_apart = (a["set"], a["framing"]) != (b["set"], b["framing"])   # the same plan is said above
+            if planned_apart and x and len(x) == len(y) and sum(abs(p - q) for p, q in zip(x, y)) / len(x) < SAME_LOOK:
+                notes.append(f"{_s(t0 + b['start'])}: this shot looks the same as the one before it")
+    return notes
+
+
+def review_moments(plan: dict, most: int = REVIEW_FRAMES) -> list:
+    """The seconds of a stretch Claude looks at: the middle of each shot, at most `most`, spread across the stretch."""
+    mids = [round((sh["start"] + sh["end"]) / 2, 2) for sh in plan.get("shots") or [] if sh["end"] - sh["start"] > 0.3]
+    if len(mids) > most:
+        mids = [mids[round(k * (len(mids) - 1) / (most - 1))] for k in range(most)]
+    return mids
+
+
+def _moment_words(plan: dict, casting: dict, lines: list, t0: float, t: float) -> str:
+    sh = next((x for x in plan.get("shots") or [] if x["start"] <= t < x["end"]), (plan.get("shots") or [{}])[-1])
+    place = ({**casting.get("sets", {}), **(plan.get("sets") or {})}.get(sh.get("set")) or {})
+    words = " ".join(w for _, _, _, ws in lines for w, wt in ws if abs(wt - (t0 + t)) <= 2.0)
+    crowd = sh.get("crowd", place.get("crowd"))
+    return (f"at {_s(t0 + t)}: shot in \"{sh.get('set')}\" ({str(place.get('prompt') or '')[:90]}), {sh.get('framing')}"
+            + (f", about {', '.join(sh.get('cast') or [])}" if sh.get("cast") else "")
+            + (f", crowd {crowd}" if crowd else "") + f". Words around it: \"{words[:240]}\"")
+
+
+def look_review(engine, job: Path, index: int, plan: dict, casting: dict, spec: dict, part: tuple, title: str, man: dict,
+                frames: list, key: str) -> list:
+    """Claude looks at a stretch's frames before it is drawn (one vision call on the creator's Claude Code, saved in
+    review-NNN.txt so a resumed video never asks twice): [{"at", "kind", "fix": director|renderer, "what"}]. [] when
+    it saw nothing wrong, None when it couldn't look (no vision in this Studio, or the call failed: the video goes on)."""
+    see = getattr(engine, "claude_vision", None)
+    if not callable(see) or not frames:
+        return None
+    t0, t1, lines = part
+    folder = Path(job) / "animated2d"
+    reply, request = folder / f"review-{index:03d}.txt", folder / f"review-{index:03d}-request.json"
+    if reply.is_file() and _read(request).get("key") == key:
+        text = reply.read_text(encoding="utf-8")
+    else:
+        small = []
+        try:
+            from PIL import Image
+            for t, path in frames:
+                dest = Path(path).with_name(Path(path).stem + "-s.jpg")
+                with Image.open(path) as im:
+                    im = im.convert("RGB")
+                    im.thumbnail((REVIEW_WIDTH, REVIEW_WIDTH))
+                    im.save(dest, quality=85)
+                small.append((t, dest))
+        except Exception:                                   # noqa: BLE001 - the full-size frames are sent then
+            small = list(frames)
+        moments = "\n".join(f"{k + 1}. " + _moment_words(plan, casting, lines, t0, t) for k, (t, _) in enumerate(small))
+        prompt = (_prompt("review.txt").replace("[N]", str(len(small))).replace("[START]", f"{t0:.1f}")
+                  .replace("[END]", f"{t1:.1f}").replace("[TITLE]", title or "")
+                  .replace("[CAST]", json.dumps(casting.get("cast") or {}, ensure_ascii=False))
+                  .replace("[RECURRING]", ", ".join(k for k, c in (casting.get("cast") or {}).items() if c.get("recurring"))
+                           or recurring_words(man, spec))
+                  .replace("[SETS]", _places_words({**casting.get("sets", {}), **(plan.get("sets") or {})}))
+                  .replace("[MOMENTS]", moments))
+        engine.step(f"Animated 2D: Claude looks at {len(small)} frames of {t0:.0f}-{t1:.0f} s before they are drawn")
+        _write(request, {"key": key, "times": [t for t, _ in small]})
+        try:
+            text = see(prompt, [str(p) for _, p in small], max_tokens=3000)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as error:                      # noqa: BLE001 - the look is a check, never a stop
+            engine.log(f"animated 2D: the frame look could not run ({str(error)[:160]}); the video goes on")
+            return None
+        reply.write_text(str(text), encoding="utf-8")
+    times = _read(request).get("times") or [t for t, _ in frames]
+    try:
+        found = _json(text)
+    except AnimationStopped:
+        return None
+    out = []
+    for row in (found.get("problems") if isinstance(found, dict) else None) or []:
+        if not isinstance(row, dict) or not str(row.get("what") or "").strip():
+            continue
+        k = _number(row.get("moment"))
+        at = times[int(k) - 1] if k is not None and 1 <= int(k) <= len(times) else None
+        out.append({"at": round(t0 + at, 2) if at is not None else None, "kind": str(row.get("kind") or "")[:12].upper(),
+                    "fix": "renderer" if str(row.get("fix") or "").lower().startswith("render") else "director",
+                    "what": str(row["what"])[:300]})
+    return out[:12]
+
+
+def check_stretch(engine, job: Path, index: int, film: dict, plan: dict, code: str, man: dict, casting: dict, spec: dict,
+                  part: tuple, title: str, *, key: str, look_at: bool = True) -> dict:
+    """A stretch's plan and frames checked before it is drawn: {"notes" (free checks), "seen" (Claude's look),
+    "director" (what a re-plan can fix), "renderer" (what only the renderer can)}. A renderer fault that leaves the
+    screen empty stops the video here, before anything is drawn or published."""
+    t0 = part[0]
+    look = {}
+    moments = review_moments(plan) if look_at else []
+    samples = sweep(film, code, look=look, shots=moments, shot_dir=Path(job) / "animated2d" / f"review-{index:03d}")
+    runs = blank_runs(samples, film["duration"])
+    if runs:
+        a, b = runs[0]
+        raise AnimationStopped(
+            f"The channel's animation would show nothing from {_clock(t0 + a)} to {_clock(t0 + b)} of "
+            f"this video (after {_before(film, a)}): a fault in its renderer (version {man.get('version')}). "
+            "Nothing was drawn or published. Study the channel again, or choose Use pictures instead on the "
+            "style's page.")
+    notes = plan_notes(plan, casting, spec, t0) + frame_notes(look, plan, t0)
+    seen = look_review(engine, job, index, plan, casting, spec, part, title, man, look.get("shots") or [], key) \
+        if look_at else None
+    said = lambda r: (f"{_s(r['at'])}: " if r.get("at") is not None else "") + f"{r['kind'].lower()}: {r['what']}"  # noqa: E731
+    return {"notes": notes, "seen": seen, "director": notes + [said(r) for r in seen or [] if r["fix"] == "director"],
+            "renderer": [said(r) for r in seen or [] if r["fix"] == "renderer"]}
+
+
 def _first_line(path: Path) -> str:
     try:
         return (Path(path).read_text(encoding="utf-8").splitlines() or [""])[0].strip()
@@ -2135,37 +2365,62 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
     parts = chunks(lines, total)
     folder = job / "motion"
     folder.mkdir(exist_ok=True)
+    folder_a2d = job / "animated2d"
     timeline, segments, previous = [], [], ""
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:8]
     own = style_sounds(code, style, dims=dims_of(spec))      # the style's own effects, made in code once a version
+    checked = []
     for index, part in enumerate(parts):
         plan = direct(engine, job, casting, spec, part, index, previous, title, man)
-        previous = ending(plan)
         words = [{"w": w, "t": round(t - part[0], 3)} for _, _, _, ws in part[2] for w, t in ws]
-        film = film_spec(plan, casting, spec, plate_paths, words,
-                         size=(int(getattr(engine, "VIDEO_W", 1920)), int(getattr(engine, "VIDEO_H", 1080))))
+        size = (int(getattr(engine, "VIDEO_W", 1920)), int(getattr(engine, "VIDEO_H", 1080)))
+        film = film_spec(plan, casting, spec, plate_paths, words, size=size)
+        first = _digest([film, code_hash])
+        record = folder_a2d / f"review-{index:03d}.json"
+        rec = _read(record)
+        if rec.get("key") == first and rec.get("final") in ("first", "fix") and not force:
+            if rec["final"] == "fix":                       # checked before: the re-plan it chose (saved, not asked again)
+                plan = direct(engine, job, casting, spec, part, index, previous, title, man, fix=rec.get("fix"), before=plan)
+                film = film_spec(plan, casting, spec, plate_paths, words, size=size)
+        else:
+            out = folder / f"a2d_{index:03d}_{first[:8]}.mp4"
+            if not (out.is_file() and out.stat().st_size > 10000) or force:
+                found = check_stretch(engine, job, index, film, plan, code, man, casting, spec, part, title, key=first)
+                rec = {"key": first, "final": "first", "notes": found["notes"], "seen": found["seen"],
+                       "renderer": found["renderer"]}
+                if found["director"]:
+                    fixed = direct(engine, job, casting, spec, part, index, previous, title, man, fix=found["director"],
+                                   before=plan)
+                    again = film_spec(fixed, casting, spec, plate_paths, words, size=size)
+                    try:
+                        after = check_stretch(engine, job, index, again, fixed, code, man, casting, spec, part, title,
+                                              key=first, look_at=False)
+                        plan, film = fixed, again
+                        rec.update(final="fix", fix=found["director"], left=after["notes"])
+                    except AnimationStopped as error:       # the re-plan trips a renderer fault: the checked plan stands
+                        rec.update(fix_refused=str(error)[:300])
+                _write(record, rec)
+        checked.append({"part": index, "from": round(part[0], 2), "replanned": rec.get("final") == "fix",
+                        "found": len(rec.get("fix") or []), "left": rec.get("left") or [], "renderer": rec.get("renderer") or []})
+        previous = ending(plan)
         _write(job / "animated2d" / f"film-{index:03d}.json", film)
         out = folder / f"a2d_{index:03d}_{_digest([film, code_hash])[:8]}.mp4"
         if not (out.is_file() and out.stat().st_size > 10000) or force:
-            # the frame review before the real render: a renderer fault that leaves the screen empty stops here,
-            # before anything is drawn, never published
-            runs = blank_runs(sweep(film, code), film["duration"])
-            if runs:
-                a, b = runs[0]
-                raise AnimationStopped(
-                    f"The channel's animation would show nothing from {_clock(part[0] + a)} to {_clock(part[0] + b)} of "
-                    f"this video (after {_before(film, a)}): a fault in its renderer (version {man.get('version')}). "
-                    "Nothing was drawn or published. Study the channel again, or choose Use pictures instead on the "
-                    "style's page.")
             engine.step(f"Animated 2D: drawing {part[1] - part[0]:.0f} s of animation ({index + 1} of {len(parts)})")
             marks = render(film, out, code, workers=max(1, min(3, int(getattr(engine, "MOTION_WORKERS", 2)) + 1)),
                            log=engine.log, own=own)
             _write(out.with_suffix(".sfx.json"), marks)
         timeline.append(("motion", str(out), False, round(part[1] - part[0], 6)))
         segments.append((part[0], str(out), round(part[1] - part[0], 6)))
+    faults = [r for c in checked for r in c["renderer"]]
+    if faults:
+        engine.step("Animated 2D: the frame check saw what this style's renderer itself draws wrong ("
+                    + "; ".join(faults[:3])[:400] + "). The video goes on; Improve this style on the style's page can fix "
+                    "the renderer for the next videos.")
     _write(job / "animated2d" / "delivery.json", {"schema": SCHEMA, "parts": len(parts), "seconds": total,
                                                  "renderer": man.get("name"), "renderer_version": man.get("version"),
-                                                 "plates": {k: str(v) for k, v in plate_paths.items()}})
+                                                 "plates": {k: str(v) for k, v in plate_paths.items()},
+                                                 "review": checked})
     engine._save_motion_plan(job, timeline, segments)
     engine.step("Animated 2D: assembling the film")
     rendered = engine._render_astro_segments(timeline, job, force, white_fade=0.0, style=style)
