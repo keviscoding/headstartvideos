@@ -10,6 +10,12 @@ on:
       - 'local_runtime/cr_trust.py'
       - 'local_runtime/cr_ytdlp.py'
       - 'local_runtime/cr_network.py'
+      - 'local_runtime/cr_relay.py'
+      - 'local_runtime/cr_whisper.py'
+      - 'local_runtime/cr_update.py'
+      - 'local_runtime/cr_studio.py'
+      - 'local_runtime/studio-requirements.txt'
+      - 'scripts/build_frontier_admin.py'
       - 'tests/test_studio_trust.py'
       - 'tests/studio_trust_lab.py'
       - '.github/workflows/studio-trust.yml'
@@ -25,7 +31,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
-      - run: python -m pip install pytest requests certifi cryptography "truststore>=0.10.4" "yt-dlp[default]"
+      - run: python -m pip install pytest requests certifi cryptography "truststore>=0.10.5" "yt-dlp[default]"
       - name: Make a stand-in antivirus root
         run: python tests/studio_trust_lab.py make "${{ runner.temp }}/web-shield"
       - name: Add it to the Windows certificate store, as an antivirus does

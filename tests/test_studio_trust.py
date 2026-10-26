@@ -29,8 +29,9 @@ pytestmark = pytest.mark.real_setup_checks
 EVERYTHING = {"kie": True, "speech_model": True, "youtube": True, "elevenlabs": False}
 
 
-def fake_truststore(calls):
+def fake_truststore(calls, version="0.10.5"):
     module = types.ModuleType("truststore")
+    module.__version__ = version
     module.__spec__ = importlib.machinery.ModuleSpec("truststore", None)
     module.inject_into_ssl = lambda: calls.append("inject")
     module.SSLContext = ssl.SSLContext
@@ -60,6 +61,44 @@ def test_the_computers_store_is_installed_once_per_process(fresh):
     assert cr_trust.install() is True and cr_trust.install() is True and cr_trust.install() is True
     assert calls == ["inject"], "ssl is patched once, however many parts of Studio ask"
     assert cr_trust.active() and cr_trust.describe() == "this computer's and certifi's"
+
+
+def test_a_truststore_older_than_0_10_5_is_never_used(fresh):
+    """Before 0.10.5 connections sharing one context could turn each other's certificate check off when they shook
+    hands at once (reproduced 2026-10-26); Hugging Face's libraries bring 0.10.x by themselves."""
+    calls = []
+    fresh.setitem(sys.modules, "truststore", fake_truststore(calls, "0.10.4"))
+    assert cr_trust.install() is False and calls == [] and not cr_trust.active()
+    assert type(cr_trust.context()) is ssl.SSLContext, "certifi's list, as before"
+    assert cr_trust.usable(fake_truststore([], "0.10.5")) and cr_trust.usable(fake_truststore([], "0.11"))
+    assert not cr_trust.usable(fake_truststore([], "")) and not cr_trust.usable(fake_truststore([], "0.10.4"))
+
+
+def test_parallel_handshakes_on_one_shared_context_never_switch_checking_off(lab):
+    """16 threads at a time, one context (as a requests session or yt-dlp's handler shares it), a server whose root no
+    store trusts: every handshake must fail, and the context must still check certificates afterwards."""
+    import socket
+    import threading
+    import truststore
+    if not cr_trust.usable(truststore):
+        pytest.skip("this test machine's truststore is older than Studio's floor")
+    shared = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    accepted = []
+
+    def hit():
+        try:
+            with socket.create_connection(("127.0.0.1", lab.port), timeout=5) as raw:
+                with shared.wrap_socket(raw, server_hostname="localhost"):
+                    accepted.append(1)
+        except Exception:                                      # noqa: BLE001 - refused, as it must be
+            pass
+    for _ in range(10):
+        threads = [threading.Thread(target=hit) for _ in range(16)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+    hit()
+    assert not accepted, "an untrusted server was accepted"
+    assert shared.verify_mode == ssl.CERT_REQUIRED
 
 
 def test_without_truststore_everything_stays_on_certifi_and_nothing_breaks(fresh):

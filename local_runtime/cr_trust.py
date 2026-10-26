@@ -8,7 +8,8 @@ creator's browser was fine, and the only fix was changing the antivirus.
 
 install() makes Python's ssl module check certificates with the operating system (truststore: the Windows certificate
 store, the macOS keychain, Linux's system bundle), with certifi's list still trusted on top, once per process: Studio,
-its video workers, the style studies, the Shorts pipelines (cr_relay.install runs in each), the speech-model download
+its video workers, the style studies, the Shorts pipelines (only once they import cr_media: their own first
+connections still use certifi's list, a follow-up), the speech-model download
 and Studio's own yt-dlp (cr_ytdlp, a process of its own). requests, urllib3, httpx and urllib build every secure
 connection from ssl.SSLContext, so all of Studio's downloads and uploads go through it unchanged. Without truststore
 (libraries not reinstalled yet) everything stays as it was.
@@ -24,6 +25,11 @@ from pathlib import Path
 
 HOME = Path(__file__).resolve().parent
 YTDLP = HOME / "cr_ytdlp.py"
+# truststore before 0.10.5 could leave a shared context checking nothing: connections that share one SSLContext and
+# shake hands at the same moment turned each other's certificate check off, and it stayed off (fixed upstream in
+# 0.10.5; reproduced on a Mac with 16 threads and an untrusted server, 2026-10-26). Hugging Face's libraries bring
+# 0.10.x by themselves, so an older copy is never used: Studio keeps certifi's list until its libraries update.
+MIN_VERSION = (0, 10, 5)
 _lock = threading.Lock()
 _state: dict = {}
 
@@ -36,12 +42,22 @@ def available() -> bool:
         return False
 
 
+def usable(truststore) -> bool:
+    """Is this truststore one Studio may use (MIN_VERSION or later)?"""
+    try:
+        return tuple(int(p) for p in str(getattr(truststore, "__version__", "")).split(".")[:3]) >= MIN_VERSION
+    except ValueError:
+        return False
+
+
 def install() -> bool:
     """From now on this process checks certificates with this computer's store (done once). True when it does."""
     with _lock:
         if "on" not in _state:
             try:
                 import truststore
+                if not usable(truststore):
+                    raise ImportError("truststore older than 0.10.5")
                 truststore.inject_into_ssl()
                 _state["on"] = True
             except Exception:                                  # noqa: BLE001 - no truststore: certifi, as before
@@ -68,6 +84,8 @@ def context() -> ssl.SSLContext:
     if _state.get("on") is not False:
         try:
             import truststore
+            if not usable(truststore):
+                raise ImportError("truststore older than 0.10.5")
             trusted = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             if cafile:
                 trusted.load_verify_locations(cafile=cafile)
