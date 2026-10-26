@@ -227,8 +227,8 @@ def video_tools_problem(ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", *, whi
 
 def version_of(executable: str, *, run=None) -> tuple | None:
     try:
-        result = (run or subprocess.run)([executable, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                     timeout=10)
+        result = (run or subprocess.run)([executable, "--version"], capture_output=True, text=True, encoding="utf-8",
+                                         errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     match = re.search(r"v?(\d+)\.(\d+)\.(\d+)", result.stdout or "")
@@ -262,13 +262,23 @@ def can_fix(name: str, key: str | None = None) -> bool:
     return False
 
 
+def download_mb(name: str, key: str | None = None) -> int:
+    """How much the fix downloads on this computer, in MB."""
+    key = platform_key() if key is None else key
+    if name == "ffmpeg":
+        return sum(i["size"] for i in FFMPEG.get(key, [])) >> 20
+    version = node_release(key) if name == "node" else ""
+    return NODE[version]["builds"][key][1] >> 20 if version else 0
+
+
 def fix_hint(name: str) -> str:
     """What setup tells the creator to do about a tool that isn't ready."""
     if can_fix(name):
-        return {"ffmpeg": "Press Fix it next to Video tools: Studio puts a full FFmpeg in its own folder (about "
-                          "60 MB, no password needed).",
-                "node": "Press Fix it next to YouTube helper: Studio puts Node.js in its own folder (about 50 MB, no "
-                        "password needed). Any other Node.js on this computer stays as it is."}[name]
+        size = f"a {download_mb(name)} MB download, " if download_mb(name) else ""
+        return {"ffmpeg": f"Press Fix it next to Video tools: Studio puts a full FFmpeg in its own folder ({size}no "
+                          "password needed).",
+                "node": f"Press Fix it next to YouTube helper: Studio puts Node.js in its own folder ({size}no password "
+                        "needed). Any other Node.js on this computer stays as it is."}[name]
     return {"ffmpeg": "Install FFmpeg with subtitles (libass), H.264, AAC and MP3 support, then reopen the launcher.",
             "node": f"Install Node.js {NODE_MINIMUM} or newer from https://nodejs.org, then reopen the launcher."}[name]
 

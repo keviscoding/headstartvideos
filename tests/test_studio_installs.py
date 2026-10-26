@@ -498,3 +498,12 @@ def test_the_swap_waits_out_a_brief_lock_and_keeps_the_old_install_when_it_cant(
     with pytest.raises(cr_installs.Stop, match="still using it"):
         cr_installs._swap(stage, final, wait=0)
     assert (final / "ffmpeg").read_bytes() == b"new", "the working install stays"
+
+
+def test_the_hint_says_how_big_the_download_is_on_this_computer(monkeypatch):
+    assert cr_installs.download_mb("ffmpeg", "darwin-arm64") == 54 and cr_installs.download_mb("ffmpeg", "windows-x64") == 109
+    assert cr_installs.download_mb("node", "windows-x64") == 35 and cr_installs.download_mb("ffmpeg", "") == 0
+    monkeypatch.setattr(cr_installs, "platform_key", lambda *a: "windows-x64")
+    assert "(a 109 MB download, no password needed)" in cr_installs.fix_hint("ffmpeg")
+    monkeypatch.setattr(cr_installs, "platform_key", lambda *a: "")
+    assert cr_installs.fix_hint("node").startswith("Install Node.js 22 or newer from https://nodejs.org")
