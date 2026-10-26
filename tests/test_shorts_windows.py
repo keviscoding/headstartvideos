@@ -54,7 +54,7 @@ def test_a_windows_path_in_an_ffmpeg_filter_keeps_its_drive_and_slashes(shortsen
 
 def test_no_pipeline_starts_claude_by_its_bare_name():
     bare = re.compile(r"subprocess\.(run|Popen|call|check_output)\(\s*\[\s*[\"']claude[\"']")
-    for path in list((SHORTS / "zack").glob("*.py")) + list((SHORTS / "hoodie").rglob("*.py")):
+    for path in list((SHORTS / "zack").glob("*.py")) + list((SHORTS / "hoodie").rglob("*.py")) + list((SHORTS / "roblox").glob("*.py")):
         text = path.read_text(encoding="utf-8")
         assert not bare.search(text), f"{path.name} starts a bare claude"
         for m in re.finditer(r"args = \[\s*[\"']claude[\"']", text):
@@ -62,3 +62,14 @@ def test_no_pipeline_starts_claude_by_its_bare_name():
             assert "run_claude(args" in rest and "subprocess.run(args" not in rest.split("run_claude(args")[0], path.name
     zack = (SHORTS / "zack" / "make_zack.py").read_text(encoding="utf-8")
     assert "ass='{shortsenv.filter_path(captions)}':fontsdir='{shortsenv.filter_path(FONT_DIR)}'" in zack
+
+
+def test_the_roblox_pipeline_starts_claude_and_burns_captions_the_windows_way():
+    path = SHORTS / "roblox" / "make_roblox.py"
+    if not path.is_file():
+        pytest.skip("the Roblox Story Shorts source is not in this checkout")
+    text = path.read_text(encoding="utf-8")
+    assert "safe_run" not in text and "clean_env" not in text, "the dev harness's helpers stay out of the Studio"
+    assert text.count("shortsenv.run_claude(") == 1 and "def claude(" in text, "every Claude call goes through one helper"
+    assert "ass='{shortsenv.filter_path(captions)}':fontsdir='{shortsenv.filter_path(font_dir)}'" in text
+    assert "/System/Library" not in text and "/opt/homebrew" not in text and '+ ":" +' not in text

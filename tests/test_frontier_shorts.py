@@ -202,3 +202,50 @@ def test_the_ranking_pipeline_gets_its_options_and_progress_reads_in_plain_words
     assert (job / "video.mp4").read_bytes() == b"mp4" and "Bro." in (job / "subs.srt").read_text()
     assert any(line.startswith("Watching candidate clips") for line in said)
     assert any("6 ranks" in line for line in said)
+
+
+def test_the_roblox_pipeline_uses_the_pack_the_recipes_voice_and_plain_progress_words(tmp_path, monkeypatch):
+    import types
+    root = tmp_path / "shorts"
+    (root / "roblox").mkdir(parents=True)
+    (root / "roblox" / "make_roblox.py").write_text(
+        "import json, os, sys, pathlib\n"
+        "work = pathlib.Path(sys.argv[2])\n"
+        "for step in ('director...', 'staging...', 'sets...', 'storyboard check...', 'render (final)...'):\n"
+        "    print('12:00:00 ' + step, flush=True)\n"
+        "(work / 'seen.json').write_text(json.dumps({'args': sys.argv[3:], 'voice': os.environ.get('CR_RBX_VOICE')}))\n"
+        "(work / 'short.mp4').write_bytes(b'mp4')\n"
+        "(work / 'plan.json').write_text(json.dumps({'title': 'Promise Scars', 'narration': 'In this world.'}))\n"
+        "(work / 'voice.json').write_text(json.dumps({'words': [[0.1, 0.4, 'In'], [0.4, 0.8, 'this']]}))\n")
+    monkeypatch.setenv("CR_SHORTS_ROOT", str(root))
+    packs = []
+    monkeypatch.setattr(shorts, "ensure_pack", lambda *a, **k: packs.append("pack"))
+    monkeypatch.setattr(shorts, "ready", lambda home=None: [])
+    voice = "bIHbv24MWmeRgasZH58o"
+    monkeypatch.setitem(sys.modules, "voices", types.SimpleNamespace(
+        picks=lambda: {"cr-shorts-roblox": {"provider": "elevenlabs", "voice_id": voice}}))
+    said = []
+
+    class Engine:
+        def job_dir(self, title, style):
+            return str(tmp_path / "job")
+    info = {"format": "short", "label": "Roblox Story Shorts", "shorts": {"pipeline": "roblox", "seconds": 55}}
+    job = shorts.run_short(Engine(), "Every broken promise leaves a scar", "cr-shorts-roblox", info, sink=said.append)
+    assert packs == ["pack"], "the blocky avatars render in the Shorts 3D engine: the pack comes first"
+    seen = json.loads((job / "short" / "seen.json").read_text())
+    assert seen == {"args": ["Every broken promise leaves a scar", "55"], "voice": voice}
+    assert (job / "video.mp4").read_bytes() == b"mp4" and "In this" in (job / "subs.srt").read_text()
+    for words in ("Staging every shot", "Building the sets", "Checking a still of every shot", "Building visual scenes"):
+        assert any(line.startswith(words) for line in said), words
+
+
+def test_the_roblox_recipe_runs_the_roblox_pipeline():
+    recipe = ROOT / "data" / "frontier" / "recipes" / "cr-shorts-roblox" / "style.json"
+    if not recipe.is_file():
+        import pytest
+        pytest.skip("the private recipes are not in this checkout")
+    row = json.loads(recipe.read_text(encoding="utf-8"))
+    assert row["format"] == "short" and row["builtin"] is True and row["label"] == "Roblox Story Shorts"
+    assert row["shorts"]["pipeline"] in shorts.PIPELINES and row["shorts"]["pipeline"] not in shorts.PACKLESS
+    assert shorts.SECONDS[0] <= row["shorts"]["seconds"] <= shorts.SECONDS[1]
+    assert "minutes" in row["cost"] and "Kie" in row["cost"], "the cost and the time are quoted"
