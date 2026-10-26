@@ -340,9 +340,14 @@ def _read_inputs(prompt, args):
     if "Read" in _option(args, "--tools").split(","):
         for line in str(prompt).splitlines():
             if line.startswith("- "):
-                path = Path(line[2:])
-                if path.is_file():
-                    hashes.append([str(path.resolve()), hashlib.sha256(path.read_bytes()).hexdigest()])
+                # Most "- " lines are prompt bullets, not paths. A long one ("- Fonts: only these bundled faces...")
+                # made macOS raise "File name too long" (Errno 63) here, so every style study's watch step failed.
+                try:
+                    path = Path(line[2:])
+                    if path.is_file():
+                        hashes.append([str(path.resolve()), hashlib.sha256(path.read_bytes()).hexdigest()])
+                except (OSError, ValueError):
+                    continue
     return hashes
 
 
@@ -420,6 +425,17 @@ def _texts(content):
     if isinstance(content, str):
         return [content]
     return [str(c.get("text", "")) for c in content or [] if isinstance(c, dict) and c.get("type") == "text"]
+
+
+def _plain_answer(whole):
+    """The joined stream's answer as plain text, for a call that asked for text; anything else unchanged."""
+    try:
+        data = json.loads(whole)
+    except ValueError:
+        return whole
+    if isinstance(data, dict) and isinstance(data.get("result"), str) and not data.get("is_error"):
+        return data["result"]
+    return whole
 
 
 def _whole_answer(stdout):
@@ -549,7 +565,12 @@ class Runtime:
         env = clean_environment(kwargs.get("env"))
         if maximum is not None and maximum >= LONG_ANSWER_TOKENS:
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(LONG_OUTPUT_TOKENS)
-        streamed = _option(args, "--output-format", "text") == "json"
+        answer_format = _option(args, "--output-format", "text")
+        # A long plain-text answer (a style study's graphics kit asks for 32k tokens) is continued by Claude Code in
+        # further messages, and plain text keeps only the last part: kit.json and the start of kit.js were lost. It is
+        # read as a stream too, joined, and handed back as the plain text that was asked for.
+        long_text = answer_format == "text" and maximum is not None and maximum >= LONG_ANSWER_TOKENS
+        streamed = answer_format == "json" or long_text
         if streamed:
             # Every message, so an answer continued past the output limit comes back whole (_whole_answer).
             command = _replace_option(command, "--output-format", "stream-json") + ["--verbose"]
@@ -574,9 +595,11 @@ class Runtime:
             completed = self.real_run(command, **options)
             if streamed and completed is not None:
                 # The stream lists rate-limit events on every run: classify a failure by its result alone.
+                whole = _whole_answer(getattr(completed, "stdout", "") or "")
+                if long_text:
+                    whole = _plain_answer(whole)
                 completed = subprocess.CompletedProcess(getattr(completed, "args", command), completed.returncode,
-                                                        _whole_answer(getattr(completed, "stdout", "") or ""),
-                                                        getattr(completed, "stderr", ""))
+                                                        whole, getattr(completed, "stderr", ""))
             failure_code,failure_message=failure_info(getattr(completed,"stdout",""),getattr(completed,"stderr",""))
             if completed.returncode:
                 raise ValueError("cli_failed")
