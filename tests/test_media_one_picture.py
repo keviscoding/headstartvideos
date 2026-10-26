@@ -23,6 +23,7 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("KIE_API_KEY", "customer-test-key")
     monkeypatch.setattr(media.time, "sleep", lambda *_: None)
     monkeypatch.setattr(media, "download", lambda url, dest: Path(dest).write_bytes(b"generated media"))
+    monkeypatch.setattr(media, "_settled", set())            # each test is its own video run
     return tmp_path
 
 
@@ -136,5 +137,71 @@ def test_the_engine_meets_skippable_pictures_and_clips(hub, monkeypatch):
 def test_a_clip_kie_cannot_animate_is_skipped_and_shows_its_first_frame(hub, monkeypatch):
     kie(monkeypatch, lambda prompt, model: {"state": "fail", "failCode": "500", "failMsg": "Internal error"})
     with pytest.raises(media.PictureFailed, match="failed this motion task"):
-        media.skippable(media.native_motion)("https://files.example/frame.jpg", "A slow push in", hub / "clip_00.mp4")
-    assert "skippable(native_motion)" in Path(media.__file__).read_text(encoding="utf-8"), "the engine's clip call"
+        media.skippable(media.native_motion, prompt_at=1, dest_at=2)("https://files.example/frame.jpg", "A slow push in",
+                                                                     hub / "clip_00.mp4")
+    assert "skippable(native_motion, prompt_at=1, dest_at=2)" in Path(media.__file__).read_text(encoding="utf-8"), \
+        "the engine's clip call"
+
+
+# ── review 2026-10-26: a skipped picture is never bought again; a rate limit stops the video ─────────────────────
+
+CHARGED = {"state": "fail", "failCode": "500", "failMsg": "Internal error", "creditsConsumed": 4}
+UNKNOWN = {"state": "fail", "failCode": "500", "failMsg": "Internal error"}           # Kie didn't say what it cost
+FREE = {"state": "fail", "failCode": "500", "failMsg": "Internal error", "creditsConsumed": 0}
+
+
+def engine_retries(picture, folder, prompt):
+    """What the engine does with a failed picture: make_video's one "plainer" try on the same file, then avatar.py's
+    presenter set-ups, the same prompt under a new file name for the next model."""
+    outcomes = []
+    for again_prompt, dest in ((prompt, folder / "scene_03.jpg"), (prompt.replace("'", ""), folder / "scene_03.jpg"),
+                               (prompt, folder / "scene_03_try1.jpg")):
+        try:
+            picture(again_prompt, dest, "picture 4")
+            outcomes.append("made")
+        except media.PictureFailed as skipped:
+            outcomes.append(str(skipped))
+    return outcomes
+
+
+@pytest.mark.parametrize("state", [CHARGED, UNKNOWN])
+def test_a_picture_that_may_have_been_charged_is_skipped_and_never_bought_again(hub, monkeypatch, state):
+    creates = kie(monkeypatch, lambda prompt, model: state if len(creates) <= 2 else None)
+    outcomes = engine_retries(media.skippable(media.image), hub, "The keeper's 'lamp' falls")
+    assert len(creates) == 2, "each selected model tried once, then nothing more is submitted for that picture"
+    assert outcomes[0].startswith("Image generation stopped after 2 selected models")
+    assert all("not bought again" in o for o in outcomes[1:]), outcomes
+    # another picture of the same video is made as usual
+    media.skippable(media.image)("Ships in the fog", hub / "scene_04.jpg", "picture 5")
+    assert len(creates) == 3
+
+
+def test_a_picture_kie_charged_nothing_for_may_be_tried_again_by_the_engine(hub, monkeypatch):
+    creates = kie(monkeypatch, lambda prompt, model: FREE if len(creates) <= 2 else None)
+    outcomes = engine_retries(media.skippable(media.image), hub, "The keeper's 'lamp' falls")
+    assert outcomes[1:] == ["made", "made"] and len(creates) == 4, "a new try after free failures is a first payment"
+
+
+def test_a_clip_that_may_have_been_charged_is_not_animated_again(hub, monkeypatch):
+    creates = kie(monkeypatch, lambda prompt, model: UNKNOWN)
+    clip = media.skippable(media.native_motion, prompt_at=1, dest_at=2)
+    for _ in range(2):
+        with pytest.raises(media.PictureFailed):
+            clip("https://files.example/frame.jpg", "A slow push in", hub / "clip_00.mp4")
+    assert len(creates) == 1
+
+
+@pytest.mark.parametrize("answer", ["refused", "failed"])
+def test_a_kie_rate_limit_stops_the_video_instead_of_skipping_pictures(hub, monkeypatch, answer):
+    creates = []
+    def create(url, **kw):
+        creates.append(kw["json"])
+        if answer == "refused":
+            return response({"code": 429, "msg": "Too many requests, slow down"})
+        return response({"code": 200, "data": {"taskId": "t1"}})
+    monkeypatch.setattr(media.requests, "post", create)
+    monkeypatch.setattr(media.requests, "get", lambda url, **kw: response({"code": 200, "data": {
+        "state": "fail", "failCode": "429", "failMsg": "Rate limit exceeded", "creditsConsumed": 0}}))
+    with pytest.raises(media.AccountStop) as stopped:
+        story_stills(media.skippable(media.image), hub, ["a", "b", "c"])
+    assert not isinstance(stopped.value, media.PictureFailed) and len(creates) == 1
