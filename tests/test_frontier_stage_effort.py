@@ -101,3 +101,40 @@ def test_an_effort_inherited_from_a_claude_code_chat_never_reaches_a_stage(tmp_p
                                                 env={"CLAUDE_EFFORT": "xhigh", "PATH": "/usr/bin"})
     (command, env), = stages(calls)
     assert "CLAUDE_EFFORT" not in env and cr_claude._option(command, "--effort") == "medium"
+
+
+def test_a_stage_waits_while_the_projects_other_stages_run_instead_of_stopping(tmp_path, monkeypatch):
+    """A server that allows fewer stages at once answers 429; nothing was recorded or run, so asking again is free."""
+    invoke, calls = cli()
+    run = runtime(tmp_path, monkeypatch, invoke)
+    answers = iter([cr_claude.WorkflowError("Wait for this project's active stages.", 429)] * 2)
+    asked = []
+
+    def authorize(stage):
+        asked.append(stage["stage_id"])
+        err = next(answers, None)
+        if err:
+            raise err
+        return {"execute": True, "authorization_token": "x" * 32, "selected_model": cr_claude.VISUAL_MODEL}
+    run.bridge.authorize_stage = authorize
+    monkeypatch.setattr(cr_claude.time, "sleep", lambda s: None)
+    assert run.run(OPUS, input="Review", text=True).returncode == 0
+    assert len(asked) == 3 and len(set(asked)) == 1, "the same stage, asked again"
+    assert len(stages(calls)) == 1, "Claude ran once"
+
+
+def test_a_stage_that_never_gets_a_slot_stops_saying_why(tmp_path, monkeypatch):
+    invoke, calls = cli()
+    run = runtime(tmp_path, monkeypatch, invoke)
+
+    def authorize(stage):
+        raise cr_claude.WorkflowError("Wait for this project's active stages.", 429)
+    run.bridge.authorize_stage = authorize
+    monkeypatch.setattr(cr_claude.time, "sleep", lambda s: None)
+    with pytest.raises(cr_claude.ClaudeStageStopped, match="active stages"):
+        run.run(OPUS, input="Review", text=True)
+    assert not stages(calls), "Claude never ran"
+
+
+def test_studio_runs_three_claude_stages_at_once():
+    assert cr_claude._slots._initial_value == 3

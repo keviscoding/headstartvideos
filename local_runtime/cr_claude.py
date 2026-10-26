@@ -31,7 +31,11 @@ MINIMUM_VERSION = (2, 1, 268)
 _real_run = subprocess.run
 _runtime = None
 _lock = threading.RLock()
-_slots = threading.BoundedSemaphore(2)
+# Claude stages at once: the 3D engine directs and reviews three sections side by side. The server allows three per
+# project from 2026-10-26; one that still allows two answers 429 to the third, and that stage waits (_authorize).
+_slots = threading.BoundedSemaphore(3)
+SLOT_POLL_S = 5            # the server's Retry-After for a project's busy stages
+SLOT_WAIT_S = 45 * 60      # longer than any one stage (an Opus 3D stage took up to 25 min): then it stops, saying why
 HOME = Path(__file__).resolve().parent
 _expected_stage = ContextVar("cr_expected_native_stage", default=None)
 
@@ -492,13 +496,21 @@ class Runtime:
                 self.bridge.finish_stage(saved["receipt"])
         except Exception:
             raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
-        try:
-            approval = self.bridge.authorize_stage(stage)
-        except WorkflowError as error:
-            raise ClaudeStageStopped("ChannelRecipe stopped this stage: " + error.detail
-                                     + " No new Claude request was made.") from None
-        except Exception:
-            raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
+        waited = 0
+        while True:
+            try:
+                approval = self.bridge.authorize_stage(stage)
+                break
+            except WorkflowError as error:
+                # 429: the project's other stages are running. Nothing was recorded or run, so asking again is free.
+                if error.status == 429 and waited < SLOT_WAIT_S:
+                    time.sleep(SLOT_POLL_S)
+                    waited += SLOT_POLL_S
+                    continue
+                raise ClaudeStageStopped("ChannelRecipe stopped this stage: " + error.detail
+                                         + " No new Claude request was made.") from None
+            except Exception:
+                raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
         if approval.get("reuse") and not approval.get("execute"):
             if saved.get("stdout") is not None and approval.get("result_fingerprint") == saved.get("result_fingerprint"):
                 return subprocess.CompletedProcess(args, 0, saved["stdout"], "")
