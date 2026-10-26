@@ -700,8 +700,9 @@ def render_stills(spec: dict, out_dir: Path, code: str, *, home=None, prefix: st
 
 BLANK_RUN_S = 2.5                      # this long with nothing on screen, mid-film, is a fault in the renderer
 SWEEP_STEP = 0.25                      # seconds between the frames a sweep looks at
-FROZEN_S = 2.5                         # this long with nothing on screen moving at all reads as a frozen picture
-STILL = 0.04                           # a frame-to-frame change under this (mean of 64x36 grey, 0-255) is no change
+FROZEN_S = 3.0                         # this long with nothing on screen changing at all is a frozen picture
+STILL = 0.001                          # a frame-to-frame change under this (mean of 64x36 grey, 0-255) is none at all:
+                                       # frames are exact, so a breathing figure or a slow push is never "frozen"
 # a sampled frame: [how much its brightness varies (under 4: nothing on screen), how much it changed since the frame
 # sampled before it, and a 16x9 thumbnail of it (to tell two shots apart)]
 _SPREAD = ("(t)=>{window.renderFrame(t);const o=document.createElement('canvas');"
@@ -734,6 +735,8 @@ def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP, text: d
         out, moves, sigs, saved = [], [], {}, []
         grid = {round(k * step, 3) for k in range(int(math.ceil(duration / step - 1e-9)))}
         for t in sorted(grid | set(want)):
+            if t not in grid:                               # keep the grid's own chain of changes across this frame
+                box.page.evaluate("window.__gridGrey=window.__prevGrey")
             try:
                 spread, change, sig = box.page.evaluate(_SPREAD, t)
             except Exception as error:                      # noqa: BLE001 - said in the renderer's words
@@ -746,7 +749,7 @@ def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP, text: d
                 box.page.screenshot(path=str(dest), type="jpeg", quality=88, clip={"x": 0, "y": 0, "width": W, "height": H})
                 saved.append((t, dest))
             if t not in grid:                               # a frame between the sweep's own: not one of its samples
-                box.page.evaluate("window.__prevGrey=null")
+                box.page.evaluate("window.__prevGrey=window.__gridGrey")
                 continue
             out.append((round(t, 3), float(spread)))
             if change >= 0:
@@ -1002,9 +1005,12 @@ def probe(scene: dict, spec: dict, code: str, out: Path, *, home=None, man: dict
     def drawn(name, place, crowd=None):
         variant = json.loads(json.dumps(base))
         variant["sets"] = {k: {**place, **({"crowd": crowd} if crowd is not None else {})} for k in (base.get("sets") or {"place": {}})}
+        wide = "wide" in [str(f).split(":")[0] for f in (man.get("shots") or [])]
         for sh in variant.get("shots") or []:
             if isinstance(sh, dict):
                 sh.pop("crowd", None)
+                if wide:                                    # the place itself in view, not a close-up of a face
+                    sh["framing"] = "wide"
                 if sh.get("set") not in variant["sets"]:
                     sh["set"] = next(iter(variant["sets"]))
         try:

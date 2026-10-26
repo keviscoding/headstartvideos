@@ -301,7 +301,7 @@ def test_a_plan_that_holds_repeats_or_idles_is_sent_back_in_the_directors_terms(
 
 
 def test_the_swept_frames_find_a_frozen_picture_words_off_the_frame_or_over_others_and_shots_that_look_alike():
-    moves = [(k * 0.25, 0.0 if 2.0 <= k * 0.25 <= 5.5 else 1.2) for k in range(1, 40)]
+    moves = [(k * 0.25, 0.0 if 2.0 <= k * 0.25 <= 5.5 else 0.01 if k * 0.25 > 7 else 1.2) for k in range(1, 40)]
     sig_a, sig_b = [100] * 144, [100] * 143 + [104]
     look = {"moves": moves, "sigs": {0.75: sig_a, 3.0: sig_a, 6.0: sig_b, 8.5: [10] * 144},
             "texts": [{"kind": "over", "text": "DAY DAY 1", "other": "6:42 PM", "t": 0.5},
@@ -314,6 +314,7 @@ def test_the_swept_frames_find_a_frozen_picture_words_off_the_frame_or_over_othe
                                         {"start": 8, "end": 10, "set": "hatch", "framing": "wide"}]}
     notes = a2d.frame_notes(look, plan)
     assert "1.8 s to 5.5 s: nothing on screen moves (a frozen picture); give someone an action there" in notes
+    assert len([n for n in notes if "frozen" in n]) == 1, "a figure that only breathes (a tiny change) is not frozen"
     assert any('"DAY DAY 1" are drawn over "6:42 PM"' in n for n in notes)
     assert not any("sliding" in n for n in notes), "words off the frame in one sampled frame are a slide-in, not a fault"
     assert any("until then, the bunker decides who stays\" don't fit their box" in n for n in notes)
