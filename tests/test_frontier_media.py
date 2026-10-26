@@ -539,6 +539,25 @@ def test_narration_stops_after_three_uncharged_failures_and_resume_tries_again(h
     assert len(creates) == 4
 
 
+def test_a_shorts_voice_rides_out_a_passing_kie_timeout_like_a_long_video(hub, monkeypatch):
+    """The Shorts call run("narration") themselves. One uncharged Kie "generate task timeout" (failCode 524) stopped a
+    whole Photo Comedy Short on the dev Studio (sweep, 2026-10-26); the long-video voice already rode such errors out."""
+    timeout = {"state": "fail", "failCode": "524", "failMsg": "generate task timeout.", "creditsConsumed": 0}
+    creates = kie_tasks(monkeypatch, [timeout, "success"])
+    pauses, said = [], []
+    monkeypatch.setattr(media.time, "sleep", pauses.append)
+    dialogue = {"speakers": [{"speaker_id": "Speaker 1", "voice_name": "Puck"}],
+                "dialogue_turns": [{"speaker_id": "Speaker 1", "text": "Hello."}]}
+    media.run("narration", dialogue, hub / "voice_raw.wav", model="google/gemini-3-8-flash-tts", log=said.append)
+    assert len(creates) == 2 and creates[0] == creates[1] and (hub / "voice_raw.wav").read_bytes() == b"generated media"
+    assert pauses == [30] and any("trying again in 30 s" in line for line in said)
+    # a picture's failure is never submitted again here (pictures keep their own model fallbacks)
+    picture = kie_tasks(monkeypatch, [timeout, "success"])
+    with pytest.raises(media.TaskFailed):
+        media.run("images", {"prompt": "A cat"}, hub / "cat.png", model="nano-banana-2-1")
+    assert len(picture) == 1
+
+
 def test_resume_tries_again_when_kie_did_not_say_what_the_failed_voice_cost(hub, monkeypatch):
     unknown = {"state": "fail", "failCode": "500", "failMsg": "Internal Error, Please try again later"}
     creates = kie_tasks(monkeypatch, [unknown, "success"])

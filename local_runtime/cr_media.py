@@ -381,6 +381,28 @@ def _never_sent(error) -> bool:
 
 
 def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
+    """One media task, from its receipt when it was already made. A narration Kie ran and then failed on its own side,
+    charging nothing (fresh_attempt_ok: "Internal Error", "generate task timeout"), is submitted again after
+    NARRATION_RETRY_PAUSES for every caller. Only the long-video voice used to ride these out; the Shorts call run()
+    directly, so one of them stopped the whole Short ("The Short stopped unexpectedly (cr_media.TaskFailed: Kie.ai failed
+    this narration task. generate task timeout. Kie charged nothing for it ...)", Photo Comedy Shorts, sweep
+    2026-10-26)."""
+    pauses = NARRATION_RETRY_PAUSES if task == "narration" else ()
+    for attempt, pause in enumerate(pauses + (None,)):
+        try:
+            return _run_once(task, inputs, dest, model=model, log=log, timeout_s=timeout_s)
+        except TaskFailed as failed:
+            receipt = {"status": "failed", "id": getattr(failed, "task_id", None), "rejected": failed.rejected,
+                       "credits": failed.credits, "failure_code": failed.code, "failure_message": failed.reason}
+            provider = account(task)[0]
+            if pause is None or not fresh_attempt_ok(provider, task, receipt):
+                raise
+            log(f"{PROVIDERS[provider]['label']} {task} hit a passing error ({failed.reason or failed.code}) and charged "
+                f"nothing; trying again in {pause} s (attempt {attempt + 2} of {len(pauses) + 1}).")
+            time.sleep(pause)
+
+
+def _run_once(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     provider, key = account(task)
     dest = Path(dest)
     model = model or PROVIDERS[provider]["models"][task]
@@ -744,19 +766,8 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
     try:
         for i, piece in enumerate(_chunks(text)):
             part = folder / f"part-{i:03d}.{model['format']}"
-            for attempt, pause in enumerate(NARRATION_RETRY_PAUSES + (None,)):
-                try:
-                    run("narration", narration_input(piece, voice, model["id"]), part, model=model["id"], log=engine.log)
-                    break
-                except TaskFailed as failed:
-                    receipt = {"status": "failed", "id": getattr(failed, "task_id", None), "rejected": failed.rejected,
-                               "credits": failed.credits, "failure_code": failed.code, "failure_message": failed.reason}
-                    if pause is None or not fresh_attempt_ok(provider, "narration", receipt):
-                        raise
-                    engine.log(f"{PROVIDERS[provider]['label']} narration hit a passing error ({failed.reason or failed.code}) "
-                               f"and charged nothing; trying again in {pause} s (attempt {attempt + 2} of "
-                               f"{len(NARRATION_RETRY_PAUSES) + 1}).")
-                    time.sleep(pause)
+            # run() rides out a passing Kie error that charged nothing (NARRATION_RETRY_PAUSES)
+            run("narration", narration_input(piece, voice, model["id"]), part, model=model["id"], log=engine.log)
             parts.append(part)
     except (AccountStop, Exception) as failed:              # what stopped this voice, for the choices offered
         if getattr(failed, "category", "") != "cancelled":
