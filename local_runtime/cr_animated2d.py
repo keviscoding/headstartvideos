@@ -1296,10 +1296,19 @@ def cast_and_sets(engine, script: str, job: Path, style: str, title: str = "", m
 
 
 def plate_prompt(set_: dict, spec: dict, man: dict = None) -> str:
+    """The words a place's background picture is drawn from: the renderer's own plates.prompt (its look) over the
+    place's words, framed for its kit (a 2D stage, or a backdrop 3D characters are composited over) and the video's
+    shape (a Shorts channel's plates are vertical)."""
     look = ((man or {}).get("plates") or {}).get("prompt") or spec.get("art") or "flat 2D vector animation"
-    return (f"{set_['prompt']}. A background plate for a 2D animation, in this style: {look}. "
-            "EMPTY: nobody in it, no people, no figures, no characters, no animals, no text, no logos. "
-            "Seen straight on from eye level, wide 16:9. The ground is a flat, level surface across the bottom fifth "
+    tall = int(spec.get("height") or 1080) > int(spec.get("width") or 1920)
+    shape = "tall 9:16 (vertical)" if tall else "wide 16:9"
+    empty = "EMPTY: nobody in it, no people, no figures, no characters, no animals, no text, no logos. "
+    if dims_of(spec) == 3:
+        return (f"{set_['prompt']}. A background plate that 3D characters will be composited over, in this style: "
+                f"{look}. {empty}Seen from where the characters' camera stands, {shape}, with clear ground in the lower "
+                "part of the picture for them to stand on.")
+    return (f"{set_['prompt']}. A background plate for a 2D animation, in this style: {look}. {empty}"
+            f"Seen straight on from eye level, {shape}. The ground is a flat, level surface across the bottom fifth "
             "of the picture with nothing standing on it in the middle. Simple shapes, soft depth, calm enough for "
             "characters to act in front of it.")
 

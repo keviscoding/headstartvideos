@@ -411,6 +411,16 @@ def test_renderer_drafts_keep_claude_codes_own_effort(monkeypatch):
         pass
 
 
+def test_a_3d_renderers_plates_are_backdrops_in_the_videos_shape():
+    """Lucas the Spider composites CG characters over real garden photography: a 3D renderer that asks for plates gets
+    backdrops for 3D characters in its own look, vertical for a Shorts channel, never "a 2D animation, wide 16:9"."""
+    man = {"plates": {"draw": True, "prompt": "photoreal macro garden photography, shallow depth of field"}}
+    tall = a2d.plate_prompt({"prompt": "a flower pot on a patio"}, {"dims": 3, "width": 1080, "height": 1920}, man)
+    assert "composited over" in tall and "9:16" in tall and "photoreal macro garden" in tall and "2D" not in tall
+    wide = a2d.plate_prompt({"prompt": "a street"}, {"width": 1920, "height": 1080}, None)
+    assert "2D animation" in wide and "16:9" in wide, "2D renderers' plates as before"
+
+
 def test_round_files_belong_to_their_build(tmp_path):
     out = tmp_path / "renderer"
     (out / "round-1").mkdir(parents=True)
