@@ -176,6 +176,101 @@ def test_the_plan_keeps_the_renderers_own_actions_inside_its_stretch_and_covers_
     assert plan["fx"] == [{"kind": "glow", "at": 1.2, "dur": 1.0}]
 
 
+# ── Studio 109: the renderer's vocabulary, exactly (the owner's Windows test, 2026-10-26) ───────────────────────────
+
+HUD_MAN = {"actions": {"hud": {"does": "the day panel at the top left", "params": {"day": "number", "clock": "text:8",
+                                                                                  "temp": "number (degrees)"},
+                               "adds": "writes DAY before the day and °C after the temperature"},
+                       "board": {"does": "a whiteboard", "params": {"title": "text:24", "show": "sketch",
+                                                                    "items": "texts:12", "side": ["left", "right"]}},
+                       "talk": "{line: text:30, to: id}: says a line to someone"},
+           "fx": {"flash": "{dur: number, color: colour}: a flash"}, "shots": ["wide", "close"]}
+
+
+def test_every_parameter_is_checked_against_the_type_its_renderer_declared():
+    """The bunker video's HUD read "DAY DAY 1" and "18°C°": the renderer wrote DAY and °C itself and the director sent
+    them too. A plan's parameters now take their declared types."""
+    raw = {"shots": [{"start": 0, "framing": "wide", "set": "bunker"}],
+           "actions": [{"at": 0.5, "who": "you", "move": "hud", "day": "DAY 1", "clock": "6:42 PM tonight", "temp": "18°C"},
+                       {"at": 1, "who": "you", "move": "board", "title": "Someone has already done the math for us",
+                        "show": {"kind": "line", "trend": "down", "values": ["412", 300, "x"], "bogus": 1},
+                        "items": ["412 meals", "30 days", 7], "side": "Right"},
+                       {"at": 2, "who": "you", "move": "talk", "line": "We have food for one day and a half at most", "to": "mara"},
+                       {"at": 3, "who": "you", "move": "talk", "line": "Hi", "to": "nobody"}],
+           "fx": [{"kind": "flash", "at": 1, "dur": "0.2 s", "color": "white"}]}
+    plan = a2d.clean_plan(raw, {"you": {"name": "You"}, "mara": {"name": "Mara"}}, {"bunker": {"prompt": "x"}}, 0, 10, HUD_MAN)
+    hud, board, talk, bad = plan["actions"][-4:]
+    assert hud["day"] == 1 and hud["temp"] == 18 and hud["clock"] == "6:42 PM", "numbers bare, text within its length"
+    assert board["title"] == "Someone has already done" and len(board["title"]) <= 24, "cut on a whole word, no ellipsis"
+    assert board["show"] == {"kind": "line", "values": [412.0, 300.0], "trend": "down"} and board["side"] == "right"
+    assert board["items"] == ["412 meals", "30 days", "7"]
+    assert talk["line"] == "We have food for one day and a" and talk["to"] == "mara" and "to" not in bad
+    assert plan["fx"][0]["dur"] == 0.2 and plan["fx"][0]["color"] == "#eeeeee"
+
+
+def test_an_old_renderers_parameters_take_the_form_its_author_used():
+    """A renderer saved before 109 says nothing of types: how its own test scenes call each action does."""
+    man = {"actions": {"hud": "{day, time, temp}: the HUD: DAY n, a clock, the temperature", "sign": "{text}: a sign"},
+           "examples": {"actions": {"hud": {"day": 1, "time": "6:42 PM", "temp": 18}}}}
+    raw = {"actions": [{"at": 0, "who": "a", "move": "hud", "day": "Day 3", "time": "7:00 PM", "temp": "21°C"},
+                       {"at": 1, "who": "a", "move": "sign", "text": "CAPACITY 40"}]}
+    hud, sign = a2d.clean_plan(raw, {"a": {"name": "A"}}, {"s": {}}, 0, 5, man)["actions"][-2:]
+    assert (hud["day"], hud["time"], hud["temp"]) == (3, "7:00 PM", 21) and sign["text"] == "CAPACITY 40"
+    plain = a2d.clean_plan(raw, {"a": {"name": "A"}}, {"s": {}}, 0, 5, {"actions": man["actions"]})["actions"][-2]
+    assert plain["day"] == "Day 3", "without an example nothing is guessed"
+    long = a2d.clean_plan({"actions": [{"at": 0, "who": "a", "move": "sign", "text": "word " * 30}]}, {"a": {}},
+                          {"s": {}}, 0, 5, man)["actions"][-1]
+    assert 50 <= len(long["text"]) <= 60, "untyped long words are kept whole up to 60 characters, never dropped"
+
+
+def test_the_director_reads_each_parameters_type_what_the_renderer_adds_and_its_authors_example():
+    man = {**HUD_MAN, "examples": {"actions": {"hud": {"day": 1, "clock": "6:42 PM", "temp": 18}}}}
+    lines = "\n".join(a2d.vocabulary_lines(man, "actions"))
+    assert "- hud {day: a bare number, clock: text, at most 8 characters, temp: a bare number (degrees)}: the day panel" in lines
+    assert "[the renderer itself writes: writes DAY before the day and °C after the temperature; never send that]" in lines
+    assert 'e.g. {"move": "hud", "day": 1, "clock": "6:42 PM", "temp": 18}' in lines
+    assert "- talk {line: text, at most 30 characters, to: a cast id}: says a line to someone" in lines
+    assert "- flash {dur: a bare number, color: #rrggbb}: a flash" in "\n".join(a2d.vocabulary_lines(man, "fx"))
+
+
+def test_places_keep_what_they_are_and_a_renderer_that_draws_its_own_takes_new_ones_from_the_director():
+    sets = a2d.clean_sets({"Bunker Hall": {"prompt": "a concrete bunker hall", "inside": True, "walls": "grey",
+                                           "light": "harsh strip lights", "crowd": "about 80 people",
+                                           "props": ["steel hatch", "sign: CAPACITY 40", "", {"x": 1}],
+                                           "sky": ["#111111", "#222222"], "floor_colors": ["#333333", "#444444"]}})
+    assert sets["bunker_hall"] == {"prompt": "a concrete bunker hall", "sky": ["#111111", "#222222"],
+                                   "floor_colors": ["#333333", "#444444"], "inside": True, "walls": "#9a9da3",
+                                   "light": "harsh strip lights", "props": ["steel hatch", "sign: CAPACITY 40"], "crowd": 80}
+    raw = {"shots": [{"start": 0, "set": "bunker_hall", "framing": "wide", "crowd": 100},
+                     {"start": 2, "set": "hatch", "framing": "wide"}],
+           "sets": {"hatch": {"prompt": "the round steel hatch at the top of a ladder", "inside": True},
+                    "bunker_hall": {"prompt": "never replaces a designed place"}, "unused": {"prompt": "x"}}}
+    plan = a2d.clean_plan(raw, {"a": {}}, sets, 0, 5, {}, new_sets=2)
+    assert [s["set"] for s in plan["shots"]] == ["bunker_hall", "hatch"] and plan["shots"][0]["crowd"] == 100
+    assert list(plan["sets"]) == ["hatch"], "only the new places its shots use"
+    film = a2d.film_spec(plan, {"cast": {"a": {}}, "sets": sets}, {}, {})
+    assert film["sets"]["hatch"]["inside"] is True and film["sets"]["bunker_hall"]["props"][1] == "sign: CAPACITY 40"
+    plates = a2d.clean_plan(raw, {"a": {}}, sets, 0, 5, {})
+    assert "sets" not in plates and plates["shots"][1]["set"] == "bunker_hall", "a picture per place is paid: no new ones"
+
+
+def test_the_channels_recurring_characters_are_in_every_video():
+    """The study's test shots had the channel's red-cap mascot; the video didn't."""
+    man = {"cast": {"traits": {"color": "colour", "cap": "colour"}, "recurring": {"you": {"name": "You", "color": "#3f6fb0",
+                                                                                         "cap": "#d0302a"}}}}
+    cast = a2d.clean_cast({"mara": {"name": "Mara", "color": "red"}}, man["cast"]["traits"], a2d.recurring(man))
+    assert list(cast) == ["you", "mara"] and cast["you"] == {"name": "You", "color": "#3f6fb0", "cap": "#d0302a",
+                                                             "recurring": True}
+    again = a2d.clean_cast({"you": {"name": "You", "color": "#3f6fb0"}}, man["cast"]["traits"], a2d.recurring(man))
+    assert again == {"you": {"name": "You", "color": "#3f6fb0", "recurring": True}}, "the casting's own entry stands"
+    assert "keep these ids and traits" in a2d.recurring_words(man, {})
+    spec = a2d.from_profile(dart())
+    assert spec["cast"][0]["share"] == 0.9
+    words = a2d.recurring_words({}, spec)
+    assert "red_boxer: Red stick figure" in words and "90%" in words and "blue_boxer" not in words
+    assert a2d.recurring_words({}, {}).startswith("none")
+
+
 def test_long_narration_is_choreographed_in_even_stretches_between_lines():
     lines = [(i * 5.0, i * 5.0 + 4.5, f"line {i}", []) for i in range(20)]
     parts = a2d.chunks(lines, 100.0)
@@ -537,7 +632,7 @@ def test_every_video_casts_and_directs_in_the_saved_renderers_own_vocabulary_and
     assert casting["cast"]["bean"] == {"name": "Bean", "color": "#eeeeee", "band": {"color": "#e0625a"}}
     cast_prompt, director_prompt = engine.prompts
     assert '"band"' in cast_prompt and "smooth white bean-shaped" in cast_prompt
-    assert "- hop: {height}: a little hop" in director_prompt and "x from -3 to 3" in director_prompt
+    assert "- hop {height}: a little hop" in director_prompt and "x from -3 to 3" in director_prompt
     film = json.loads((job / "animated2d" / "film-000.json").read_text())
     assert [a["move"] for a in film["actions"]] == ["place", "hop"], "an action the renderer lacks is dropped"
     clip = Path(next(c for c in engine.calls if c[0] == "plan")[1][0][1])

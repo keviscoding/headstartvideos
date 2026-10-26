@@ -257,8 +257,11 @@ def from_profile(profile: dict) -> dict:
     cast = []
     for c in _v((profile.get("pictures") or {}).get("characters"), []) or []:
         if isinstance(c, dict) and c.get("look"):
+            share = c.get("screen_share")
             cast.append({"name": str(c.get("name") or "")[:40], "look": str(c["look"])[:240],
-                         "role": str(c.get("role") or "character"), "color": colour_of(c["look"])})
+                         "role": str(c.get("role") or "character"), "color": colour_of(c["look"]),
+                         **({"share": round(float(share), 2)} if isinstance(share, (int, float)) and
+                            not isinstance(share, bool) and 0 <= share <= 1 else {})})
     motion = _v((profile.get("motion") or {}).get("classes"), {}) or {}
     edit = profile.get("edit") or {}
     shot_s, cuts = _v(edit.get("median_shot_s"), edit.get("median_shot_s")), _v(edit.get("cuts_per_min"), edit.get("cuts_per_min"))
@@ -1335,11 +1338,248 @@ def clean_trait(spec, value):
     return None
 
 
-def clean_cast(raw, traits: dict = None) -> dict:
-    """{id: character} keeping only the traits the renderer declared; ids are short lowercase words."""
+# ── the renderer's vocabulary, exactly (Studio 109) ─────────────────────────────────────────────────────────────────
+# The owner's Windows test: the HUD read "DAY DAY 1" and "18°C°" because the renderer wrote "DAY" and "°C" itself and
+# the director sent them too; nothing said a parameter's format, and the plan was never checked against it. Every
+# action and effect now says its parameters' types ({does, params, adds}, or "{day: number}: ..." in a plain string),
+# and a renderer's own test scenes show how its author calls each one (examples); every plan is checked against both.
+
+PARAM_KINDS = ("number", "text", "colour", "color", "bool", "id", "set", "numbers", "texts", "sketch")
+_PARAM = re.compile(r"\s*(number|text|colou?r|bool|id|set|numbers|texts|sketch)\s*(?::\s*(\d{1,4}))?\b", re.I)
+TEXT_MAX = 80                          # an untyped or unbounded text parameter keeps at most this many characters
+SKETCH_KINDS = ("line", "bars", "tally", "pie", "fraction", "list", "checklist", "calendar", "number", "clock", "arrow",
+                "cross", "warning", "text")
+
+
+def param_spec(raw) -> dict:
+    """One parameter's type as a renderer declared it: {"type": number|text|colour|bool|id|set|numbers|texts|sketch|
+    options|any, "max": characters for text, "options": [...], "hint": its words}."""
+    if isinstance(raw, list):
+        opts = [str(o).strip().lower() for o in raw if isinstance(o, (str, int, float)) and str(o).strip()][:24]
+        return {"type": "options", "options": opts} if opts else {"type": "any"}
+    if isinstance(raw, dict):
+        kind = str(raw.get("type") or "").lower()
+        out = param_spec(f"{kind}:{raw['max']}" if raw.get("max") and kind in ("text", "texts") else kind or "any")
+        return {**out, "hint": str(raw.get("hint") or raw.get("does") or "")[:80]} if out["type"] != "any" else out
+    text = str(raw or "").strip()
+    m = _PARAM.match(text)
+    if m:
+        kind = m.group(1).lower().replace("color", "colour")
+        out = {"type": kind}
+        if m.group(2) and kind in ("text", "texts"):
+            out["max"] = max(1, min(400, int(m.group(2))))
+        hint = text[m.end():].strip(" ,;:-()")
+        return {**out, "hint": hint[:80]} if hint else out
+    if "|" in text and len(text) < 160 and re.fullmatch(r"[\w\s|'-]+", text):
+        return {"type": "options", "options": [o.strip().strip("'").lower() for o in text.split("|") if o.strip()][:24]}
+    return {"type": "any", "hint": text[:80]} if text else {"type": "any"}
+
+
+def _signature(doc: str) -> dict:
+    """{param: spec} from a plain-string doc's leading "{a, b: number, c: left|right}" ({} when it has none)."""
+    m = re.match(r"\s*\{([^{}]*)\}", str(doc or ""))
+    if not m:
+        return {}
+    out = {}
+    for item in m.group(1).split(","):
+        name, _, kind = item.partition(":")
+        name = name.strip().strip("'\"")
+        if re.fullmatch(r"[a-z_]{1,24}", name or ""):
+            out[name] = param_spec(kind) if kind.strip() else {"type": "any"}
+    return out
+
+
+def vocabulary(table) -> dict:
+    """{name: {"does", "params" {param: spec}, "adds"}} for a manifest's actions or fx, whichever way each is written:
+    {does, params, adds} (Studio 109) or a plain string (its leading {...} names the parameters)."""
+    out = {}
+    for name, entry in (table.items() if isinstance(table, dict) else []):
+        if not re.fullmatch(r"[a-z_][a-z0-9_]{0,31}", str(name)):
+            continue
+        if isinstance(entry, dict):
+            params = entry.get("params") if isinstance(entry.get("params"), dict) else {}
+            out[name] = {"does": str(entry.get("does") or entry.get("doc") or entry.get("description") or "")[:600],
+                         "params": {str(k): param_spec(v) for k, v in list(params.items())[:16]
+                                    if re.fullmatch(r"[a-z_]{1,24}", str(k)) and k not in RESERVED},
+                         "adds": str(entry.get("adds") or "")[:200]}
+        else:
+            out[name] = {"does": str(entry or "")[:600], "params": {k: v for k, v in _signature(entry).items()
+                                                                    if k not in RESERVED}, "adds": ""}
+    return out
+
+
+def _plain(value) -> bool:
+    return isinstance(value, (str, int, float, bool)) or (isinstance(value, (list, dict)) and len(json.dumps(value)) <= 400)
+
+
+def examples_from(*scenes) -> dict:
+    """{"actions": {move: its first call's parameters}, "fx": {kind: ...}}: how a renderer's author calls each action
+    and effect in its own test and stress scenes, the director's model for the parameters' form."""
+    out = {"actions": {}, "fx": {}}
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
+        for key, field, skip in (("actions", "move", ("at", "who", "move")), ("fx", "kind", ("at", "kind"))):
+            for row in scene.get(key) or []:
+                name = row.get(field) if isinstance(row, dict) else None
+                if isinstance(name, str) and name not in out[key] and len(out[key]) < 60:
+                    out[key][name] = {k: v for k, v in row.items() if k not in skip and _plain(v)}
+    return out
+
+
+def types_for(man: dict, kind: str, name: str) -> dict:
+    """{param: spec} an action (kind "actions") or effect ("fx") takes: as declared, and where it isn't, as its
+    author's own example calls it (a number there is a number here)."""
+    found = dict((vocabulary((man or {}).get(kind)).get(name) or {}).get("params") or {})
+    example = (((man or {}).get("examples") or {}).get(kind) or {}).get(name) or {}
+    for k, v in example.items() if isinstance(example, dict) else ():
+        if k in RESERVED or (found.get(k) or {}).get("type", "any") != "any":
+            continue
+        if isinstance(v, bool):
+            found[k] = {"type": "bool"}
+        elif isinstance(v, (int, float)):
+            found[k] = {"type": "number"}
+        elif isinstance(v, list) and v and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v):
+            found[k] = {"type": "numbers"}
+    return found
+
+
+_NUMBER = re.compile(r"-?\d[\d,]*(?:\.\d+)?|-?\.\d+")
+
+
+def _number(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return round(float(value), 4) if math.isfinite(float(value)) else None
+    m = _NUMBER.search(str(value or ""))
+    if not m:
+        return None
+    try:
+        return round(float(m.group(0).replace(",", "")), 4)
+    except ValueError:
+        return None
+
+
+def _cut(text, most: int) -> str:
+    """Words kept whole: at most `most` characters, cut at the last space that fits (no ellipsis)."""
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(text) <= most:
+        return text
+    head = text[:most + 1]
+    cut = head.rfind(" ")
+    return (head[:cut] if cut >= max(1, most // 2) else text[:most]).rstrip(" ,;:-")
+
+
+def coerce(spec: dict, value, cast: dict = None, sets: dict = None):
+    """A parameter's value in the type its renderer declared (None when it can't be one): "DAY 1" for a number is 1,
+    "18°C" is 18; text keeps whole words within its length."""
+    kind = (spec or {}).get("type", "any")
+    if value is None:
+        return None
+    if kind == "number":
+        return _number(value)
+    if kind == "text":
+        if isinstance(value, (dict, list)):
+            return None
+        text = _cut(value if not isinstance(value, float) else f"{value:g}", int(spec.get("max") or TEXT_MAX))
+        return text or None
+    if kind == "colour":
+        return _hex(value, "") or None
+    if kind == "bool":
+        return clean_trait("bool", value)
+    if kind == "options":
+        return _option(value, spec.get("options") or [])
+    if kind == "id":
+        return value if isinstance(value, str) and value in (cast or {}) else None
+    if kind == "set":
+        return value if isinstance(value, str) and value in (sets or {}) else None
+    if kind == "numbers":
+        rows = value if isinstance(value, list) else _NUMBER.findall(str(value))
+        out = [n for n in (_number(v) for v in rows[:12]) if n is not None]
+        return out or None
+    if kind == "texts":
+        rows = value if isinstance(value, list) else [value]
+        out = [_cut(v, int(spec.get("max") or 40)) for v in rows[:8] if isinstance(v, (str, int, float)) and str(v).strip()]
+        return out or None
+    if kind == "sketch":
+        return clean_sketch(value)
+    # untyped: what plans always carried (a number, a yes/no, short words, kept whole)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return round(float(value), 3)
+    if isinstance(value, str):
+        return _cut(value, 60) or None
+    return None
+
+
+def clean_sketch(value):
+    """What a board or screen shows (Kit.sketch): {kind, values, trend, count, part, whole, items, done, text, time,
+    dir}, every field bounded; a plain string is shown as words."""
+    if isinstance(value, str):
+        return {"kind": "text", "text": _cut(value, 60)} if value.strip() else None
+    if not isinstance(value, dict):
+        return None
+    out = {}
+    kind = str(value.get("kind") or "").lower()
+    if kind in SKETCH_KINDS:
+        out["kind"] = kind
+    for k in ("count", "part", "whole"):
+        n = _number(value.get(k)) if value.get(k) is not None else None
+        if n is not None:
+            out[k] = max(-1e6, min(1e6, n))
+    vals = coerce({"type": "numbers"}, value.get("values")) if value.get("values") is not None else None
+    if vals:
+        out["values"] = vals
+    items = coerce({"type": "texts", "max": 40}, value.get("items")) if value.get("items") is not None else None
+    if items:
+        out["items"] = items
+    if isinstance(value.get("done"), list):
+        out["done"] = [bool(x) if isinstance(x, bool) else None for x in value["done"][:8]]
+    for k, most in (("trend", 10), ("text", 60), ("time", 8), ("dir", 8)):
+        if isinstance(value.get(k), (str, int, float)) and str(value[k]).strip():
+            out[k] = _cut(value[k], most)
+    return out or None
+
+
+def recurring(man: dict) -> dict:
+    """{id: character} the renderer declares as the channel's own recurring characters (manifest.cast.recurring)."""
+    rows = ((man or {}).get("cast") or {}).get("recurring")
+    return {str(k): v for k, v in (rows.items() if isinstance(rows, dict) else []) if isinstance(v, dict)}
+
+
+def recurring_words(man: dict, spec: dict) -> str:
+    """The channel's recurring characters, for the casting and the director: the renderer's own (exact traits), else
+    the ones the look saw in most of the channel's frames (a mascot, a host), in words."""
+    own = recurring(man)
+    if own:
+        return json.dumps(own, ensure_ascii=False) + " (the renderer draws them exactly so; keep these ids and traits)"
+    seen = []
+    for c in (spec or {}).get("cast") or []:
+        if not isinstance(c, dict) or not c.get("look"):
+            continue
+        share = c.get("share")
+        main = isinstance(share, (int, float)) and share >= 0.3
+        if main or re.search(r"mascot|host|narrator|protagonist|main|recurring|you\b", str(c.get("role") or ""), re.I):
+            seen.append(f"{c.get('name') or 'a character'}: {c['look']}"
+                        + (f" (in {round(share * 100)}% of the channel's frames)" if isinstance(share, (int, float)) else ""))
+    return ("; ".join(seen[:3]) + ". Draw them with the traits above as close to this look as they allow.") if seen else \
+        "none (this channel has no character in every video)"
+
+
+def clean_cast(raw, traits: dict = None, keep: dict = None) -> dict:
+    """{id: character} keeping only the traits the renderer declared; ids are short lowercase words. keep: the
+    renderer's recurring characters (manifest.cast.recurring), added when the casting left one out and marked
+    "recurring" (the owner's Windows test: the channel's red-cap mascot was in the study's shots, not the video)."""
     traits = traits if isinstance(traits, dict) and traits else {"color": "colour"}
     out = {}
-    rows = raw.items() if isinstance(raw, dict) else ((r.get("id"), r) for r in raw or [] if isinstance(r, dict))
+    rows = list(raw.items() if isinstance(raw, dict) else ((r.get("id"), r) for r in raw or [] if isinstance(r, dict)))
+    keep = keep if isinstance(keep, dict) else {}
+    missing = [(k, v) for k, v in keep.items() if re.sub(r"[^a-z0-9_]", "", str(k).lower())[:24] not in
+               {re.sub(r"[^a-z0-9_]", "", str(key or (c or {}).get("name") or "").lower().replace(" ", "_"))[:24]
+                for key, c in rows if isinstance(c, dict)}]
+    rows = missing + rows
     for key, c in rows:
         if not isinstance(c, dict) or len(out) >= 8:
             continue
@@ -1353,27 +1593,49 @@ def clean_cast(raw, traits: dict = None) -> dict:
                 char[k] = v
         if "height" in char and isinstance(char["height"], (int, float)):
             char["height"] = max(0.6, min(1.6, char["height"]))
+        if keep and ident in {re.sub(r"[^a-z0-9_]", "", str(k).lower())[:24] for k in keep}:
+            char["recurring"] = True
         out[ident] = char
     if not out:
         raise AnimationStopped("Claude's cast for this video was empty. Its answer is saved; nothing was drawn.")
     return out
 
 
-def clean_sets(raw) -> dict:
+LIGHT_MAX = 40
+
+
+def clean_sets(raw, most: int = 6, taken=()) -> dict:
+    """{id: place}: what each place is, for its picture or for the renderer that draws it (Studio 109: inside or out,
+    its walls, sky, floor, light, props by their words and its crowd, so a bunker is drawn as a bunker)."""
     out = {}
     rows = raw.items() if isinstance(raw, dict) else ((r.get("id"), r) for r in raw or [] if isinstance(r, dict))
     for key, s in rows:
         if not isinstance(s, dict):
             continue
         ident = re.sub(r"[^a-z0-9_]", "", str(key or "").lower().replace(" ", "_"))[:24]
-        if not ident or ident in out or len(out) >= 6:
+        if not ident or ident in out or ident in taken or len(out) >= most:
             continue
         sky = [_hex(x, "") for x in (s.get("sky") or [])][:2]
         floor = [_hex(x, "") for x in (s.get("floor_colors") or s.get("floor") or [])][:2]
-        out[ident] = {"prompt": str(s.get("prompt") or s.get("description") or ident.replace("_", " "))[:600],
-                      **({"sky": sky} if len(sky) == 2 and all(sky) else {}),
-                      **({"floor_colors": floor} if len(floor) == 2 and all(floor) else {})}
-    if not out:
+        row = {"prompt": str(s.get("prompt") or s.get("description") or ident.replace("_", " "))[:600],
+               **({"sky": sky} if len(sky) == 2 and all(sky) else {}),
+               **({"floor_colors": floor} if len(floor) == 2 and all(floor) else {})}
+        if isinstance(s.get("inside"), bool):
+            row["inside"] = s["inside"]
+        walls = _hex(s.get("walls"), "") if s.get("walls") else ""
+        if walls:
+            row["walls"] = walls
+        if isinstance(s.get("light"), str) and s["light"].strip():
+            row["light"] = _cut(s["light"], LIGHT_MAX)
+        props = [_cut(x, 48) for x in (s.get("props") if isinstance(s.get("props"), list) else [])
+                 if isinstance(x, (str, int, float)) and str(x).strip()][:8]
+        if props:
+            row["props"] = props
+        crowd = _number(s.get("crowd")) if s.get("crowd") is not None else None
+        if crowd is not None:
+            row["crowd"] = int(max(0, min(200, crowd)))
+        out[ident] = row
+    if not out and not taken:
         out["place"] = {"prompt": "an empty, simple place in the channel's style"}
     return out
 
@@ -1381,15 +1643,19 @@ def clean_sets(raw) -> dict:
 RESERVED = {"at", "who", "move", "target"}
 
 
-def clean_plan(raw, cast: dict, sets: dict, t0: float, t1: float, man: dict = None) -> dict:
+def clean_plan(raw, cast: dict, sets: dict, t0: float, t1: float, man: dict = None, new_sets: int = 0) -> dict:
     """The director's shots, actions and effects inside this stretch of the narration (seconds from its start), with
-    only the renderer's own actions, effects and framings, known characters and places; shots cover the stretch."""
+    only the renderer's own actions, effects and framings, known characters and places; shots cover the stretch.
+    Every parameter is checked against its type (the renderer's declared params, else its author's examples); new_sets:
+    how many places the director may add (a renderer that draws every place itself), returned under "sets"."""
     raw = raw if isinstance(raw, dict) else {}
     man = man or {}
     actions_ok = set((man.get("actions") or {}).keys()) | {"place", "enter", "exit"}
     fx_ok = set((man.get("fx") or {}).keys())
     framings = [str(f).split(":")[0] for f in (man.get("shots") or ["wide", "two", "close", "medium"])]
     dur = round(t1 - t0, 3)
+    added = clean_sets(raw.get("sets"), most=max(0, int(new_sets)), taken=set(sets)) if new_sets and raw.get("sets") else {}
+    places = {**sets, **added}
 
     def at(v, default=0.0):
         try:
@@ -1399,17 +1665,16 @@ def clean_plan(raw, cast: dict, sets: dict, t0: float, t1: float, man: dict = No
         x = x - t0 if x >= t0 - 0.05 and t0 > 0 else x
         return round(max(0.0, min(dur, x)), 3)
 
-    def extras(src, row):
+    def extras(src, row, types):
         for k, v in src.items():
             if k in RESERVED or k in row or len(row) > 16 or not re.fullmatch(r"[a-z_]{1,24}", str(k)):
                 continue
-            if isinstance(v, bool) or isinstance(v, (int, float)):
-                row[k] = v if isinstance(v, bool) else round(float(v), 3)
-            elif isinstance(v, str) and len(v) <= 60:
-                row[k] = v.strip()
+            got = coerce(types.get(k) or {"type": "any"}, v, cast, places)
+            if got is not None:
+                row[k] = got
         return row
 
-    first_set = next(iter(sets))
+    first_set = next(iter(places))
     shots = []
     for s in raw.get("shots") or []:
         if not isinstance(s, dict):
@@ -1422,10 +1687,14 @@ def clean_plan(raw, cast: dict, sets: dict, t0: float, t1: float, man: dict = No
             who = ""
         if kind in ("close", "medium") and not who:
             who = next(iter(cast))
-        shots.append({"start": at(s.get("start")), "set": s.get("set") if s.get("set") in sets else
-                      (shots[-1]["set"] if shots else first_set), "framing": kind + (":" + who if who else ""),
-                      "move": str(s.get("move") or "static").lower() if str(s.get("move") or "static").lower() in CAMERA
-                      else "static", "cast": [c for c in (s.get("cast") or []) if c in cast][:4]})
+        row = {"start": at(s.get("start")), "set": s.get("set") if s.get("set") in places else
+               (shots[-1]["set"] if shots else first_set), "framing": kind + (":" + who if who else ""),
+               "move": str(s.get("move") or "static").lower() if str(s.get("move") or "static").lower() in CAMERA
+               else "static", "cast": [c for c in (s.get("cast") or []) if c in cast][:4]}
+        crowd = _number(s.get("crowd")) if s.get("crowd") is not None else None
+        if crowd is not None:
+            row["crowd"] = int(max(0, min(200, crowd)))
+        shots.append(row)
     shots.sort(key=lambda s: s["start"])
     if not shots or shots[0]["start"] > 0:
         shots.insert(0, {"start": 0.0, "set": shots[0]["set"] if shots else first_set, "framing": framings[0],
@@ -1448,7 +1717,7 @@ def clean_plan(raw, cast: dict, sets: dict, t0: float, t1: float, man: dict = No
         row = {"at": at(a.get("at")), "who": a["who"], "move": move}
         if a.get("target") in cast and a.get("target") != a["who"]:
             row["target"] = a["target"]
-        extras(a, row)
+        extras(a, row, types_for(man, "actions", move))
         for key in ("x", "to"):
             if isinstance(row.get(key), float):
                 row[key] = max(-5.0, min(5.0, row[key]))
@@ -1466,11 +1735,14 @@ def clean_plan(raw, cast: dict, sets: dict, t0: float, t1: float, man: dict = No
             row = {"kind": f["kind"], "at": at(f.get("at"))}
             if f.get("on") in cast:
                 row["on"] = f["on"]
-            extras({k: v for k, v in f.items() if k not in ("kind", "on")}, row)
+            extras({k: v for k, v in f.items() if k not in ("kind", "on")}, row, types_for(man, "fx", f["kind"]))
             if "color" in row:
                 row["color"] = _hex(row["color"], "#ffffff")
             fx.append(row)
-    return {"shots": merged, "actions": actions, "fx": fx, "duration": dur}
+    out = {"shots": merged, "actions": actions, "fx": fx, "duration": dur}
+    if added:
+        out["sets"] = {k: v for k, v in added.items() if any(sh["set"] == k for sh in merged)}
+    return out
 
 
 # ── the narration on the voice's own clock ──────────────────────────────────────────────────────────────────────────
@@ -1590,6 +1862,8 @@ def cast_and_sets(engine, script: str, job: Path, style: str, title: str = "", m
         prompt = (_prompt("cast.txt").replace("[TITLE]", title or (Path(job).name.split("--")[0].replace("-", " ")))
                   .replace("[SCRIPT]", script[:24000]).replace("[STYLE]", json.dumps(spec, ensure_ascii=False))
                   .replace("[CREATOR]", engine._extra_block() or "none")
+                  .replace("[MEDIUM]", "3D" if dims_of(spec) == 3 else "2D")
+                  .replace("[RECURRING]", recurring_words(man, spec))
                   .replace("[DESCRIBE]", str(cast_spec.get("describe") or "the channel's characters"))
                   .replace("[TRAITS]", json.dumps(cast_spec.get("traits") or {"color": "colour"}, ensure_ascii=False)))
         _write(folder / "casting-request.json", {"key": key})
@@ -1597,7 +1871,9 @@ def cast_and_sets(engine, script: str, job: Path, style: str, title: str = "", m
         reply.parent.mkdir(parents=True, exist_ok=True)
         reply.write_text(str(text), encoding="utf-8")
     raw = _json(text)
-    out = {"key": key, "cast": clean_cast(raw.get("cast"), cast_spec.get("traits")), "sets": clean_sets(raw.get("sets"))}
+    # the channel's recurring characters are in every video, unless the creator asked for something else
+    keep = {} if (engine._extra_block() or "").strip() else recurring(man)
+    out = {"key": key, "cast": clean_cast(raw.get("cast"), cast_spec.get("traits"), keep), "sets": clean_sets(raw.get("sets"))}
     _write(folder / "casting.json", out)
     return out
 
@@ -1690,46 +1966,115 @@ def _try(fn, row):
         return f"{type(error).__name__}: {error}"
 
 
+def _type_words(spec: dict) -> str:
+    kind = spec.get("type", "any")
+    words = {"number": "a bare number", "colour": "#rrggbb", "bool": "true or false", "id": "a cast id",
+             "set": "a set id", "numbers": "a list of numbers", "sketch": "{kind, values, trend, count, part, whole, "
+             "items, done, text, time, dir}"}.get(kind, "")
+    if kind == "text":
+        words = f"text, at most {spec.get('max') or TEXT_MAX} characters"
+    elif kind == "texts":
+        words = f"a list of short texts, each at most {spec.get('max') or 40} characters"
+    elif kind == "options":
+        words = " | ".join(spec.get("options") or [])
+    hint = spec.get("hint") or ""
+    return (words + (f" ({hint})" if hint and words else hint)).strip()
+
+
+def vocabulary_lines(man: dict, kind: str) -> list:
+    """The director's list of a renderer's actions or effects: each one's parameters with their exact types, what the
+    renderer writes by itself around them, and how its author calls it."""
+    field = "move" if kind == "actions" else "kind"
+    examples = ((man or {}).get("examples") or {}).get(kind) or {}
+    lines = []
+    for name, entry in vocabulary((man or {}).get(kind)).items():
+        params = types_for(man, kind, name)
+        sig = ", ".join(f"{k}: {_type_words(v)}" if _type_words(v) else k for k, v in params.items())
+        does = re.sub(r"^\s*\{[^{}]*\}\s*:?\s*", "", entry["does"]) if entry["does"].lstrip().startswith("{") else entry["does"]
+        line = f"- {name}" + (f" {{{sig}}}" if sig else "") + (f": {does}" if does else "")
+        if entry["adds"]:
+            line += f" [the renderer itself writes: {entry['adds']}; never send that]"
+        if isinstance(examples.get(name), dict):
+            sample = json.dumps({field: name, **examples[name]}, ensure_ascii=False)
+            if len(sample) <= 260:
+                line += f" e.g. {sample}"
+        lines.append(line)
+    return lines
+
+
+NEW_SETS = 2                           # places a director may add to a stretch, for a renderer that draws its own places
+
+
+def _places_words(sets: dict) -> str:
+    return json.dumps({k: {f: v[f] for f in ("prompt", "inside", "light", "props", "crowd") if f in v}
+                       for k, v in sets.items()}, ensure_ascii=False)
+
+
 def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int, previous: str, title: str,
-           man: dict = None) -> dict:
-    """One stretch of narration choreographed by Claude in the renderer's own actions (director-NNN.json), checked."""
+           man: dict = None, fix: list = None, before: dict = None) -> dict:
+    """One stretch of narration choreographed by Claude in the renderer's own actions (director-NNN.json), checked.
+    fix: what the frame check found in the plan before (before), for the one re-plan (director-NNN-fix.*)."""
     t0, t1, lines = part
     man = man or {}
     folder = Path(job) / "animated2d"
     template = _prompt("director.txt")
     beats = beats_text(lines)
     docs = {"actions": man.get("actions") or {}, "shots": man.get("shots") or [], "fx": man.get("fx") or {},
-            "notes": man.get("notes") or ""}
+            "notes": man.get("notes") or "", "examples": man.get("examples") or {}}
+    own_places = ((man.get("plates") or {}).get("draw") is False)
+    review = ""
+    if fix:
+        review = ("\nA CHECK OF YOUR PLAN FOR THIS STRETCH (its frames, drawn) FOUND, at seconds on the narration's clock:\n- "
+                  + "\n- ".join(str(x)[:400] for x in fix[:12])
+                  + "\nRewrite the whole plan for this stretch so every one of these is fixed; keep what works.\nYOUR PLAN "
+                  "WAS: " + json.dumps({k: (before or {}).get(k) for k in ("shots", "actions", "fx", "sets")
+                                        if (before or {}).get(k)}, ensure_ascii=False)[:12000] + "\n")
     key = _digest({"beats": beats, "cast": casting["cast"], "sets": casting["sets"], "spec": spec, "prompt": template,
-                   "previous": previous, "t": [t0, t1], "docs": docs})
-    reply = folder / f"director-{index:03d}.txt"
-    request = folder / f"director-{index:03d}.json"
+                   "previous": previous, "t": [t0, t1], "docs": docs, **({"fix": review} if fix else {})})
+    name = f"director-{index:03d}" + ("-fix" if fix else "")
+    reply = folder / f"{name}.txt"
+    request = folder / f"{name}.json"
     if reply.is_file() and _read(request).get("key") == key:
         text = reply.read_text(encoding="utf-8")
     else:
-        engine.step(f"Animated 2D: choreographing {t0:.0f}-{t1:.0f} s")
+        engine.step(f"Animated 2D: choreographing {t0:.0f}-{t1:.0f} s" + (" again, from the frame check" if fix else ""))
         prompt = (template.replace("[TITLE]", title).replace("[STYLE]", json.dumps(spec, ensure_ascii=False))
                   .replace("[CAST]", json.dumps(casting["cast"], ensure_ascii=False))
-                  .replace("[SETS]", json.dumps({k: v["prompt"] for k, v in casting["sets"].items()}, ensure_ascii=False))
-                  .replace("[ACTIONS]", "\n".join(f"- {k}: {v}" for k, v in docs["actions"].items()))
+                  .replace("[RECURRING]", ", ".join(k for k, c in casting["cast"].items() if c.get("recurring"))
+                           or recurring_words(man, spec))
+                  .replace("[SETS]", _places_words(casting["sets"]))
+                  .replace("[ACTIONS]", "\n".join(vocabulary_lines(man, "actions")))
                   .replace("[SHOTS]", ", ".join(str(s) for s in docs["shots"]) or "wide, two, close, medium")
-                  .replace("[FX]", "\n".join(f"- {k}: {v}" for k, v in docs["fx"].items()) or "(none)")
+                  .replace("[FX]", "\n".join(vocabulary_lines(man, "fx")) or "(none)")
                   .replace("[NOTES]", docs["notes"] or "(none)")
                   .replace("[MEDIUM]", "3D" if dims_of(spec) == 3 else "2D").replace("[PACE]", pace_words(spec))
-                  .replace("[PLACE]", str(docs["actions"].get("place") or "{x, face: left|right}"))
+                  .replace("[PLACE]", str((vocabulary(docs["actions"]).get("place") or {}).get("does")
+                                          or "{x, face: left|right}"))
+                  .replace("[NEWSETS]", ("NEW PLACES: when the narration goes somewhere none of the places above is (a "
+                                         "hatch, a tunnel, the surface), add it under \"sets\" in your reply, at most "
+                                         f"{NEW_SETS}, with a place's fields (prompt, inside, walls, sky, floor_colors, "
+                                         "light, props, crowd), and use its id in the shots. The renderer draws any place.")
+                           if own_places else "")
+                  .replace("[NEWSETS_REPLY]", ',\n "sets": {}' if own_places else "")
+                  .replace("[REVIEW]", review)
                   .replace("[START]", f"{t0:.2f}").replace("[END]", f"{t1:.2f}").replace("[BEATS]", beats)
                   .replace("[PREVIOUS]", previous or "This is the opening: place everyone first.")
                   .replace("[CREATOR]", engine._extra_block() or "none"))
+        if fix and "[REVIEW]" not in template:
+            prompt += "\n" + review
         _write(request, {"key": key})
         text = engine.claude(prompt, _model("director"), max_tokens=12000, provider="claudecode")
         reply.write_text(str(text), encoding="utf-8")
-    return clean_plan(_json(text), casting["cast"], casting["sets"], t0, t1, man)
+    return clean_plan(_json(text), casting["cast"], casting["sets"], t0, t1, man, new_sets=NEW_SETS if own_places else 0)
+
+
+SET_FIELDS = ("sky", "floor_colors", "prompt", "inside", "walls", "light", "props", "crowd")
 
 
 def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: list = None, size=None) -> dict:
     sets = {}
-    for ident, s in casting["sets"].items():
-        row = {k: v for k, v in s.items() if k in ("sky", "floor_colors", "prompt")}
+    for ident, s in {**casting["sets"], **(plan.get("sets") or {})}.items():
+        row = {k: v for k, v in s.items() if k in SET_FIELDS}
         if ident in plate_paths:
             row["image"] = str(plate_paths[ident])
             row["floor"] = floor_line(plate_paths[ident])
