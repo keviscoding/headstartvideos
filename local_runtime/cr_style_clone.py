@@ -997,12 +997,15 @@ def _renderer(folder, spec, looked, see, log):
     profile = cr_style_map.answer(looked["profile"], spec.get("answers") or {})
     channel = cr_animated2d.from_profile(profile)
     three = renderer_dims(spec, looked, home) == 3
+    tall = cr_style_map.vertical(looked["profile"])
     size = {}
     if three:
-        tall = cr_style_map.vertical(looked["profile"])
         size = {"dims": 3, "width": 1080 if tall else 1920, "height": 1920 if tall else 1080}
         channel.update(medium="real 3D (three.js)", format=("vertical 1080x1920 Shorts with captions" if tall else
                                                             "16:9 1920x1080 video"))
+    elif tall:                                              # a 2D Shorts channel is drawn vertical, as its videos are
+        size = {"width": 1080, "height": 1920}
+        channel.update(format="vertical 1080x1920 Shorts with captions")
     art = ((_read(folder / "art-checkpoint.json").get("art") or {}).get("overrides") or {}).get("look") or {}
     if art.get("character"):
         channel["cast_in_words"] = str(art["character"])[:1500]

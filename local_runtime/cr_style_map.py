@@ -20,7 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 103         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer); older saved plans are made again
+ROUTER = 104         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: any channel can be written in code); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
@@ -56,6 +56,10 @@ ANIMATION_GAP_KIND = ("Studio rigs and animates stick-figure characters, and thi
 DRAWN_2D = ("stick_figure", "drawing", "cutout", "painting")
 MOVES_ANYWAY = ("live_footage", "archival_footage", "stock_footage", "news_clip", "bodycam_cctv", "interview", "ai_video",
                 "motion_graphic", "presenter", "avatar")
+# any channel's pictures can be written in code (the owner, 2026-10-25: Studio must never limit what Claude can build)
+MADE_USUAL = "Studio's usual way for this channel (above)"
+MADE_CODE = "Written in code: your Claude Code writes this channel's own renderer"
+MADES = (MADE_USUAL, MADE_CODE)
 ANIMATED_SHARE = 0.6         # of the drawn pictures' time, measured moving: their characters are animated
 ANIMATED_SURE = 0.8          # above this (or with no narrator carrying the story) Studio's guess is to animate them
 
@@ -801,6 +805,37 @@ def _animated_route(profile, animation: str) -> dict:
             "or are animated by AI (the channel's characters move in small ways under its narrator)."}
 
 
+def coded_route(profile) -> dict:
+    """Any channel's pictures written in code, on the creator's word: its own renderer, which their Claude Code writes
+    during the study from the channel's frames (three.js when 20%+ of its pictures are 3D and the 3D kit is here, else
+    2D); {} when this Studio has neither kit."""
+    import cr_animated2d
+    three = _families(profile).get("3d", 0) >= 0.2 and cr_animated2d.available3d()
+    if not three and not cr_animated2d.available():
+        return {}
+    return {"engine": "animated3d" if three else "animated2d", "coded": True,
+            "why": "written in code: during the study your Claude Code writes this channel's own renderer ("
+                   + ("in real 3D with three.js" if three else "drawn in 2D") + ") from its frames, whatever they show "
+                   "(characters, graphics, maps, text, effects, camera), and checks its test shots against the "
+                   "channel's own frames (usually 5 to 15 more minutes of Claude usage, at most 25). Every video then "
+                   "reuses it: Claude directs it to the narration and Studio draws every frame on this computer"
+                   + (", vertical with its captions like the channel's Shorts" if vertical(profile) else "") + "."}
+
+
+def made_question(profile, usual: dict) -> dict:
+    """Every channel is offered its pictures written in code beside Studio's usual way for it (usual: the route without
+    that answer); {} where the usual way already is code, or no kit is here."""
+    if usual.get("engine") in ("animated2d", "animated3d"):
+        return {}
+    coded = coded_route(profile)
+    if not coded:
+        return {}
+    said = str(usual.get("why") or "").strip().rstrip(".")
+    return {"id": "made", "ask": "How should Studio make this channel's pictures? Studio's usual way"
+            + (f": {said[0].lower() + said[1:]}." if said else ".") + " Or " + coded["why"] + " Studio's guess is first.",
+            "options": list(MADES)}
+
+
 def vertical(profile) -> bool:
     """A Shorts channel: most of the look's frames are portrait (measured from the frames themselves)."""
     return float(_v(_get(profile, "format", "vertical"), 0) or 0) >= 0.5
@@ -937,6 +972,11 @@ def _animated2d(plan: Plan, original: dict):
     animation conventions; the cast and places are designed for each video from its script."""
     import cr_animated2d
     spec = cr_animated2d.from_profile(original)
+    if vertical(original):
+        spec.update(width=1080, height=1920, captions=True)
+        plan.set("look.aspect", "9:16", area="Look", label="Format",
+                 why="the references are vertical Shorts (measured from their frames)", source="measured",
+                 show="vertical 1080x1920, captions drawn the channel's way")
     plan.set("look.visuals", cr_animated2d.VISUALS, area="Motion", label="Animated characters",
              why="the references' drawn characters walk, fight and act; Studio rigs them as puppets and animates them "
                  "in code (" + cr_animated2d.fits(original)[1] + ")", source="measured,watched",
@@ -1223,6 +1263,12 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
         designed, looked = 0.0, _families(profile).get("3d", 0)
     way = route(profile, base or "", drawn=looked, told=told, designed=designed, by_hand=by_hand,
                 animation=str((answers or {}).get("animation") or ""), rendered=rendered, pictures=pictures)
+    usual = way
+    if str((answers or {}).get("made") or "") == MADE_CODE and way.get("engine") not in ("animated2d", "animated3d"):
+        way = coded_route(original) or way                # the creator chose code for a channel Studio would draw
+        rendered = rendered or way.get("engine") == "animated3d"
+        if way.get("coded"):
+            designed, looked = 0.0, 0.0
     if rendered:                                  # Claude's renderer draws the 3D: neither the kit's cast nor pictures
         designed, looked = 0.0, 0.0
     if answers:
@@ -1265,7 +1311,8 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
             "overrides": plan.overrides, "remove": plan.remove, "settings": plan.settings,
             "needs": list(dict.fromkeys(plan.needs)), "notes": plan.notes,
             "cost": cost(plan.overrides, chosen),
-            "questions": [q for q in [medium_question(original), animation_question(original)] if q]
+            "questions": [q for q in [medium_question(original), animation_question(original),
+                                      made_question(original, usual)] if q]
                          + list(original.get("questions") or [])}
 
 

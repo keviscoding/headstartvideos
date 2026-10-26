@@ -133,12 +133,17 @@ Studio through its own checks, so nothing needs the Studio web page.
   bar; read `what_to_tell_them` to the creator, and if they would rather have pictures, they press Use pictures
   instead on the style's page (never choose for them). If `look_progress` or `clone_style` returns a `medium_gap`,
   Studio can't make that medium yet: read it to the creator and call `clone_style` with `accept_medium=true` only
-  after they accept it. Never accept it for them, and never call a stopgap the real thing.
+  after they accept it. Never accept it for them, and never call a stopgap the real thing. Every channel is also
+  offered `made`: Studio's usual way, or written in code (their Claude Code writes the channel's own renderer for
+  any kind of channel: explainers, graphics, maps, 3D without characters). Say what each means before they choose.
+- Improving a style's renderer (an animated or code-written style): the `style_lab` tool and the /clone-style
+  skill's Style Lab section. Edit its workspace files, preview, check against the channel, save. Free.
 
 ## Making videos through ChannelRecipe tools
 
 Use ChannelRecipe's MCP production workflow and the installed studio engine. Do
-not build a substitute renderer or hardcode stock/image percentages. Keep the
+not build a substitute renderer outside Studio (a style's own renderer is changed
+in Style Lab, which plugs it back in) or hardcode stock/image percentages. Keep the
 recipe's preset, director, scene modules and visual review loops.
 
 For customization, samples, creative direction and specialist features, read

@@ -177,6 +177,56 @@ def test_pictures_in_place_of_3d_are_only_the_creators_choice_and_a_hand_picked_
     assert picked["route"]["engine"] != "animated3d", "the creator picked the 3D recipe themselves"
 
 
+def test_any_channel_is_offered_its_pictures_written_in_code(kit3d, monkeypatch):
+    """The owner (2026-10-25): Studio must never limit what Claude can build. An AI-picture channel, a footage
+    documentary and a faceless 3D reconstruction channel are each offered their own Claude-written renderer beside
+    Studio's usual way (which stays the guess), and the answer routes them to it."""
+    monkeypatch.setattr(a2d, "available", lambda home=None: True)
+    drawn = tsm.profile({"generated": 0.9, "graphic": 0.1})
+    crime = tsm.profile({"footage": 0.8, "graphic": 0.2}, {"bodycam_cctv": 0.45, "archival_footage": 0.35})
+    faceless = tsm.profile({"3d": 0.6, "graphic": 0.4}, pictures__art_style=tsm.RECONSTRUCTION)
+    for prof, usual, kit in ((drawn, "pictures", "animated2d"), (crime, "pictures", "animated2d"),
+                             (faceless, "threed", "animated3d")):
+        plan = cm.plan_style(prof, tsm.STYLES)
+        assert plan["route"]["engine"] == usual, "Studio's usual way stays the guess"
+        q = next(q for q in plan["questions"] if q["id"] == "made")
+        assert q["options"] == [cm.MADE_USUAL, cm.MADE_CODE] and "renderer" in q["ask"]
+        coded = cm.plan_style(prof, tsm.STYLES, answers={"made": cm.MADE_CODE})
+        assert coded["route"]["engine"] == kit and coded["route"]["coded"] and "medium_gap" not in coded["route"]
+        look = coded["overrides"]["look"]
+        assert look["visuals"] == (a2d.VISUALS3D if kit == "animated3d" else a2d.VISUALS)
+        assert coded["overrides"]["pacing"]["clips_per_min"] == 0.0 and "style_image" not in coded["needs"]
+        assert any(q["id"] == "made" for q in coded["questions"]), "the question stays, so the answer can change back"
+    blocky = cm.plan_style(_blocky(), tsm.STYLES)
+    assert blocky["route"]["engine"] == "animated3d" and not any(q["id"] == "made" for q in blocky["questions"]), \
+        "a channel already written in code isn't asked twice"
+    tall = cm.plan_style(tsm.profile({"generated": 0.9, "graphic": 0.1}, format__vertical=tsm.axis(1.0)), tsm.STYLES,
+                         answers={"made": cm.MADE_CODE})
+    spec = tall["overrides"]["look"]["animated2d"]
+    assert tall["overrides"]["look"]["aspect"] == "9:16" and (spec["width"], spec["height"]) == (1080, 1920) \
+        and spec["captions"] is True, "a Shorts channel written in 2D is vertical with its captions"
+    monkeypatch.setattr(a2d, "available", lambda home=None: False)
+    monkeypatch.setattr(a2d, "available3d", lambda home=None: False)
+    assert not any(q["id"] == "made" for q in cm.plan_style(drawn, tsm.STYLES)["questions"]), "no kit, no offer"
+
+
+def test_a_2d_shorts_channel_written_in_code_is_built_vertical(tmp_path, monkeypatch):
+    import cr_style_clone
+    import cr_style_likeness
+    folder = tmp_path / "home" / "output" / "cr-style-clone" / ("op_" + "e" * 24)
+    folder.mkdir(parents=True)
+    got = {}
+    monkeypatch.setattr(cr_style_likeness, "frames", lambda home, look_id: tsm_frames(tmp_path / "look", 9))
+    monkeypatch.setattr(cr_style_likeness, "flat_graphic", lambda p: False)
+    monkeypatch.setattr(a2d, "build", lambda folder, spec, channel, **kw: got.update(spec=spec, channel=channel)
+                        or {"state": "passed"})
+    tall = tsm.profile({"generated": 0.9, "graphic": 0.1}, format__vertical=tsm.axis(1.0))
+    cr_style_clone._renderer(folder, {"look_id": "lk_x", "answers": {}, "renderer": "2d"}, {"profile": tall},
+                             see=None, log=lambda m: None)
+    assert (got["spec"]["width"], got["spec"]["height"]) == (1080, 1920) and "dims" not in got["spec"]
+    assert "Shorts" in got["channel"]["format"]
+
+
 def test_without_the_3d_kit_a_3d_channel_is_routed_as_before(monkeypatch):
     monkeypatch.setattr(a2d, "available3d", lambda home=None: False)
     assert cm.plan_style(_blocky(), tsm.STYLES)["route"]["engine"] == "drawn"

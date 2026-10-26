@@ -21,11 +21,14 @@ Link: $ARGUMENTS
    from each channel (for example "the storytelling and pacing of channel A, the 3D look of channel B").
 4. **Wait for the look.** Check `progress(id=look_id)` about once a minute (a few minutes in all). Say what it's doing.
 5. **Their answers.** When the look is done, ask each of its `questions` (a multiple-choice question works well;
-   Studio's guess is the first option). Ask `medium` (how a 3D channel's 3D is made) and `animation` (whether the
-   channel's drawn characters are animated, or pictures in their look) first: they decide how the videos are made.
+   Studio's guess is the first option). Ask `medium` (how a 3D channel's 3D is made), `animation` (whether the
+   channel's drawn characters are animated, or pictures in their look) and `made` (Studio's usual way for this channel,
+   or written in code: their Claude Code writes the channel's own renderer, for any kind of channel) first: they
+   decide how the videos are made.
    If `look_progress` shows a `medium_gap`, tell them now what their videos will be (`how_made`). Choosing animated
    (2D), or 3D characters with faces, has their Claude Code write the channel's own renderer during the study (usually
-   3 to 15 more minutes); say so. A Shorts channel's videos come out vertical. Also ask:
+   3 to 15 more minutes); say so. A Shorts channel's videos come out vertical. Once the style is saved, the
+   renderer can be improved with the `style_lab` tool (see below). Also ask:
    - a name for the new style (for example "My History Style");
    - an example video title in the channel's subject.
    Mention `suggested_base` and `because` in one line: the recipe the new style builds on.
@@ -42,3 +45,18 @@ Link: $ARGUMENTS
 
 If the plan's style clones are used up, Studio says so: point them to https://channelrecipe.com/app#billing.
 If a study stops, read what Studio said; never start it again by yourself.
+
+## Style Lab: improve a style's renderer
+
+For a style drawn by its own renderer (animated 2D or 3D, or any channel written in code), the creator can ask you to
+make it look more like the channel. Use the `style_lab` tool:
+1. `action: start` with the style id: a workspace folder with `renderer.js`, `scene.json` (a short test scene),
+   the channel's frames (`refs/`) and `GUIDE.md`. Read GUIDE.md and look at the frames first.
+2. Edit `renderer.js` (and `scene.json` to show what you're working on) yourself: anything goes, inside the guide's
+   sandbox rules.
+3. `action: preview`: Studio checks the code (it runs, frames are a pure function of time, speed, the manifest,
+   sound names) and draws test shots plus a 5 s video. Show the creator the shots and the video, side by side with
+   the channel's frames. Fix the problems it lists.
+4. `action: check`: the likeness judge scores the shots against the channel's frames and its bar, and says what
+   still differs. Its score moves about half a point either way between runs: don't chase it.
+5. `action: save` when the creator is happy: every new video in the style uses it. No money is spent at any step.
