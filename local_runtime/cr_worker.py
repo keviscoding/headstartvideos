@@ -78,7 +78,7 @@ def main():
     else:
         cr_bridge._project=cr_bridge.call("projects/"+args.project)
     checks={**cr_studio.graphics_ready(),"python":sys.version_info >= (3,10),"ffmpeg":cr_studio.video_tools_ready(),
-        "node":cr_studio.tool_ready("node","--version") or cr_studio.tool_ready("deno","--version"),
+        "node":cr_studio.node_ready(),
         "local_version":json.loads((HOME/"cr-release.json").read_text(encoding="utf-8"))["version"],"account":cr_bridge.call("status")}
     ready=cr_readiness.basic(checks)
     if not ready["ready"]:

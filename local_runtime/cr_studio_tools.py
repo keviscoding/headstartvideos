@@ -410,6 +410,8 @@ def tool_setup_check(args):
                                  "fix": "" if status.get("browser") else
                                  "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
                                  "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
+            "video_tools": tool_summary(status, "ffmpeg", "fix_ffmpeg"),
+            "node": tool_summary(status, "node", "fix_node"),
             "network": network_summary(status.get("network") or {}),
             "computer": computer_summary(status.get("computer")),
             "speech_model": {"ready": bool(speech.get("ready")), "state": speech.get("state") or "",
@@ -418,12 +420,28 @@ def tool_setup_check(args):
                              "Studio downloads it by itself while it's 'downloading' or 'checking': call setup_check "
                              "again in a minute. Otherwise call fix_speech_model (Studio downloads and checks it "
                              "itself; never install it from this shell)."},
-            "claude_code": {"signed_in": bool(claude.get("authenticated")),
+            "claude_code": {"installed": bool(claude.get("installed")), "signed_in": bool(claude.get("authenticated")),
+                            "fix": "" if claude.get("installed") else
+                            "Call fix_claude_cli: Studio runs Anthropic's official Claude Code installer itself. Never "
+                            "install Claude Code from this shell. Then the creator signs in once (setup_page, step 2: "
+                            "Open the sign-in window).",
                             "models_verified": bool(claude.get("models_verified")),
                             "usage_limit_reached": bool((claude.get("allowance") or {}).get("blocked"))},
             "studio_cloud": {"available": bool(cloud.get("available")), "balance_usd": cloud.get("balance_usd"),
                              "why": cloud.get("why") or "", "topup_url": cloud.get("topup_url")},
             "gallery_url": link("/cr-gallery")}
+
+
+def tool_summary(status: dict, key: str, fix: str) -> dict:
+    """FFmpeg or Node.js: ready, why not, and the fix tool that installs it in Studio's own folder."""
+    ready = bool(status.get(key))
+    can_fix = bool((status.get("can_fix") or {}).get(key, True))
+    return {"ready": ready, "why": "" if ready else str(status.get(key + "_reason") or ""),
+            "fix": "" if ready else (f"Call {fix}: Studio downloads it into its own folder (pinned version, checksum "
+                                     "checked, no password). Never install it from this shell: Studio wouldn't see "
+                                     "it, and Homebrew or winget would ask for the creator's password."
+                                     if can_fix else "Studio can't install it on this computer: help the creator "
+                                     "install it with their system's package manager, then call setup_check.")}
 
 
 def computer_summary(pc) -> dict:
@@ -472,6 +490,41 @@ def tool_fix_speech_model(args):
         return {"running": False, "message": CLOSED}
     return {"state": state.get("state"), "message": "Studio is downloading and checking its speech-timing model (about "
             "140 MB, a minute or two). Call setup_check in a minute; speech_model.ready turns true when it works."}
+
+
+def _fix(path: str, what: str, check: str) -> dict:
+    try:
+        state = call("POST", path, {}, timeout=60)
+    except Closed:
+        return {"running": False, "message": CLOSED}
+    if state.get("state") == "failed":
+        return {"state": "failed", "message": state.get("message") or "It stopped. Call setup_check for details."}
+    return {"state": state.get("state"), "message": f"Studio is installing {what} in its own folder, in the background "
+            f"(a minute or two). Call setup_check in a minute; {check} turns true when it works. If it says failed, "
+            "read its message to the creator."}
+
+
+def tool_fix_ffmpeg(args):
+    """Studio downloads FFmpeg + ffprobe (pinned, SHA-256 checked) into its own folder and puts them first on PATH."""
+    return _fix("/cr-setup/fix-ffmpeg", "FFmpeg", "video_tools.ready")
+
+
+def tool_fix_node(args):
+    """Studio downloads Node.js (pinned, checked against nodejs.org's SHASUMS256.txt) into its own folder."""
+    return _fix("/cr-setup/fix-node", "Node.js", "node.ready")
+
+
+def tool_fix_claude_cli(args):
+    """Studio runs Anthropic's official Claude Code installer, then tells the creator how to sign in once."""
+    try:
+        state = call("POST", "/cr-setup/fix-claude", {}, timeout=60)
+    except Closed:
+        return {"running": False, "message": CLOSED}
+    return {"state": state.get("state"), "message": (state.get("message") or "") if state.get("state") in (
+        "done", "failed") else "Studio is running Anthropic's official Claude Code installer (a minute or two). Call "
+        "setup_check in a couple of minutes: claude_code.installed turns true. Then the creator signs in once: on "
+        "Studio's setup page (setup_page), step 2, Open the sign-in window, and they sign in in their browser with "
+        "their Claude Pro or Max account. Never type or see their password; never sign in for them."}
 
 
 def tool_fix_graphics_browser(args):
@@ -1308,6 +1361,19 @@ TOOLS = {
                              "Studio installs it itself, in its own environment (never install it from this shell). "
                              "Free; takes a few minutes in the background.", _schema(),
                              {"readOnlyHint": False, "openWorldHint": False}),
+    "fix_ffmpeg": (tool_fix_ffmpeg, "When setup_check's video_tools isn't ready: Studio downloads FFmpeg and ffprobe "
+                   "(a pinned build, its SHA-256 checked) into its own folder, no password. Never install FFmpeg from "
+                   "this shell. Free; a minute or two in the background.", _schema(),
+                   {"readOnlyHint": False, "openWorldHint": False}),
+    "fix_node": (tool_fix_node, "When setup_check's node isn't ready (missing, or older than Node.js 22): Studio "
+                 "downloads Node.js from nodejs.org (pinned, checksum checked) into its own folder, no password. Never "
+                 "install Node.js from this shell. Free; a minute in the background.", _schema(),
+                 {"readOnlyHint": False, "openWorldHint": False}),
+    "fix_claude_cli": (tool_fix_claude_cli, "When setup_check's claude_code.installed is false (Studio needs the "
+                       "claude command-line tool; the Claude desktop app alone isn't enough): Studio runs Anthropic's "
+                       "official installer into the creator's home folder. Free; a minute or two. The creator then "
+                       "signs in once on Studio's setup page.", _schema(),
+                       {"readOnlyHint": False, "openWorldHint": True}),
     "fix_speech_model": (tool_fix_speech_model, "When setup_check says the speech-timing model isn't ready (and isn't "
                          "already downloading): Studio downloads it (about 140 MB) and checks it loads, by itself. "
                          "Free; a minute or two in the background.", _schema(),

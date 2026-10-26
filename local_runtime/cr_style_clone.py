@@ -1669,7 +1669,7 @@ def _readiness(home, bridge):
     import cr_readiness
     cr_studio.configure_video_tools()
     checks = {**cr_studio.graphics_ready(), "python": sys.version_info >= (3, 10),
-        "ffmpeg": cr_studio.video_tools_ready(), "node": cr_studio.tool_ready("node", "--version") or cr_studio.tool_ready("deno", "--version"),
+        "ffmpeg": cr_studio.video_tools_ready(), "node": cr_studio.node_ready(),
         "account": bridge.call("status"), "local_version": _read(Path(home) / "cr-release.json").get("version")}
     result = cr_readiness.basic(checks)
     if not result["ready"]:
