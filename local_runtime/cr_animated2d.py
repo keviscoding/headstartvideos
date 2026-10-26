@@ -1070,15 +1070,23 @@ def attach(style: dict, folder, home) -> dict:
     return style
 
 
+SCORE_USD = 0.12                       # one piece of the channel's own music: two Suno takes on the creator's Kie account
+
+
 def cost_note(style: dict) -> str:
     """What a video in this animated style costs, as its renderer makes it: voice only when it draws every place in
-    code (plates.draw false), else the voice and one background picture a place."""
-    found = ((((style.get("look") or {}).get("animated2d") or {}).get("renderer") or {}).get("manifest") or {})
+    code (plates.draw false), else the voice and one background picture a place; plus its own music score when the
+    style has one (cr_score)."""
+    look = style.get("look") or {}
+    found = (((look.get("animated2d") or {}).get("renderer") or {}).get("manifest") or {})
+    sound = look.get("sound") if isinstance(look.get("sound"), dict) else {}
+    music = (f", plus its own music, about ${SCORE_USD:.2f} a piece (one or two a short video)"
+             if isinstance(sound.get("score"), dict) and sound.get("music") is not False else "")
     if (found.get("plates") or {}).get("draw") is False:
-        if dims_of((style.get("look") or {}).get("animated2d")) == 3:
-            return "Your voice only: every scene is rendered in 3D on this computer."
-        return "Your voice only: the characters and every place are drawn on this computer."
-    return ("Your voice, plus about $0.02 for each place's background picture (usually 2 to 4 a video). "
+        if dims_of(look.get("animated2d")) == 3:
+            return f"Your voice{music or ' only'}: every scene is rendered in 3D on this computer."
+        return f"Your voice{music or ' only'}: the characters and every place are drawn on this computer."
+    return (f"Your voice{music}, plus about $0.02 for each place's background picture (usually 2 to 4 a video). "
             "The characters are animated on this computer.")
 
 

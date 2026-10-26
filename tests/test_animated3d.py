@@ -454,6 +454,15 @@ def test_music_heard_but_not_measured_still_gets_the_channels_own_score():
     assert "score" not in silent, "no music heard, none invented"
 
 
+def test_a_coded_styles_cost_says_its_own_music():
+    three = {"look": {"animated2d": {"dims": 3, "renderer": {"manifest": {"plates": {"draw": False}}}},
+                      "sound": {"music": True, "score": {"genres": ["electronic"]}}}}
+    assert a2d.cost_note(three) == ("Your voice, plus its own music, about $0.12 a piece (one or two a short video): "
+                                    "every scene is rendered in 3D on this computer.")
+    three["look"]["sound"]["music"] = False
+    assert a2d.cost_note(three) == "Your voice only: every scene is rendered in 3D on this computer."
+
+
 def test_round_files_belong_to_their_build(tmp_path):
     out = tmp_path / "renderer"
     (out / "round-1").mkdir(parents=True)
