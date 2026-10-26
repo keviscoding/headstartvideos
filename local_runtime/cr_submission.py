@@ -121,6 +121,8 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_pictures_per_min"] = ppm
         if threed_look:
             spec["cr_threed_look"] = threed_look
+        if payload.get("carry_on_after_reset") is True:
+            spec["cr_carry_on_after_reset"] = True     # the creator's up-front choice (cr_recover.CARRY_ON)
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
     if before_publish is not None:
@@ -136,10 +138,44 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
     return response
 
 
+def resume_first(studio, payload):
+    """A new video with the same title, style and minutes as one of this Studio's stopped videos: the stopped one
+    can carry on and reuse everything it made, so Create offers that first (409 with resume_first) instead of a new
+    project that pays again for every step. new_attempt=true is the creator insisting on a brand-new video."""
+    if payload.get("new_attempt") is True or payload.get("timeline"):
+        return None
+    titles = [t.strip() for t in str(payload.get("title") or "").splitlines() if t.strip()]
+    try:
+        minutes = max(1, min(60, int(payload.get("minutes") or 10)))
+    except (TypeError, ValueError):
+        minutes = 10
+    try:
+        import cr_recover
+        matches = cr_recover.twins(studio, titles, payload.get("style"), minutes, extra=payload.get("extra") or "")
+    except Exception:                                  # noqa: BLE001 - never in the way of a new video
+        return None
+    if not matches:
+        return None
+    from flask import jsonify
+    keys = {cr_recover.title_key(m["title"]) for m in matches}
+    first = matches[0]
+    said = (f"\u201c{first['title']}\u201d stopped on {first['stopped']} with its work saved." if len(matches) == 1 else
+            f"{len(matches)} of these titles stopped earlier with their work saved.")
+    return studio.app.make_response((jsonify(
+        error=said + " Resume to carry on from where it stopped and reuse everything already made, or start again "
+                     "as a brand-new video, which pays again for every step.",
+        resume_first=matches, others=[t for t in titles if cr_recover.title_key(t) not in keys]), 409))
+
+
 def install(studio):
     if hasattr(studio, "_cr_original_api_run"):
         return
     studio._cr_original_api_run = studio.app.view_functions["api_run"]
     def publish():
-        return _publish(studio, request.get_json(silent=True) or {}, studio._cr_original_api_run)
+        payload = request.get_json(silent=True) or {}
+        offer = resume_first(studio, payload)
+        if offer is not None:
+            return offer
+        payload = {k: v for k, v in payload.items() if k != "new_attempt"}
+        return _publish(studio, payload, studio._cr_original_api_run)
     studio.app.view_functions["api_run"] = publish

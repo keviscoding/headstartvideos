@@ -46,6 +46,8 @@ class FakeStudio:
                       "cr-shorts-ranking": "Shorts render on this computer.", "cr_clone_abc": ""}
         self.cloud_quote = {"available": True, "balance_usd": 7.71, "topup_url": "https://channelrecipe.com/app#billing",
                             "label": "Cloud machine", "expected_minutes": 15, "expected_cents": 29, "max_cents": 78}
+        self.twins = []                                   # /cr-workspace/resume-first's stopped videos (cr_recover)
+        self.recovery = {}                                # slug -> /cr-workspace/recovery/<slug> (cr_recover.diagnose)
 
     def __call__(self, method, path, body=None, **kw):
         self.calls.append((method, path, body))
@@ -92,6 +94,19 @@ class FakeStudio:
             return {"slug": "pantry-book"}
         if path == "/api/products/build/pantry-book":
             return {"slug": "pantry-book", "running": True, "code": None, "lines": ["write: 12/60"]}
+        if path == "/cr-workspace/resume-first":
+            keys = {m["title"].casefold() for m in self.twins}
+            return {"matches": list(self.twins), "others": [t for t in body["titles"] if t.casefold() not in keys]}
+        if path.startswith("/cr-workspace/recovery/"):
+            slug = path.rsplit("/", 1)[-1]
+            if slug not in self.recovery:
+                raise tools.Refused("This isn't a saved video of this Studio.", 404)
+            answer = self.recovery[slug]
+            if method == "POST":
+                if isinstance(answer.get("post"), Exception):
+                    raise answer["post"]
+                return answer.get("post") or {"approved": {"approved_stages": [], "set_aside": []}, "resumed": True}
+            return {k: v for k, v in answer.items() if k != "post"}
         if path == "/cr-workspace/stopped":
             return {"projects": [{"slug": "zombie--abc", "title": "Zombie Outbreak", "style": "stories", "mtime": 1}]}
         if path == "/api/queue":

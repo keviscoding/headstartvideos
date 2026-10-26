@@ -25,6 +25,7 @@ import cr_mcp
 import cr_network
 import cr_paths
 import cr_readiness
+import cr_recover
 import cr_workers
 import cr_ui
 import cr_submission
@@ -1570,6 +1571,8 @@ def create_app():
             cr_attempts.reserve_output(studio.mv, job, spec)
             marker.write_text(json.dumps({**project,"brain_mode":cfg.get("brain_mode","channelrecipe")}, indent=2),
                               encoding="utf-8")
+            if not spec.get("timeline"):
+                cr_recover.run_started(job, spec)          # a run that never ends here was cut off with its Studio
         except Exception as error:
             with studio.LOCK:
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=False)
@@ -1605,6 +1608,8 @@ def create_app():
                     if not complete:
                         # why it stopped, privacy-safe (cr_failure): what ChannelRecipe counts to fix the commonest stops
                         report["failure"]=cr_failure.for_job(HOME,state,spec,job,project["id"],report["error_code"])
+                    if not spec.get("timeline"):
+                        cr_recover.run_ended(job,state,report.get("failure"))     # how it ended (cr_recover reads it)
                     pending=job/".cr-finish-pending.json"
                     cr_claude._private_write(pending,report)
                     answer=cr_bridge.finish_project(report)
@@ -1664,6 +1669,7 @@ def create_app():
     cr_cloud.install_routes(studio, token, HOME)                 # the workspace's "Studio Cloud" choice
     import cr_claude_code
     cr_claude_code.install(studio, token, HOME)                  # Claude Code's style gallery and the studio tools' routes
+    cr_recover.install(studio, activity, token=token, home=HOME)  # a stopped video: one honest yes, or on by itself
 
     @studio.app.get("/cr-cloud")
     def cloud_status():
