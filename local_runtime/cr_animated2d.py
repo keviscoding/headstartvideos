@@ -721,6 +721,15 @@ def split_refs(refs: list) -> tuple:
     return [r for r in refs if r not in held][:6], held
 
 
+PLATES_ON = re.compile(r"plates\s*:\s*\{[^{}]*\bdraw\s*:\s*true\b")
+
+
+def uses_plates(code: str) -> bool:
+    """The renderer composites its characters over a picture Studio draws for each place (plates: {draw: true, ...}):
+    its test shots then show a stand-in background, which the judge is told to set aside."""
+    return bool(PLATES_ON.search(str(code or "")))
+
+
 def bar_for(control) -> float:
     """The likeness a channel's renderer must reach: judged against its own frames by the same judge, a little under
     what the channel's own held-out frame scores (every channel differs; so does the judge's reading of it)."""
@@ -854,7 +863,8 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
             log(f"  renderer: draft {r + 1} failed: {problems[0][:160]}")
             continue
         try:
-            got = judge([str(p) for p in shown], [str(p) for p in stills])
+            got = judge([str(p) for p in shown], [str(p) for p in stills],
+                        **({"plates": True} if uses_plates(code) else {}))
         except Exception as error:                          # noqa: BLE001 - an unjudged draft is still a working one
             got = {}
             log(f"  renderer: the judge could not score draft {r + 1} ({str(error)[:120]})")

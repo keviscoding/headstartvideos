@@ -955,6 +955,11 @@ RENDERER_CONTEXT = ("The candidates were drawn in code by an animation renderer 
 RENDERER_CONTEXT_3D = ("The candidates were rendered in real 3D by a three.js renderer written for this channel. Judge how "
                        "the characters are built (proportions, heads, faces, clothes, materials), the sets, the light, "
                        "the palette and the framing as this channel's.")
+RENDERER_CONTEXT_PLATES = ("The candidates were rendered by a renderer written for this channel that composites its "
+                           "characters over a picture drawn for each place in the videos; here the backgrounds are plain "
+                           "stand-ins. Judge how the characters are built (proportions, heads, faces, fur, clothes, "
+                           "materials), the light on them, the lens and the framing as this channel's; do not judge the "
+                           "background.")
 
 
 def _by_video(frames: list) -> list:
@@ -1042,10 +1047,11 @@ def _renderer(folder, spec, looked, see, log):
     frames = renderer_frames(folder, spec)
     names = renderer_names(spec, looked)
 
-    def judge(references, candidates):
+    def judge(references, candidates, plates=False):
+        context = RENDERER_CONTEXT_PLATES if plates else RENDERER_CONTEXT_3D if three else RENDERER_CONTEXT
         return cr_bridge.call("style/compare", {"references": [cr_style_likeness._b64(p) for p in references],
                                                 "candidates": [cr_style_likeness._b64(p) for p in candidates],
-                                                "context": RENDERER_CONTEXT_3D if three else RENDERER_CONTEXT})
+                                                "context": context})
     result = cr_animated2d.build(folder, {**{k: channel.get(k) for k in ("sky", "floor", "blur")}, **size}, channel, see=see,
                                  judge=judge, references=frames, home=home, log=log, names=names)
     log(f"  renderer: {result.get('state')}"

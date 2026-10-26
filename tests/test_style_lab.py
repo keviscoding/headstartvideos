@@ -156,3 +156,39 @@ def test_words_too_small_to_read_at_video_size_are_a_problem_claude_fixes(home3d
     assert shown["ok"] and shown["smallest_text"]["px"] >= 14, "the captions read"
     assert a2d.small_text({"px": 30, "text": "x"}, {"width": 1080, "height": 1920}) == ""
     assert "at least 28 px" in a2d.small_text({"px": 20, "text": "x", "t": 1}, {"width": 1080, "height": 1920})
+
+
+def test_a_renderer_composited_over_pictures_is_judged_on_its_characters_or_over_real_backdrops(home3d, monkeypatch):
+    """Lucas the Spider composites CG characters over garden photography: every draft of its study lost points for a
+    background that, in the videos, is a picture drawn for each place. The judge now sets a stand-in background aside,
+    and Style Lab previews over the workspace's own pictures (plates/<set id>.jpg) when it has them."""
+    from PIL import Image
+    assert a2d.uses_plates("plates: { draw: true, prompt: 'macro garden photography' },")
+    assert not a2d.uses_plates("plates: { draw: false },") and not a2d.uses_plates("// no plates")
+    monkeypatch.setattr(a2d, "available3d", lambda home=None: True)
+    _style(home3d)
+    folder = Path(lab.start(home3d, "cr_clone_box")["workspace"])
+    (folder / "scene.json").write_text(json.dumps({"duration": 3, "cast": {}, "sets": {"s": {"prompt": "a patio"}},
+                                                   "shots": [{"start": 0, "set": "s"}], "stills": [1.0]}))
+    composited = BOX.replace("plates: { draw: false },", "plates: { draw: true, prompt: 'garden photography' },") \
+        .replace("view.gl.setClearColor(0x88aadd);", "if (Kit.plates.s) s.world.background = Kit.plates.s; "
+                                                       "view.gl.setClearColor(0x88aadd);")
+    (folder / "renderer.js").write_text(composited)
+    (folder / "refs").mkdir(exist_ok=True)
+    for name in ("shown_0", "shown_1"):
+        Image.new("RGB", (54, 96), (60, 140, 60)).save(folder / "refs" / f"{name}.jpg")
+    asked = []
+    judge = lambda refs, cands, **kw: asked.append(kw) or {"candidates": [{"overall": 6}]}  # noqa: E731
+    shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=1))
+    assert shown["ok"] and shown["plates"] == []
+    lab.check(home3d, "cr_clone_box", judge=judge)
+    assert asked[-1] == {"plates": True}, "a stand-in background is set aside"
+    (folder / "plates").mkdir()
+    Image.new("RGB", (540, 960), (200, 60, 40)).save(folder / "plates" / "s.jpg")
+    shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=1))
+    assert shown["ok"] and shown["plates"] == ["s"]
+    from PIL import ImageStat
+    r, g, b = ImageStat.Stat(Image.open(shown["stills"][0]).convert("RGB")).mean
+    assert r > g and r > b, "the test shot is composited over the workspace's picture"
+    lab.check(home3d, "cr_clone_box", judge=judge)
+    assert asked[-1] == {}, "over a real backdrop the background is judged too"

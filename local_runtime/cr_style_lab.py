@@ -165,6 +165,9 @@ word timings, the director's scene for each video, sound mixing and the final fi
 - `refs/shown_*.jpg`: the channel's own frames. Study them closely (proportions, faces, materials, light, lens, sets,
   captions). `refs/held_*.jpg` are held out: the judge scores them once to set this channel's bar.
 - `preview/<version>/`: each preview's test shots (`shot_*.jpg`) and its 5 s video (`preview.mp4`).
+- `plates/<set id>.jpg` (optional): a picture for a place in scene.json. A renderer with `plates: {{draw: true}}` composites
+  its characters over it, as videos do over the picture Studio draws for each place (about $0.02 each). Without one
+  the preview shows your stand-in and the check judges the characters, not the background.
 
 ## The loop
 1. `style_lab` action `preview`: the contract checks (it runs, its frames are a pure function of time, its speed,
@@ -330,6 +333,20 @@ def _probe(spec: dict, code: str, home, times: list) -> dict:
         box.close()
 
 
+def _plates(lab_dir: Path, scene: dict) -> dict:
+    """{set id: picture}: the workspace's own pictures for its places (plates/<set id>.jpg or .png), put on the test
+    scene so a renderer that composites over a picture per place is previewed and checked over real backdrops."""
+    found = {}
+    for ident, row in (scene.get("sets") or {}).items():
+        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+            path = lab_dir / "plates" / f"{ident}{ext}"
+            if isinstance(row, dict) and path.is_file() and path.stat().st_size < 12_000_000:
+                row["image"] = str(path)
+                found[ident] = str(path)
+                break
+    return found
+
+
 def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
     """The renderer in the workspace, drawn and checked (free, on this computer): problems first, then its test shots
     and a short video. Recorded in lab.json against the code's hash."""
@@ -353,6 +370,8 @@ def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
     if not problems:
         test = a2d._test_scene(scene, spec)
         test.setdefault("captions", lab.get("captions"))
+        shown_plates = _plates(lab_dir, test)
+        entry["plates"] = sorted(shown_plates)
         try:
             found = a2d.manifest(code, home, lab["dims"])
             if not (found.get("actions") or {}):
@@ -409,9 +428,10 @@ def _judge(dims: int):
     import cr_bridge
     import cr_style_clone
     import cr_style_likeness
-    context = cr_style_clone.RENDERER_CONTEXT_3D if dims == 3 else cr_style_clone.RENDERER_CONTEXT
 
-    def judge(references, candidates):
+    def judge(references, candidates, plates=False):
+        context = (cr_style_clone.RENDERER_CONTEXT_PLATES if plates else
+                   cr_style_clone.RENDERER_CONTEXT_3D if dims == 3 else cr_style_clone.RENDERER_CONTEXT)
         return cr_bridge.call("style/compare", {"references": [cr_style_likeness._b64(p) for p in references],
                                                 "candidates": [cr_style_likeness._b64(p) for p in candidates],
                                                 "context": context})
@@ -445,7 +465,8 @@ def check(home, style: str, *, judge=None) -> dict:
                 scores = []
         lab["control"] = max(scores) if [s for s in scores if s > 0] else lab.get("study_control")
         lab["bar"] = a2d.bar_for(lab["control"]) if lab["control"] else (lab.get("study_bar") or a2d.bar_for(None))
-    got = judge([str(p) for p in shown], [str(p) for p in stills])
+    stand_in = a2d.uses_plates(code) and not done.get("plates")     # composited over pictures it wasn't shown
+    got = judge([str(p) for p in shown], [str(p) for p in stills], **({"plates": True} if stand_in else {}))
     mine = [c if isinstance(c, dict) else {} for c in got.get("candidates") or []][:len(stills)]
     if not mine:
         raise LabError("The judge gave no scores this time. Nothing was saved; check again in a minute.")

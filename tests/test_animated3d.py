@@ -421,6 +421,22 @@ def test_a_3d_renderers_plates_are_backdrops_in_the_videos_shape():
     assert "2D animation" in wide and "16:9" in wide, "2D renderers' plates as before"
 
 
+def test_a_study_judges_a_renderer_composited_over_pictures_on_its_characters(home3d, tmp_path):
+    composited = BOX.replace("plates: { draw: false },", "plates: { draw: true, prompt: 'garden photography' },")
+    scene = {**SCENE, "stills": [0.5, 1.5, 2.5]}
+    answer = "```javascript\n" + composited + "\n```\n```json\n" + json.dumps(scene) + "\n```"
+    refs = tsm_frames(tmp_path / "refs", 9)
+    asked = []
+
+    def judge(references, candidates, **kw):
+        asked.append(kw)
+        return {"candidates": [{"overall": 7}] * len(candidates)}
+    result = _chromium(lambda: a2d.build(tmp_path / "op", {"dims": 3, "width": 540, "height": 960}, {}, see=lambda p, i:
+                                         answer, judge=judge, references=refs, home=home3d, rounds=2, log=lambda m: None))
+    assert result["state"] == "passed" and asked[0] == {} and asked[1:] == [{"plates": True}] * 2, \
+        "the channel's own frames are judged as they are; the drafts' stand-in backgrounds are set aside"
+
+
 def test_round_files_belong_to_their_build(tmp_path):
     out = tmp_path / "renderer"
     (out / "round-1").mkdir(parents=True)
