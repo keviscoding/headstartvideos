@@ -107,7 +107,7 @@ def clean_environment(source=None):
         if (upper.startswith(("ANTHROPIC_", "CLAUDE_CODE_OAUTH_", "CLAUDE_CODE_USE_",
                               "AWS_ACCESS_", "AWS_SECRET_", "AWS_SESSION_", "AZURE_"))
                 or upper.endswith(("_API_KEY", "_AUTH_TOKEN", "_ACCESS_TOKEN"))
-                or upper in {"CLAUDECODE", "GOOGLE_APPLICATION_CREDENTIALS",
+                or upper in {"CLAUDECODE", "CLAUDE_EFFORT", "GOOGLE_APPLICATION_CREDENTIALS",
                              "CLAUDE_CODE_API_KEY_HELPER_TTL_MS", "CLAUDE_CODE_PLUGIN_DIRS",
                              "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "MAX_THINKING_TOKENS",
                              "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING"}):
@@ -245,6 +245,39 @@ def _option(args, name, default=""):
         if isinstance(value, str) and value.startswith(name + "="):
             return value[len(name) + 1:]
     return default
+
+
+# How hard Claude thinks on Studio's own stages. Left to the CLI, an Opus stage thought at length on every call: a 3D
+# review round took 10-24 minutes and a 2-minute 3D video 84 minutes of Opus (customer runs, 2026-10-25). Folio's
+# reviews already ask for "low". Opus stages ask for "medium"; Sonnet stages keep the CLI's own. CR_CLAUDE_EFFORT set
+# to a level applies it to every stage, "default" leaves every stage to the CLI.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+VISUAL_EFFORT = "medium"
+_effort_flag: dict = {}
+
+
+def stage_effort(role, environ=None):
+    """The effort a stage of this model role asks for, or "" for the CLI's own."""
+    chosen = str((os.environ if environ is None else environ).get("CR_CLAUDE_EFFORT") or "").strip().lower()
+    if chosen == "default":
+        return ""
+    if chosen in EFFORT_LEVELS:
+        return chosen
+    return VISUAL_EFFORT if role == "visual" else ""
+
+
+def supports_effort(exe, *, run=None, environment=None) -> bool:
+    """Whether this Claude Code takes --effort: read from its --help once (free: no request is made), so an older
+    CLI never fails a stage on an option it doesn't know."""
+    key = os.path.normcase(os.path.realpath(str(exe)))
+    if key not in _effort_flag:
+        try:
+            shown = (run or _real_run)([exe, "--help"], capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", env=clean_environment(environment), timeout=CHECK_SECONDS)
+            _effort_flag[key] = shown.returncode == 0 and "--effort" in (shown.stdout or "")
+        except (OSError, subprocess.SubprocessError):
+            return False                                   # not remembered: the next stage asks again
+    return _effort_flag[key]
 
 
 def _replace_option(args, name, value):
@@ -479,6 +512,9 @@ class Runtime:
         # Source helpers use --strict-mcp-config and deliberately expose no MCP
         # tools. The runner calls the authenticated CR MCP before/after them.
         command = _replace_option(command, "--settings", '{"apiKeyHelper":""}')
+        effort = "" if _option(args, "--effort", "") else stage_effort(role)
+        if effort and supports_effort(self.executable, environment=kwargs.get("env")):
+            command = _replace_option(command, "--effort", effort)
         env = clean_environment(kwargs.get("env"))
         if maximum is not None and maximum >= LONG_ANSWER_TOKENS:
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(LONG_OUTPUT_TOKENS)
