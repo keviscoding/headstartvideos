@@ -973,3 +973,106 @@ def test_the_deletes_are_destructive_and_always_asked(tmp_path):
     permissions = json.loads((tmp_path / ".claude" / "settings.json").read_text())["permissions"]
     assert {"mcp__studio__delete_video", "mcp__studio__delete_style"} <= set(permissions["ask"])
     assert not {"mcp__studio__delete_video", "mcp__studio__delete_style"} & set(permissions["allow"])
+
+
+# ── the queue: several videos while one is made (Studio 106) ───────────────────────────────────────────────────
+
+class QueueStudio(FakeStudio):
+    """Studio making one video with another waiting, and cr_queue's answers."""
+    def __init__(self, held=False):
+        super().__init__()
+        self.held = held
+        self.resumed = []
+
+    def __call__(self, method, path, body=None, **kw):
+        if path == "/api/queue":
+            self.calls.append((method, path, body))
+            rows = [{"slug": "rome--a", "title": "Rome falls", "state": "running", "progress": 0.4, "elapsed": 600}]
+            if self.held:
+                rows.append({"slug": "titanic--b", "title": "Titanic", "state": "held",
+                             "reason": "Your Kie.ai balance ran out. Top it up, then Carry on."})
+            else:
+                rows.append({"slug": "titanic--b", "title": "Titanic", "state": "queued", "position": 1, "ahead": 1})
+            return {"jobs": rows, "busy": True}
+        if path.startswith("/cr-queue"):
+            self.calls.append((method, path, body))
+            held = [{"slug": "titanic--b", "title": "Titanic", "reason": "Your Kie.ai balance ran out."}] if self.held else []
+            if path == "/cr-queue/resume":
+                self.resumed.append(body)
+                self.held = False
+                return {"resumed": 1, "held": [], "reason": "", "code": ""}
+            if path == "/cr-queue/drop":
+                self.held = False
+                return {"removed": 1, "held": []}
+            return {"held": held, "reason": "Your Kie.ai balance ran out." if held else "", "code": "balance" if held else "",
+                    "scope": "all" if held else "", "waiting": 0 if held else 1, "ahead_gb": 6.5}
+        if path == "/api/run":
+            self.calls.append((method, path, body))
+            if self.held:
+                return {"queued": [{"slug": "moon--c", "title": "Moon landing", "held": "Your Kie.ai balance ran out."}]}
+            return {"queued": [{"slug": "moon--c", "title": "Moon landing", "position": 2, "ahead": 2}]}
+        if path == "/api/status/titanic--b":
+            self.calls.append((method, path, body))
+            return {"state": "held" if self.held else "queued", "done": False, "progress": 0, "lines": []}
+        return super().__call__(method, path, body, **kw)
+
+
+@pytest.fixture
+def queued(monkeypatch, tmp_path):
+    fake = QueueStudio()
+    monkeypatch.setattr(tools, "call", fake)
+    monkeypatch.setattr(tools, "STATE", tmp_path / "state")
+    monkeypatch.setattr(tools, "thumbnail", lambda row: "")
+    return fake
+
+
+def test_make_videos_while_one_is_made_queues_them_with_their_place_in_line(queued, monkeypatch):
+    import cr_machine
+    monkeypatch.setattr(cr_machine, "free_disk_gb", lambda *a: 12.0)
+    q = ok("quote", {"style": "documentary", "minutes": 10, "titles": 1})
+    assert q["queue"]["videos_before_these"] == 2 and "queue" in q["this_computer"]
+    assert "already in the queue need about 6.5 GB" in q["disk"]["warning"], "the disk check counts the queue"
+    out = ok("make_videos", {"titles": ["Moon landing"], "style": "documentary", "minutes": 10,
+                             "where": "this_computer", "quote_id": q["quote_id"]})
+    assert out["started"] is True
+    assert out["videos"] == [{"id": "video:moon--c", "title": "Moon landing", "position": 2, "videos_before_it": 2}]
+    assert "behind 2 videos" in out["next"] and "doesn't need to wait" in out["next"]
+
+
+def test_a_video_made_while_the_queue_is_held_says_so(queued):
+    queued.held = True
+    q = ok("quote", {"style": "documentary", "minutes": 10, "titles": 1})
+    out = ok("make_videos", {"titles": ["Moon landing"], "style": "documentary", "minutes": 10,
+                             "where": "this_computer", "quote_id": q["quote_id"]})
+    assert out["videos"][0]["on_hold_because"] == "Your Kie.ai balance ran out."
+    assert "carry_on_queue" in out["next"] and "Never carry on for them" in out["next"]
+
+
+def test_queue_and_progress_show_the_line_and_the_holds(queued):
+    line = ok("queue", {})
+    assert [(v["title"], v["state"]) for v in line["videos"]] == [("Rome falls", "running"), ("Titanic", "queued")]
+    assert line["videos"][1]["position"] == 1 and line["videos"][1]["videos_before_it"] == 1
+    assert "by itself" in line["next"]
+    assert ok("progress", {"id": "video:titanic--b"})["videos_before_it"] == 1
+    queued.held = True
+    line = ok("queue", {})
+    assert line["hold"]["reason"] == "Your Kie.ai balance ran out." and line["on_hold"] == 1
+    assert line["videos"][1]["on_hold_because"].startswith("Your Kie.ai balance")
+    one = ok("progress", {"id": "video:titanic--b"})
+    assert one["state"] == "held" and "carry_on_queue" in one["note"]
+    assert ok("progress", {})["hold_note"].startswith("These videos are on hold")
+
+
+def test_carry_on_queue_goes_on_or_removes_only_when_asked_and_credits_only_for_clip_watches(queued):
+    assert ok("carry_on_queue", {}) == {"carried_on": 0, "message": "Nothing is on hold."}
+    queued.held = True
+    refused = tools.run_tool("carry_on_queue", {"use_credits": True})
+    assert refused["isError"] and "clip watches" in refused["structuredContent"]["error"]
+    got = ok("carry_on_queue", {})
+    assert got["carried_on"] == 1 and queued.resumed == [{"use_credits": False}]
+    queued.held = True
+    assert ok("carry_on_queue", {"remove": True})["removed"] == 1
+    assert "carry_on_queue" in ccc.PAID_TOOLS and "queue" in ccc.FREE_TOOLS
+    settings = ccc.folder_settings({"permissions": {"allow": ["mcp__studio__carry_on_queue"]}})
+    assert "mcp__studio__carry_on_queue" in settings["permissions"]["ask"]
+    assert "mcp__studio__carry_on_queue" not in settings["permissions"]["allow"]

@@ -510,7 +510,7 @@ def install(studio, activity, *, token, home=None):
                     # the same rule as the project's Resume button (cr_workspace_project), so every card can resume
                     if (not isinstance(project_id, str) or not _PROJECT.fullmatch(project_id)
                             or saved.get("brain_mode") != "claudecode" or saved.get("purpose", "video") != "video"
-                            or ((live.get(slug) or {}).get("state") or saved.get("status")) in {"done", "queued", "running"}):
+                            or ((live.get(slug) or {}).get("state") or saved.get("status")) in {"done", "queued", "running", "held"}):
                         continue
                     spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
                     title_file = job / "title.txt"
@@ -781,7 +781,7 @@ def install(studio, activity, *, token, home=None):
             spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
             available = (valid and saved.get("brain_mode") == "claudecode"
                          and saved.get("purpose", "video") == "video"
-                         and state not in {"done", "queued", "running"})
+                         and state not in {"done", "queued", "running", "held"})
             qc = _read(job / "sound_qc.json") if (job / "sound_qc.json").is_file() else {}
             sound = [{"state": _text(r.get("state"), 8), "text": _text(r.get("text"), 200)}
                      for r in (qc.get("lines") or []) if isinstance(r, dict)][:4]

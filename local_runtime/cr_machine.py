@@ -211,14 +211,20 @@ def status(home, *, root=None, memory=..., cpu=..., free=...) -> dict:
             "short": short, "notes": notes, "message": " ".join(notes)}
 
 
-def disk_check(free, minutes, videos=1, threed=False, platform=None, saved=()) -> tuple:
+def disk_check(free, minutes, videos=1, threed=False, platform=None, saved=(), ahead=0.0) -> tuple:
     """(problem, warning) for `videos` videos of `minutes` minutes, made one at a time, with `free` GB free, in plain
     words ("" when there is none). problem (the video stops before it starts): the first video can't fit even at what
     was measured. warning (it goes ahead): it fits, but under the comfortable margin, or the rest of a batch may not.
     saved: GB each video's own working folder already holds (a saved project carrying on): taken off what it still
-    needs, and a stop then never says nothing has started. Unknown free space is neither."""
+    needs, and a stop then never says nothing has started. ahead: GB the videos already in the queue still need before
+    these start: they may leave too little, a warning (a video that runs out of room holds the queue). Unknown free
+    space is neither."""
     if free is None:
         return "", ""
+    try:
+        ahead = max(0.0, float(ahead or 0))
+    except (TypeError, ValueError):
+        ahead = 0.0
     videos = max(1, int(videos or 1))
     try:
         saved = [max(0.0, float(x or 0)) for x in (saved or ())][:videos]
@@ -248,6 +254,15 @@ def disk_check(free, minutes, videos=1, threed=False, platform=None, saved=()) -
                 f"{_gb(free)} GB is free. Free up at least {free_up} GB ({room}), or make "
                 f"{'it' if videos == 1 else 'them'} shorter. Nothing has started or been paid for.", "")
     comfortable = round(max(NEED_BASE_GB, comfortable_gb(minutes, videos, threed) - sum(saved)), 1)
+    if ahead and free - ahead < comfortable:
+        left = max(0.0, round(free - ahead, 1))
+        more = _gb(math.ceil((comfortable - left) * 10) / 10)
+        these = "this video" if videos == 1 else f"these {videos} videos"
+        return "", (f"The videos already in the queue need about {_gb(round(ahead, 1))} GB of the {_gb(free)} GB free "
+                    f"on the disk Studio's videos go on, which leaves about {_gb(left)} GB for {these} (about "
+                    f"{_gb(comfortable)} GB is comfortable). Free up about {more} GB ({room}) before {_their(videos)} "
+                    f"turn comes: a video that runs out of room stops with its work saved and the queue waits on "
+                    f"hold.")
     if free >= comfortable:
         return "", ""
     more = _gb(math.ceil((comfortable - free) * 10) / 10)
@@ -261,9 +276,13 @@ def disk_check(free, minutes, videos=1, threed=False, platform=None, saved=()) -
                 f"or make fewer.")
 
 
-def disk_problem(free, minutes, videos=1, threed=False, platform=None, saved=()) -> str:
+def _their(videos) -> str:
+    return "its" if max(1, int(videos or 1)) == 1 else "their"
+
+
+def disk_problem(free, minutes, videos=1, threed=False, platform=None, saved=(), ahead=0.0) -> str:
     """disk_check's problem alone: "" when the first video fits (a warning never stops one)."""
-    return disk_check(free, minutes, videos, threed, platform, saved)[0]
+    return disk_check(free, minutes, videos, threed, platform, saved, ahead)[0]
 
 
 def diagnostics_line(result) -> str:

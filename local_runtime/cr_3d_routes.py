@@ -227,7 +227,8 @@ def install(studio, activity, setup_status):
                     cr_claude._private_write(ui_path(job), {"action": action, "state": "running",
                         "operation_project_id": project["id"], "needs_reassembly": True,
                         "message": "Updating your final video from the repaired scene cache."})
-                response = cr_submission.submit(studio, spec, project["id"], before_publish=before_publish, job_slug=job.name)
+                response = cr_submission.submit(studio, spec, project["id"], before_publish=before_publish, job_slug=job.name,
+                                                setup_proof=proof["proof"])
                 if not 200 <= response.status_code < 300:
                     return response
                 return jsonify(queued=True, operation_project_id=project["id"])

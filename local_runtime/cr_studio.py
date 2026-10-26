@@ -153,11 +153,12 @@ class CreativeActivity:
                     pass
 
     def wait_for_editor(self):
-        """A queued title must not replace a still-running editor's project."""
+        """A queued title must not replace a still-running editor's project, nor start beside a style study, a 3D
+        repair, a product build or a farm render: queued behind them, it starts when they finish."""
         with self.changed:
             self.waiting_editor = True
             try:
-                while self.active or self.editor_queue_busy():
+                while self.active or self.editor_queue_busy() or self.side_work():
                     self.changed.wait(timeout=0.25)
             finally:
                 self.waiting_editor = False
@@ -175,17 +176,21 @@ class CreativeActivity:
         with condition:
             return bool(timeline._QUEUE or timeline._WORKER.get("current"))
 
+    def side_work(self):
+        """A product build or a farm render is going (neither holds a reservation)."""
+        product = getattr(self.studio, "PRODUCT_BUILD", {}).get("proc")
+        if product is not None and product.poll() is None:
+            return True
+        farm = getattr(self.studio, "FARM", {}).get("thread")
+        return bool(farm is not None and farm.is_alive())
+
     def busy(self):
         with self.lock:
             if self.active or self.studio.RUNNING.get("slug") or self.studio.QUEUE or cr_workers.busy():
                 return True
             if self.editor_queue_busy():
                 return True
-            product = getattr(self.studio, "PRODUCT_BUILD", {}).get("proc")
-            if product is not None and product.poll() is None:
-                return True
-            farm = getattr(self.studio, "FARM", {}).get("thread")
-            return bool(farm is not None and farm.is_alive())
+            return self.side_work()
 
     def install(self):
         timeline = getattr(self.studio, "timeline", None)
@@ -615,17 +620,17 @@ def create_app():
                 if not cfg.get("costs_accepted"):
                     return jsonify(error="Review your provider spending in setup before making a video."), 409
                 data = request.get_json(silent=True) or {}
-                # Do not change the shared brain project while another video is active.
-                if activity.busy():
-                    return jsonify(error="Finish your current video before starting another."), 409
+                # A video started while another is made joins the queue (cr_queue): its disk check counts what the
+                # videos before it still need, and its setup proof travels with it (g -> cr_submission).
                 checks = setup_status().get_json()
-                preflight = cr_readiness.preset(studio,checks,data)
+                preflight = cr_readiness.preset(studio,checks,data,queue_keeper.ahead_gb())
                 if not preflight["ready"]:
                     return jsonify(error="Complete this video's setup before starting.",**preflight),409
                 if preflight.get("manimgx_identity"):
                     data["manimgx_identity"] = preflight["manimgx_identity"]
                     request._cached_json = (data, data)
                 g.cr_warnings = preflight.get("warnings") or []   # said with the start (inject), never a stop
+                g.cr_setup_proof = preflight["proof"]
                 cfg = cr_bridge.load_settings()
                 cfg["setup_proof"] = preflight["proof"]
                 cr_bridge.save_settings(cfg)
@@ -776,20 +781,21 @@ def create_app():
 
     @studio.app.post("/cr-submit-project")
     def submit_project():
-        if activity.busy():
-            return jsonify(error="Finish the current video before starting another."),409
         try:
             project_id=str((request.get_json(silent=True) or {}).get("project_id", ""))
             import re
             if not re.fullmatch(r"crv_[a-f0-9]{24}",project_id):
                 return jsonify(error="Use a valid saved CR project."),400
+            if queue_keeper.has_project(project_id):
+                # a saved project resumes while others are made (it joins the queue), once
+                return jsonify(error="This video is already being made or waiting in the queue."),409
             progress=cr_bridge.project_progress(project_id)
             if progress.get("purpose", "video") != "video":
                 return jsonify(error="This is a setup or creative action. Continue it in its original studio controls, not the saved-video launcher."),409
             spec=progress["job_spec"]
             if progress["project"]["status"] == "done":
                 return jsonify(error="This project already finished. Open its saved local output."),409
-            preflight=cr_readiness.preset(studio,setup_status().get_json(),spec)
+            preflight=cr_readiness.preset(studio,setup_status().get_json(),spec,queue_keeper.ahead_gb())
             if not preflight["ready"]:
                 return jsonify(error="Complete this project's setup before starting.",**preflight),409
             cfg=cr_bridge.load_settings()
@@ -798,7 +804,7 @@ def create_app():
             # Capture original normalized specs before the live dispatcher can
             # consume them, and publish only this project's fully owned items.
             payload={**spec,"steps":spec.get("steps") or ["script","voiceover","pexels","images","video","thumbnail"]}
-            response=cr_submission.submit(studio,payload,project_id)
+            response=cr_submission.submit(studio,payload,project_id,setup_proof=preflight["proof"])
             if not 200 <= response.status_code < 300:
                 return response
             queued=response.get_json().get("queued",[])
@@ -1608,7 +1614,8 @@ def create_app():
             cfg=cr_bridge.load_settings()
             if old_backend == "manimgx" and cfg.get("brain_mode") != "claudecode":
                 raise RuntimeError("This saved Fast mode project uses your Claude Code brain. Reconnect its pinned Claude profile before editing or exporting it.")
-            setup=cfg.get("setup_proof")
+            # its own setup check, from when it was submitted (a queued video's is never another submission's)
+            setup=spec.get("cr_setup_proof") if isinstance(spec.get("cr_setup_proof"), dict) else cfg.get("setup_proof")
             cr_bridge.install(studio.mv)
             if cfg.get("brain_mode") == "claudecode":
                 pending = job / ".cr-finish-pending.json"
@@ -1695,22 +1702,48 @@ def create_app():
             else:
                 activity.release(render_token)
     def run_spec(spec):
-        activity.wait_for_editor()
-        import cr_attempts
-        queue_keeper.started(spec)
+        queue_keeper.started(spec)              # taken off the waiting line: known as the one being made from now
+        ended = []
+
+        def finished(job_of):                   # once, however it ends
+            if not ended:
+                ended.append(True)
+                queue_keeper.finished(spec, job_of)
         try:
+            activity.wait_for_editor()
+            import cr_attempts
             with cr_attempts.bind(studio.mv, spec):
                 try:
                     return run_owned_spec(spec)
                 finally:
                     # Inside the attempt's binding, so job_dir names this attempt's folder (its short/error.json).
-                    queue_keeper.finished(spec, lambda: studio.mv.job_dir(str(spec.get("title") or "Your video"),
-                                                                          str(spec.get("style") or "jung")))
+                    finished(lambda: studio.mv.job_dir(str(spec.get("title") or "Your video"),
+                                                       str(spec.get("style") or "jung")))
         except Exception as error:
             with studio.LOCK:
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=True)
                 studio.RUNNING["slug"] = None
+            finished(lambda: None)
     studio._run_spec = run_spec
+
+    def queue_check(specs):
+        """Carry on (cr_queue): each held video's setup is checked again now (a top-up, a sign-in, room freed on the
+        disk), and the ones ready get a fresh setup proof. -> {slug: why one still can't start}."""
+        checks = setup_status().get_json()
+        problems = {}
+        for spec in specs:
+            try:
+                result = cr_readiness.preset(studio, checks, spec)
+            except Exception as error:                          # noqa: BLE001 - this one stays on hold, saying why
+                problems[spec["slug"]] = str(error)[:300] or "Its setup couldn't be checked."
+                continue
+            if result.get("ready"):
+                spec["cr_setup_proof"] = result["proof"]
+            else:
+                problems[spec["slug"]] = (" ".join(str(b) for b in result.get("blockers") or [])[:400]
+                                          or "Its setup needs attention.")
+        return problems
+    queue_keeper.check = queue_check
     import cr_3d_routes
     cr_3d_routes.install(studio, activity, setup_status)
     import cr_style_routes

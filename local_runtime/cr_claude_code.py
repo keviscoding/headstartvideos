@@ -25,8 +25,9 @@ from pathlib import Path
 HOME = Path(__file__).resolve().parent
 SERVER = "studio"
 FREE_TOOLS = ("setup_check", "fix_graphics_browser", "fix_speech_model", "list_styles", "get_style_pick", "quote", "progress", "list_videos", "open_in_studio",
-              "cloud_balance", "clone_style_look", "product_ideas", "products", "edit_style", "style_lab")
-PAID_TOOLS = ("make_videos", "clone_style", "build_product", "resume_video", "style_sample")
+              "cloud_balance", "clone_style_look", "product_ideas", "products", "edit_style", "style_lab", "queue")
+# carry_on_queue starts held videos again (paid work), or removes them: always asked
+PAID_TOOLS = ("make_videos", "clone_style", "build_product", "resume_video", "style_sample", "carry_on_queue")
 # a video or a learned style moved into Studio's trash (cr_trash): the creator approves each one
 DESTRUCTIVE_TOOLS = ("delete_video", "delete_style")
 # ChannelRecipe's hosted niche database (the account's `channelrecipe` server beside `studio`): reading it is free

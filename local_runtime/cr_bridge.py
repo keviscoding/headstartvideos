@@ -220,6 +220,34 @@ def _call(path, payload=None, settings=None, *, patient=False, sleep=None, clock
         return workflow_view(data)
 
 
+PENDING_BEGINS = 32
+
+
+def _pending_begins(path) -> dict:
+    """identity -> begin_id of the project begins whose answer never came (an older Studio kept one: identity,
+    begin_id)."""
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(saved, dict):
+        return {}
+    if isinstance(saved.get("identity"), str) and isinstance(saved.get("begin_id"), str):
+        return {saved["identity"]: saved["begin_id"]}
+    begins = saved.get("begins")
+    return {k: v for k, v in begins.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(begins, dict) else {}
+
+
+def _save_begins(path, begins):
+    if not begins:
+        path.unlink(missing_ok=True)
+        return
+    kept = dict(list(begins.items())[-PENDING_BEGINS:])           # the newest; an old lost answer stays lost
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump({"begins": kept}, handle)
+
+
 def begin_project(title, style, resume_id=None, *, proof=None, job_spec=None, purpose="video"):
     global _project
     with _lock:
@@ -247,19 +275,19 @@ def begin_project(title, style, resume_id=None, *, proof=None, job_spec=None, pu
                 "platform": "windows" if os.name == "nt" else "mac"}
             # Preserve the begin ID if its response is interrupted. Reconnecting
             # records the same project rather than creating an orphaned duplicate.
+            # One ID per project being begun: a queued video's begin never takes
+            # the place of another video's interrupted one.
             identity = hashlib.sha256(json.dumps({"payload":payload,"account":cfg.get("key")},sort_keys=True).encode()).hexdigest()
             pending_path = HOME / ".cr-pending-begin.json"
-            try:
-                pending = json.loads(pending_path.read_text(encoding="utf-8"))
-            except (OSError,ValueError):
-                pending = {}
-            begin_key = pending.get("begin_id") if pending.get("identity") == identity else "b_" + secrets.token_hex(16)
-            fd = os.open(pending_path,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
-            with os.fdopen(fd,"w", encoding="utf-8") as handle:
-                json.dump({"identity":identity,"begin_id":begin_key},handle)
+            begins = _pending_begins(pending_path)
+            begin_key = begins.pop(identity, None) or "b_" + secrets.token_hex(16)
+            begins[identity] = begin_key
+            _save_begins(pending_path, begins)
             result = _mcp_tool("local_studio_begin", {**payload,"begin_id":begin_key})
             _project = {**result["project"], "job_spec": result.get("job_spec", spec)}
-            pending_path.unlink(missing_ok=True)
+            begins = _pending_begins(pending_path)
+            begins.pop(identity, None)
+            _save_begins(pending_path, begins)
         elif resume_id:
             _project = call("projects/" + resume_id)
         else:

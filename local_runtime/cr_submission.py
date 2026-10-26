@@ -8,7 +8,7 @@ from types import FunctionType
 from flask import request
 
 
-def submit(studio, payload, project_id, *, before_publish=None, job_slug=None):
+def submit(studio, payload, project_id, *, before_publish=None, job_slug=None, setup_proof=None):
     """Keep original validation and JOBS, but hide new specs until fully owned.
 
     Frontier's dispatcher remains alive between jobs. Merely suppressing its
@@ -19,10 +19,21 @@ def submit(studio, payload, project_id, *, before_publish=None, job_slug=None):
     if not re.fullmatch(r"crv_[a-f0-9]{24}", str(project_id)):
         raise ValueError("Use a valid saved CR project.")
     original = getattr(studio, "_cr_original_api_run", studio.app.view_functions["api_run"])
-    return _publish(studio, payload, original, project_id=project_id, before_publish=before_publish, job_slug=job_slug)
+    return _publish(studio, payload, original, project_id=project_id, before_publish=before_publish, job_slug=job_slug,
+                    setup_proof=setup_proof)
 
 
-def _publish(studio, payload, original, *, project_id=None, before_publish=None, job_slug=None):
+def _request_proof():
+    """The setup proof cr_studio's check made for this request (flask.g.cr_setup_proof), or None."""
+    try:
+        from flask import g, has_request_context
+        return getattr(g, "cr_setup_proof", None) if has_request_context() else None
+    except Exception:                                          # noqa: BLE001 - no Flask context: none
+        return None
+
+
+def _publish(studio, payload, original, *, project_id=None, before_publish=None, job_slug=None, setup_proof=None):
+    proof = setup_proof if setup_proof is not None else _request_proof()
     backend = payload.get("render_backend", "original")
     if backend not in {"original", "manimgx"}:
         raise ValueError("Choose the standard renderer or Fast mode.")
@@ -123,14 +134,23 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_threed_look"] = threed_look
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
+        if isinstance(proof, dict):
+            # this video's own setup check: a later submission (another recipe, other accounts) never changes it
+            spec["cr_setup_proof"] = dict(proof)
     if before_publish is not None:
         before_publish()
-    with studio.LOCK:
-        studio.JOBS.update(published_jobs)
-        studio.QUEUE.extend(staged)
     keeper = getattr(studio, "_cr_queue", None)
     if keeper is not None:
-        keeper.save()                                          # a Studio closed mid-batch still knows what waited
+        # the waiting line, or on hold with the others when the queue is held for a stop these would hit too; saved,
+        # so a Studio closed mid-queue still knows what waited
+        places = keeper.add(staged, published_jobs)
+        for row, spec in zip(queued, staged):
+            if isinstance(row, dict):
+                row.update(places.get(spec["slug"]) or {})
+    else:
+        with studio.LOCK:
+            studio.JOBS.update(published_jobs)
+            studio.QUEUE.extend(staged)
     response.set_data(json.dumps({**response.get_json(), "queued":queued}))
     studio._ensure_dispatcher()
     return response

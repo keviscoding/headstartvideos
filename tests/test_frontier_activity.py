@@ -146,8 +146,12 @@ def test_chat_reserves_context_before_the_original_thread_starts(runtime, timeli
     assert response.status_code == 200
     assert len(timeline.spawned) == 1 and timeline.calls == []
     assert r.studio._cr_activity.busy()
-    for path in ("/api/run", "/cr-connect", "/cr-recover", "/cr-submit-project"):
+    for path in ("/cr-connect", "/cr-recover"):
         assert r.client.post(path, headers=r.headers, json={}).status_code == 409
+    # a video joins the queue instead (the dispatcher starts it once the editor's reply is done: wait_for_editor);
+    # a saved project is checked, never refused as busy
+    assert r.client.post("/api/run", headers=r.headers, json={}).status_code == 200
+    assert r.client.post("/cr-submit-project", headers=r.headers, json={}).status_code == 400
     original = timeline.spawned.pop()
     original.target(*original.args)
     assert timeline.calls == [("reply", (r.job, "example", "Keep the original edit", {"kind": "range"}, "reply"))]
@@ -321,8 +325,11 @@ def test_native_async_work_blocks_context_and_account_changes(runtime, timeline,
         r.studio.PRODUCT_BUILD["proc"] = SimpleNamespace(poll=lambda: None)
     else:
         r.studio.FARM["thread"] = SimpleNamespace(is_alive=lambda: True)
-    for path in ("/api/run", "/cr-connect", "/cr-recover", "/cr-submit-project"):
+    for path in ("/cr-connect", "/cr-recover"):
         assert r.client.post(path, headers=r.headers, json={}).status_code == 409
+    # videos queue behind it: the dispatcher waits for this work before starting them (wait_for_editor)
+    assert r.client.post("/api/run", headers=r.headers, json={}).status_code == 200
+    assert r.client.post("/cr-submit-project", headers=r.headers, json={}).status_code == 400
     assert r.client.get("/f/video/cached", headers=r.headers).data == b"already saved"
     assert r.client.post("/api/products/example/reveal", headers=r.headers).status_code == 200
     assert r.client.get("/cr-status", headers=r.headers).status_code == 200

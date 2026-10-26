@@ -27,7 +27,8 @@ What they asked for: $ARGUMENTS
 4. **Length.** Minutes for long videos (1 to 60, suggest 8 to 12). Shorts use seconds (options.short_seconds).
 5. **Where it renders.** If the style's `renders_on` includes studio_cloud and `setup_check` says Studio Cloud is
    available, get both prices with `quote` (where=this_computer and where=studio_cloud) and ask:
-   - **This computer:** no machine to pay; one video at a time; keeps the computer busy.
+   - **This computer:** no machine to pay; one video at a time (more wait in Studio's queue and start by
+     themselves); keeps the computer busy.
    - **Studio Cloud:** a ChannelRecipe machine renders, several side by side; costs the quoted machine time from the
      cloud balance (it reserves the most and charges only what it used).
    Otherwise it renders on this computer; get its `quote`.
@@ -37,6 +38,15 @@ What they asked for: $ARGUMENTS
 7. **After it starts.** Give the ids, say roughly how long (a 10-minute video takes about 30 to 60 minutes on this
    computer; on Studio Cloud about 15 minutes plus 2.5 minutes per video minute) and that Studio shows a
    notification when each is done. Don't wait in a loop: check `progress` when they ask, or now and then.
+   - **More while one is made:** on this computer Studio makes one video at a time, and every video they ask for
+     joins its queue, even while another is being made (in any style, with any options): call `quote` and
+     `make_videos` again. Each video comes back with its place in line (`videos_before_it`) and starts by itself, so
+     they can walk away. `queue` shows the line.
+   - **On hold:** if something every video needs stops (Claude's usage limit, a balance or key, the disk, memory),
+     the videos waiting go on hold instead of each failing the same way, and nothing of theirs is spent;
+     `on_hold_because` says why and what to do. Tell them, and only when they've fixed it and ask, call
+     `carry_on_queue` (Studio checks each one's setup again; `remove=true` takes them out instead). Never carry on
+     for them.
 8. **Watch.** When one is done, `progress(id)` or `list_videos` gives `watch_url` and the file path. Open the
    watch link (see "Showing pages"); offer `open_in_studio(page='folder', id=…)` to show the file.
 

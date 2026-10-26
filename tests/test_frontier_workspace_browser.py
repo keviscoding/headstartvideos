@@ -180,8 +180,24 @@ def workspace(browser):
                                       "state": "stopped", "mtime": 1, "stopped_on": "presenter"}])
         return jsonify(projects=[])
 
+    HELD = "Your Kie.ai balance ran out. Top it up, then Carry on."
+
+    @app.get("/cr-queue")
+    def queue_status():
+        held = [{"slug": "held-film", "title": "Titanic", "ranking": False, "reason": HELD}] if env.mode == "queue_held" else []
+        return jsonify(held=held, reason=HELD if held else "", code="balance" if held else "", scope="all" if held else "",
+                       waiting=1 if env.mode == "queue" else 0)
+
     @app.get("/api/queue")
     def queue():
+        if env.mode in ("queue", "queue_held"):
+            # cr_queue's rows: the running one, each waiting one's place in line, then the held ones with why
+            rows = [{"slug": "active-film", "title": "A film in production", "style": "3d", "state": "running"}]
+            if env.mode == "queue":
+                rows.append({"slug": "queued-film", "title": "Moon landing", "state": "queued", "position": 1, "ahead": 1})
+            else:
+                rows = [{"slug": "held-film", "title": "Titanic", "state": "held", "reason": HELD}]
+            return jsonify(busy=env.mode == "queue", jobs=rows)
         if env.mode == "presenter":
             return jsonify(busy=False, jobs=[])
         if env.mode == "voice":
@@ -192,7 +208,7 @@ def workspace(browser):
 
     @app.get("/cr-workspace/activity")
     def activity():
-        return jsonify(busy=env.mode == "active", operations=[])
+        return jsonify(busy=env.mode in ("active", "queue"), operations=[])
 
     @app.get("/api/jobs")
     def jobs():
@@ -244,6 +260,9 @@ def workspace(browser):
     def progress(slug):
         if slug == "presenter-film":
             return jsonify(error="no live job"), 404
+        if slug in ("queued-film", "held-film") or env.mode in ("queue", "queue_held") and slug.startswith("fresh-"):
+            return jsonify(state="held" if slug == "held-film" or env.mode == "queue_held" else "queued", done=False,
+                           lines=[], progress=0, error=None, cr_cancel={"can_cancel": slug == "queued-film"})
         if slug == "voice-film":
             return jsonify(state="error", done=True, lines=["Writing the voiceover"], progress=0.08, elapsed=60,
                            error="Kie.ai failed this narration task. Internal Error, Please try again later",
@@ -264,7 +283,8 @@ def workspace(browser):
             return jsonify(error="Selected options need attention.", blockers=["Your image account needs attention."]), 409
         slug = "fresh-" + str(len(env.creates) + 1)
         env.creates.append({"slug": slug, "body": request.json})
-        return jsonify(queued=[{"slug": slug, "title": request.json["title"]}])
+        place = {"position": 2, "ahead": 2} if env.mode == "queue" else {"held": HELD} if env.mode == "queue_held" else {}
+        return jsonify(queued=[{"slug": slug, "title": request.json["title"], **place}])
 
     @app.get("/cr-cloud")
     def cloud():
@@ -912,3 +932,45 @@ def test_progress_shows_the_real_step_under_a_general_heading(workspace):
     assert page.locator("#crw-progress-phase").inner_text() == "Timing narration and captions"
     assert page.locator("#crw-progress-detail").inner_text() == "subtitles: timing narration with whisper (2 of 3 parts)"
 
+
+
+def test_create_adds_to_the_queue_while_a_video_is_made_and_projects_show_the_line(workspace):
+    """Customer ALEX (2026-10-26) had to sit and wait to press Create again: while a video is made, Create says Add to
+    queue, and Projects show each waiting video's place in line."""
+    env, page = workspace, workspace.page
+    env.mode = "queue"
+    env.open()
+    create = page.locator("#crw-create")
+    assert create.is_enabled() and create.inner_text().strip() == "Add to queue"
+    note = page.locator("#crw-readiness").inner_text()
+    assert "1 more is waiting" in note and "starts when the ones before it finish" in note
+    page.locator("#crw-title").fill("Another one for the queue")
+    create.click()
+    page.wait_for_function("window.CR_WORKSPACE_CLIENT.state.page==='projects' && !window.CR_WORKSPACE_CLIENT.state.submitting")
+    assert len(env.creates) == 1 and env.creates[0]["body"]["title"] == "Another one for the queue"
+    assert "Added to the queue" in page.locator("#crw-toast").inner_text()
+    assert "2 videos before it" in page.locator("#crw-toast").inner_text()
+    page.wait_for_function("document.getElementById('crw-progress-phase').textContent === 'Waiting in the queue'")
+    card = page.locator(".crw-project-card", has_text="Moon landing")
+    assert "Next in line" in card.inner_text() and "Queued" in card.inner_text()
+    assert page.locator(".crw-nav [data-nav=create]").count()
+    page.locator(".crw-nav [data-nav=create]").click()
+    assert page.locator("#crw-create").inner_text().strip() == "Add to queue"
+    assert not env.errors
+
+
+def test_a_held_queue_says_why_on_its_cards_and_new_videos_join_it(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "queue_held"
+    env.open("#projects")
+    card = page.locator(".crw-project-card", has_text="Titanic")
+    assert "On hold" in card.inner_text() and "Kie.ai balance ran out" in card.inner_text()
+    page.locator(".crw-filter-group [data-project-filter=active]").click()
+    assert page.locator(".crw-project-card", has_text="Titanic").count() == 1, "held videos are still in progress"
+    page.locator(".crw-nav [data-nav=create]").click()
+    assert page.locator("#crw-create").inner_text().strip() == "Add to queue"
+    assert "The queue is on hold: Your Kie.ai balance ran out" in page.locator("#crw-readiness").inner_text()
+    page.locator("#crw-title").fill("One more")
+    page.locator("#crw-create").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('on hold with the others')")
+    assert not env.errors

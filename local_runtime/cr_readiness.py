@@ -154,7 +154,9 @@ def saved_gb(studio, spec, titles) -> list:
     return out
 
 
-def preset(studio, checks, spec):
+def preset(studio, checks, spec, ahead=0.0):
+    """ahead: GB the videos already in the queue (being made, waiting, on hold) still need on the disk, before this
+    one's turn comes (cr_queue.Keeper.ahead_gb)."""
     ready = basic(checks)
     results = list(ready["checks"])
     style = spec.get("style") or ""
@@ -225,13 +227,15 @@ def preset(studio, checks, spec):
     # A disk that fills up stops a video halfway, with nothing anyone can read: it stops here instead (cr_machine),
     # only when even the measured need can't fit; under the comfortable margin it goes ahead with a warning. A saved
     # project carrying on (Resume, a presenter choice, a 3D reassembly) needs only what its folder doesn't hold yet.
+    # Videos already in the queue fill the disk before this one starts: a warning, never a stop (one that runs out
+    # of room puts the queue on hold, cr_queue).
     warnings = []
     free = (checks.get("computer") or {}).get("free_disk_gb")
     if free is not None and "video" in steps:
         titles = [line for line in str(spec.get("title") or "").splitlines() if line.strip()]
         room, warning = cr_machine.disk_check(free, spec.get("minutes") or 1, len(titles) or 1,
                                               threed=bool(wanted.get("threed")) or backend == "manimgx",
-                                              saved=saved_gb(studio, spec, titles))
+                                              saved=saved_gb(studio, spec, titles), ahead=ahead)
         if room:
             results.append(item("disk_space", "Room for this video on the disk", False, room))
         elif warning:
