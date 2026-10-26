@@ -158,6 +158,15 @@ def _prompt(name: str, home=None) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def earlier(name: str, home=None) -> list:
+    """The texts of a prompt's earlier versions the kit keeps (cast-108.txt beside cast.txt): a video started under an
+    earlier Studio finds its saved answers by them, so a Resume never asks Claude again or pays for its pictures again."""
+    stem, _, ext = name.rpartition(".")
+    folder = kit_dir(home)
+    return [p.read_text(encoding="utf-8") for p in sorted(folder.glob(f"{stem}-*.{ext}"))
+            if re.fullmatch(re.escape(stem) + r"-\d+\." + re.escape(ext), p.name)]
+
+
 def example(home=None) -> str:
     return _prompt(EXAMPLE, home)
 
@@ -333,6 +342,12 @@ def generic_sounds(names, spec: dict) -> list:
 
 # ── the page a renderer runs in ─────────────────────────────────────────────────────────────────────────────────────
 
+def _scene_json(spec: dict) -> str:
+    """The scene as a script literal: every "<" in its words escaped (JSON has none outside its strings), so no word
+    ("</SCRIPT>", "<!--") can end or comment out the page's script."""
+    return json.dumps(spec).replace("<", "\\u003c")
+
+
 def _safe_script(text: str) -> str:
     return str(text).replace("</script", "<\\/script").replace("<!--", "<\\!--")
 
@@ -438,7 +453,7 @@ def page(spec: dict, code: str, home=None, mode: str = "render") -> str:
             "catch(e){window.__err='at '+t.toFixed(2)+' s: '+String(e&&e.stack||e).slice(0,1500);throw e;}};"
             "window.__marks=Kit._marks;window.__ready=true;}"
             "catch(e){window.__err=String(e&&e.stack||e).slice(0,2000);window.__ready=true;}})();"
-            % ("true" if mode == "manifest" else "false", _safe_script(json.dumps(spec))))
+            % ("true" if mode == "manifest" else "false", _safe_script(_scene_json(spec))))
     return ("<!doctype html><html><head><meta charset=utf-8>"
             f"<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">"
             "<style>html,body{margin:0;background:#000;overflow:hidden}</style></head>"
@@ -480,7 +495,7 @@ def _page3d(spec: dict, code: str, home=None, mode: str = "render") -> str:
             "catch(e){window.__err='at '+t.toFixed(2)+' s: '+String(e&&e.stack||e).slice(0,1500);throw e;}};"
             "window.__marks=Kit._marks;}window.__ready=true;}"
             "catch(e){if(!window.__err)window.__err=String(e&&e.stack||e).slice(0,2000);window.__ready=true;}"
-            % ("true" if mode == "manifest" else "false", _safe_script(json.dumps(spec)), W, H))
+            % ("true" if mode == "manifest" else "false", _safe_script(_scene_json(spec)), W, H))
     return ("<!doctype html><html><head><meta charset=utf-8>"
             f"<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP3D}\">"
             f"<script type=\"importmap\">{imports}</script>"
@@ -984,6 +999,12 @@ def text_probe(scene: dict, man: dict):
     return (scene, sorted(set(changed))) if changed else (None, [])
 
 
+def draws_own_places(man: dict) -> bool:
+    """The renderer draws every place itself in code (plates: {draw: false}); otherwise Studio draws each place's
+    picture from its words. The director's new places, the build's place probe and the frame check all go by this."""
+    return ((man or {}).get("plates") or {}).get("draw") is False
+
+
 def untyped(man: dict) -> list:
     """"action.param" for every parameter a renderer names without saying its type."""
     return [f"{name}.{param}" for kind in ("actions", "fx") for name, entry in vocabulary((man or {}).get(kind)).items()
@@ -1017,7 +1038,7 @@ def probe(scene: dict, spec: dict, code: str, out: Path, *, home=None, man: dict
             pictures[name] = render_stills(variant, out, code, home=home, prefix=name + "_")[0]
         except AnimationStopped as error:
             problems.append(f"drawn in a place your test scene never had ({place['prompt']}), it stopped: {error}")
-    own_places = not uses_plates(code)
+    own_places = draws_own_places(man) if man else not uses_plates(code)    # no manifest read: its code says
     drawn("inside", PROBE_INSIDE)
     if own_places:
         drawn("outside", PROBE_OUTSIDE)
@@ -1026,7 +1047,9 @@ def probe(scene: dict, spec: dict, code: str, out: Path, *, home=None, man: dict
     if problems:
         return {"problems": problems, "issues": [], "pictures": list(pictures.items())}
     thumbs = {k: _thumb(v) for k, v in pictures.items()}
-    if own_places and "outside" in thumbs and _apart(thumbs["inside"], thumbs["outside"]) < PLACES_APART:
+    apart = own_places and "outside" in thumbs and _apart(thumbs["inside"], thumbs["outside"]) >= PLACES_APART
+    places = "pictures" if not own_places else "any" if apart else "own"
+    if own_places and "outside" in thumbs and not apart:
         issues.append("drawn in two places the channel never showed (an underground bunker room with bunk beds and a "
                       "steel hatch; a sunny beach with palm trees), your test scene came out the same in both (the "
                       "probe pictures are shown with your test shots): draw ANY place from its set's fields (prompt, "
@@ -1059,7 +1082,7 @@ def probe(scene: dict, spec: dict, code: str, out: Path, *, home=None, man: dict
         issues.append(f"the channel's frames show {seen[0].get('name') or 'one character'} ({str(seen[0].get('look'))[:120]}) "
                       f"in {round(seen[0]['share'] * 100)}% of its shots: if the channel keeps that character in every "
                       "video (a mascot, a host, the \"you\" of its stories), declare it in manifest.cast.recurring")
-    return {"problems": problems, "issues": issues, "pictures": list(pictures.items())}
+    return {"problems": problems, "issues": issues, "pictures": list(pictures.items()), "places": places}
 
 
 def split_refs(refs: list) -> tuple:
@@ -1213,6 +1236,7 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
                         probed = {"problems": [str(error)], "issues": [], "pictures": []}
                     problems += probed["problems"]
                     row["issues"] = probed["issues"]
+                    row["places"] = probed.get("places")
                     probes = [p for _, p in probed["pictures"]]
                     row["probes"] = [str(Path(p).relative_to(out)) for p in probes]
         row["problems"] = problems
@@ -1243,8 +1267,8 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
         # ranks below one that can, unless it is clearly closer to the channel
         if best is None or overall - ISSUE_COST * bool(issues) > best["overall"] - ISSUE_COST * bool(best.get("issues")):
             best, best_code, best_scene = row, code, scene
-        if overall >= bar and r + 1 >= MIN_ROUNDS and not issues:
-            break
+        if overall >= bar and r + 1 >= MIN_ROUNDS:        # the probes' advice went back at least once (MIN_ROUNDS);
+            break                                           # it ranks the drafts but never keeps the study going
         feedback = (f"The judge compared your test shots with the channel's frames: {overall:g}/10 overall, characters "
                     f"{characters:g}/10 (the channel's own held-out frames score {control}; the bar is {bar:g})."
                     + (" That clears the bar: keep everything that works and make the shots closer still."
@@ -1268,6 +1292,8 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
         log(f"  renderer: its manifest could not be read ({str(error)[:120]})")
     if found:                                               # how its author calls each action: the director's model
         found["examples"] = examples_from(best_scene.get("stress") if isinstance(best_scene, dict) else None, best_scene)
+        if best.get("places") == "any":                     # it draws any place: a wrong place can be re-planned
+            found["places"] = "any"
     result = {"key": key, "state": "passed" if best["overall"] >= best.get("bar", bar) else "below_bar",
               "round": best["round"], "overall": best["overall"], "characters": best["characters"],
               "bar": best.get("bar", bar), "control": best.get("control"), "rounds": rows,
@@ -1610,11 +1636,11 @@ def types_for(man: dict, kind: str, name: str) -> dict:
         if k in RESERVED or (found.get(k) or {}).get("type", "any") != "any":
             continue
         if isinstance(v, bool):
-            found[k] = {"type": "bool"}
+            found[k] = {"type": "bool", "soft": True}
         elif isinstance(v, (int, float)):
-            found[k] = {"type": "number"}
+            found[k] = {"type": "number", "soft": True}
         elif isinstance(v, list) and v and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v):
-            found[k] = {"type": "numbers"}
+            found[k] = {"type": "numbers", "soft": True}
     return found
 
 
@@ -1651,6 +1677,9 @@ def coerce(spec: dict, value, cast: dict = None, sets: dict = None):
     kind = (spec or {}).get("type", "any")
     if value is None:
         return None
+    if (spec or {}).get("soft"):                            # guessed from one example call: only when it fits
+        got = coerce({"type": kind}, value, cast, sets)
+        return got if got is not None else coerce({"type": "any"}, value, cast, sets)
     if kind == "number":
         return _number(value)
     if kind == "text":
@@ -2054,12 +2083,17 @@ def cast_and_sets(engine, script: str, job: Path, style: str, title: str = "", m
     asked = {"script": script, "prompt": _prompt("cast.txt"), "brief": engine._extra_block(), "cast": cast_spec}
     # the renderer's record is not part of the cast: a renderer saved mid-video never re-casts it (or re-draws its
     # backdrops); the older key, which hashed it, still finds a cast designed before
-    key = _digest({**asked, "spec": {k: v for k, v in spec.items() if k != "renderer"}})
+    bare = {k: v for k, v in spec.items() if k != "renderer"}
+    key = _digest({**asked, "spec": bare})
+    # a casting made under an earlier Studio (its cast.txt, or a key that hashed the renderer record) is this video's
+    # own: a Resume after an update reuses it and the pictures drawn for its places, never paying for them again
+    known = {key, _digest({**asked, "spec": spec})} | {_digest({**asked, "prompt": old, "spec": s2})
+                                                     for old in earlier("cast.txt") for s2 in (bare, spec)}
     saved = _read(folder / "casting.json")
-    if saved.get("key") in (key, _digest({**asked, "spec": spec})):
+    if saved.get("key") in known:
         return saved
     reply = folder / "casting-reply.txt"
-    if reply.is_file() and _read(folder / "casting-request.json").get("key") == key:
+    if reply.is_file() and _read(folder / "casting-request.json").get("key") in known:
         text = reply.read_text(encoding="utf-8")
     else:
         engine.step("Animated 2D: designing the cast and the places")
@@ -2225,7 +2259,7 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
     beats = beats_text(lines)
     docs = {"actions": man.get("actions") or {}, "shots": man.get("shots") or [], "fx": man.get("fx") or {},
             "notes": man.get("notes") or "", "examples": man.get("examples") or {}}
-    own_places = ((man.get("plates") or {}).get("draw") is False)
+    own_places = draws_own_places(man)
     review = ""
     if fix:
         review = ("\nA CHECK OF YOUR PLAN FOR THIS STRETCH (its frames, drawn) FOUND, at seconds on the narration's clock:\n- "
@@ -2235,10 +2269,15 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
                                         if (before or {}).get(k)}, ensure_ascii=False)[:12000] + "\n")
     key = _digest({"beats": beats, "cast": casting["cast"], "sets": casting["sets"], "spec": spec, "prompt": template,
                    "previous": previous, "t": [t0, t1], "docs": docs, **({"fix": review} if fix else {})})
+    # a stretch directed under an earlier Studio (its director.txt, no examples yet) keeps its saved answer on Resume
+    known = {key} | ({_digest({"beats": beats, "cast": casting["cast"], "sets": casting["sets"], "spec": spec, "prompt": old,
+                               "previous": previous, "t": [t0, t1],
+                               "docs": {k: v for k, v in docs.items() if k != "examples"}})
+                      for old in earlier("director.txt")} if not fix else set())
     name = f"director-{index:03d}" + ("-fix" if fix else "")
     reply = folder / f"{name}.txt"
     request = folder / f"{name}.json"
-    if reply.is_file() and _read(request).get("key") == key:
+    if reply.is_file() and _read(request).get("key") in known:
         text = reply.read_text(encoding="utf-8")
     else:
         engine.step(f"Animated 2D: choreographing {t0:.0f}-{t1:.0f} s" + (" again, from the frame check" if fix else ""))
@@ -2325,6 +2364,70 @@ def _s(t: float) -> str:
     return f"{float(t):.1f} s"
 
 
+PREFS = "cr-preferences.json"          # Studio's own choices, in its folder (an update replaces only shipped files)
+FRAME_CHECK = "animation_frame_check"  # the Studio-wide default: on unless the creator switched it off
+FRAME_CHECK_ASKED = "cr_frame_check"   # run_spec.json: "on" or "off" for one video (Create's switch, make_videos)
+FRAME_CHECK_KEPT = "frame-check.json"  # that choice, kept in the video's animated2d/ folder for its Resumes
+# Claude time the check adds per minute of video: one look a stretch (a minute at most), plus a re-plan when it finds
+# something clear (owner's measurement still to come: the coordinator's estimate was 1.5 to 2.5 minutes)
+FRAME_CHECK_MINUTES = (1.0, 2.5)
+# what the free checks find that is clearly worth a re-plan (their words, from plan_notes and frame_notes)
+CLEAR_NOTES = ("frozen picture", "drawn over", "run off the edge", "recurring character", "don't fit their box")
+CLEAR_SEEN = ("PLACE", "TEXT", "MISSING")
+
+
+def frame_check_default(home=None) -> bool:
+    """Studio's own setting: is a coded style's frame check on for new videos (default on)."""
+    value = _read(Path(home or HERE) / PREFS).get(FRAME_CHECK)
+    return value is not False
+
+
+def set_frame_check(home, on: bool) -> bool:
+    """Studio's setting for the frame check (Create's switch keeps it): on or off for every new video."""
+    path = Path(home or HERE) / PREFS
+    data = _read(path)
+    data[FRAME_CHECK] = bool(on)
+    _write(path, data)
+    return bool(on)
+
+
+def frame_check_for(job, home=None) -> bool:
+    """Is this video's frame check on: its own choice (run_spec cr_frame_check, kept for its Resumes), else Studio's
+    setting. A Resume or repair (whose spec comes from the saved project) keeps the choice the video was made with."""
+    job = Path(job)
+    asked = str(_read(job / "run_spec.json").get(FRAME_CHECK_ASKED) or "")
+    kept = job / "animated2d" / FRAME_CHECK_KEPT
+    if asked in ("on", "off"):
+        if _read(kept).get(FRAME_CHECK_ASKED) != asked:
+            _write(kept, {FRAME_CHECK_ASKED: asked})
+        return asked == "on"
+    remembered = str(_read(kept).get(FRAME_CHECK_ASKED) or "")
+    return remembered == "on" if remembered in ("on", "off") else frame_check_default(home)
+
+
+def can_show_places(man: dict) -> bool:
+    """A wrong place can be re-planned: Studio draws each place's picture from its words, or the renderer passed the
+    build's any-place probe (Studio 109). A renderer written before that draws only its own places whatever is asked."""
+    return not draws_own_places(man) or (man or {}).get("places") == "any"
+
+
+def replan_for(found: dict, man: dict) -> tuple:
+    """(what the director is asked to fix, what only the renderer can): a re-plan only when the checks found something
+    clear (a frozen picture, words over others or off the frame or cut, the recurring character missing; Claude saw
+    the wrong place, broken words or someone missing); everything the director can fix goes with it then. A wrong place
+    on a renderer that can't draw new places is the renderer's to fix, never a re-plan."""
+    said = lambda r: (f"{_s(r['at'])}: " if r.get("at") is not None else "") + f"{r['kind'].lower()}: {r['what']}"  # noqa: E731
+    seen = [r for r in found.get("seen") or [] if r.get("fix") == "director"]
+    faults = []
+    if not can_show_places(man):
+        faults = [said(r) + " (this style's renderer draws only the places it was written with: Improve this style or "
+                  "study the channel again)" for r in seen if r["kind"] == "PLACE"]
+        seen = [r for r in seen if r["kind"] != "PLACE"]
+    clear = any(any(k in n for k in CLEAR_NOTES) for n in found.get("notes") or []) or \
+        any(r["kind"] in CLEAR_SEEN for r in seen)
+    return ((list(found.get("notes") or []) + [said(r) for r in seen]) if clear else []), faults
+
+
 def plan_notes(plan: dict, casting: dict, spec: dict, t0: float = 0.0) -> list:
     """What a stretch's plan does that the channel's best videos don't, in the director's terms (seconds on the
     narration's clock): a view held too long, a shot that repeats the one before, a stretch where nobody does
@@ -2371,7 +2474,7 @@ def frame_notes(look: dict, plan: dict, t0: float = 0.0, step: float = SWEEP_STE
     seen = {}
     for row in look.get("texts") or []:
         if isinstance(row, dict) and row.get("kind") in ("off", "over"):
-            seen.setdefault((row["kind"], str(row.get("text")), str(row.get("other") or "")), []).append(float(row.get("t") or 0))
+            seen.setdefault((row["kind"], str(row.get("text")), str(row.get("other") or "")), []).append(_number(row.get("t")) or 0.0)
     for (kind, text, other), times in seen.items():
         if len(set(times)) < 2:
             continue
@@ -2381,7 +2484,7 @@ def frame_notes(look: dict, plan: dict, t0: float = 0.0, step: float = SWEEP_STE
                      "renderer writes itself")
     for row in (look.get("overflow") or [])[:4]:
         if isinstance(row, dict) and row.get("text"):
-            notes.append(f"{_s(t0 + float(row.get('t') or 0))}: the words \"{row['text']}\" don't fit their box at a "
+            notes.append(f"{_s(t0 + (_number(row.get('t')) or 0.0))}: the words \"{row['text']}\" don't fit their box at a "
                          "readable size; say it in fewer words")
     sigs = look.get("sigs") or {}
     if sigs:
@@ -2429,6 +2532,9 @@ def look_review(engine, job: Path, index: int, plan: dict, casting: dict, spec: 
     reply, request = folder / f"review-{index:03d}.txt", folder / f"review-{index:03d}-request.json"
     if reply.is_file() and _read(request).get("key") == key:
         text = reply.read_text(encoding="utf-8")
+    elif _read(request).get("key") == key:                  # asked before and stopped mid-call: never asked twice
+        engine.log("animated 2D: the frame look of this stretch was interrupted before; it isn't asked again")
+        return None
     else:
         small = []
         try:
@@ -2541,6 +2647,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:8]
     own = style_sounds(code, style, dims=dims_of(spec))      # the style's own effects, made in code once a version
     checked = []
+    checking = frame_check_for(job)                         # Claude's look and the re-plan (on unless switched off)
     for index, part in enumerate(parts):
         plan = direct(engine, job, casting, spec, part, index, previous, title, man)
         words = [{"w": w, "t": round(t - part[0], 3)} for _, _, _, ws in part[2] for w, t in ws]
@@ -2551,24 +2658,30 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
         rec = _read(record)
         if rec.get("key") == first and rec.get("final") in ("first", "fix") and not force:
             if rec["final"] == "fix":                       # checked before: the re-plan it chose (saved, not asked again)
-                plan = direct(engine, job, casting, spec, part, index, previous, title, man, fix=rec.get("fix"), before=plan)
-                film = film_spec(plan, casting, spec, plate_paths, words, size=size)
+                try:
+                    fixed = direct(engine, job, casting, spec, part, index, previous, title, man, fix=rec.get("fix"),
+                                   before=plan)
+                    plan, film = fixed, film_spec(fixed, casting, spec, plate_paths, words, size=size)
+                except AnimationStopped:                    # its saved answer no longer reads: the checked plan
+                    pass
         else:
             out = folder / f"a2d_{index:03d}_{first[:8]}.mp4"
             if not (out.is_file() and out.stat().st_size > 10000) or force:
-                found = check_stretch(engine, job, index, film, plan, code, man, casting, spec, part, title, key=first)
-                rec = {"key": first, "final": "first", "notes": found["notes"], "seen": found["seen"],
-                       "renderer": found["renderer"]}
-                if found["director"]:
-                    fixed = direct(engine, job, casting, spec, part, index, previous, title, man, fix=found["director"],
-                                   before=plan)
-                    again = film_spec(fixed, casting, spec, plate_paths, words, size=size)
-                    try:
+                found = check_stretch(engine, job, index, film, plan, code, man, casting, spec, part, title, key=first,
+                                      look_at=checking)
+                fix, faults = replan_for(found, man) if checking else ([], [])
+                rec = {"key": first, "final": "first", "checked": checking, "notes": found["notes"],
+                       "seen": found["seen"], "renderer": found["renderer"] + faults}
+                if fix:
+                    try:                                    # an unreadable re-plan, or one that trips a renderer fault:
+                        fixed = direct(engine, job, casting, spec, part, index, previous, title, man,  # the checked
+                                       fix=fix, before=plan)                                            # plan stands
+                        again = film_spec(fixed, casting, spec, plate_paths, words, size=size)
                         after = check_stretch(engine, job, index, again, fixed, code, man, casting, spec, part, title,
                                               key=first, look_at=False)
                         plan, film = fixed, again
-                        rec.update(final="fix", fix=found["director"], left=after["notes"])
-                    except AnimationStopped as error:       # the re-plan trips a renderer fault: the checked plan stands
+                        rec.update(final="fix", fix=fix, left=after["notes"])
+                    except AnimationStopped as error:
                         rec.update(fix_refused=str(error)[:300])
                 _write(record, rec)
         checked.append({"part": index, "from": round(part[0], 2), "replanned": rec.get("final") == "fix",
