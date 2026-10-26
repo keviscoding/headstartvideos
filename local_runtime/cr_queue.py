@@ -41,11 +41,13 @@ RANKING_HOLDS_ALL = ("claude_usage_limit", "claude_auth", "claude_missing", "cla
 CLOSED = "Studio closed before these started."
 # a Claude stage's own stop code (cr_claude) that every video needing Claude would stop on too
 _CLAUDE_STAGE = {"usage_limit": "usage_limit", "auth_missing": "auth", "authentication_required": "auth",
-                 "model_unavailable": "auth"}
+                 "model_unavailable": "model"}
 # the server's setup refusals at a project's start (webapp frontier_studio._setup_issues): every video stops on them
 _SETUP = re.compile(r"(?i)download the release required|install claude code and sign in|verify both selected claude "
                     r"models|review and acknowledge your claude|finish the local video-tools|install the javascript "
                     r"runtime|choose supported writing")
+# the accounts every video goes through: a key one of them refuses would stop the next video the same way
+_SHARED_ACCOUNTS = ("kie", "elevenlabs", "claude", "channelrecipe")
 _ACCOUNT = {"kie": "Kie.ai", "elevenlabs": "ElevenLabs", "claude": "Claude Code", "channelrecipe": "ChannelRecipe",
             "other": "A connected account"}
 
@@ -86,7 +88,7 @@ def shared_stop(job) -> tuple:
 
 def shared_kind(record, *, stage: str = "", message: str = "") -> str:
     """The kind of stop every video waiting would hit too, from a stopped video's failure record (cr_failure) and its
-    Claude stage's stop code: usage_limit, auth, balance, disk_full, out_of_memory or setup. "" for a stop of the
+    Claude stage's stop code: usage_limit, auth, model, balance, disk_full, out_of_memory or setup. "" for a stop of the
     video's own: a title, one picture or narration refused, a renderer bug, a timeout, a rate limit, a network blip
     (each of those can work for the next video)."""
     record = record if isinstance(record, dict) else {}
@@ -95,8 +97,8 @@ def shared_kind(record, *, stage: str = "", message: str = "") -> str:
         return _CLAUDE_STAGE[stage]
     if category == "usage_limit" and provider in ("claude", "none"):
         return "usage_limit"                                   # (the month's clip watches are the Ranking Shorts')
-    if category == "auth" and provider != "youtube":           # (YouTube's "sign in to confirm": the Shorts' own)
-        return "auth"
+    if category == "auth" and provider in _SHARED_ACCOUNTS:    # (an unknown host's 401, YouTube's "sign in to
+        return "auth"                                          # confirm": that video's own)
     if category == "missing_tool" and provider == "claude":
         return "auth"                                          # Claude Code not installed
     if category in ("balance", "disk_full", "out_of_memory"):
@@ -111,6 +113,9 @@ def plain_reason(kind: str, provider: str = "none") -> str:
     account = _ACCOUNT.get(provider, "A connected account")
     if kind == "usage_limit":
         return "Claude's usage limit was reached, and every video waiting needs Claude. Carry on once it resets."
+    if kind == "model":
+        return ("Claude Code couldn't use its model for a step: it isn't available on this account right now. Check "
+                "Verify both Claude models in Setup & accounts, then Carry on.")
     if kind == "auth" and provider in ("claude", "none"):
         return ("Claude Code needs signing in again, or its model isn't available. Check Setup & accounts, then "
                 "Carry on.")
@@ -170,6 +175,9 @@ class Keeper:
         # own: the Ranking Shorts), "" (a closed Studio, or a video whose own check failed: new videos run)
         self.scope = ""
         self.why: dict = {}                                    # slug -> why that video is on hold
+        self.codes: dict = {}                                  # slug -> the code of the stop that held it
+        self.holds = 0                                         # counts the holds: one during a Carry on check wins
+        self.checking = False                                  # Carry on is checking the held videos' setup
         self.running = None                                    # the spec being made now
         # Carry on's check (cr_studio): specs -> {slug: why it still can't start}, after giving each that can a fresh
         # setup proof. None: Carry on queues them as they are.
@@ -196,11 +204,12 @@ class Keeper:
             with self._studio_lock():
                 waiting = list(self._queue)
                 held = list(self.held)
-                reason, code, scope, why = self.reason, self.code, self.scope, dict(self.why)
+                reason, code, scope, why, codes = self.reason, self.code, self.scope, dict(self.why), dict(self.codes)
             kept = [k for k in map(_kept, held) if k]
             data = {"saved_at": time.time(), "waiting": [k for k in map(_kept, waiting) if k], "held": kept,
                     "reason": reason, "code": code, "scope": scope,
-                    "why": {s["slug"]: why[s["slug"]] for s in kept if why.get(s["slug"])}}
+                    "why": {s["slug"]: why[s["slug"]] for s in kept if why.get(s["slug"])},
+                    "codes": {s["slug"]: codes[s["slug"]] for s in kept if codes.get(s["slug"])}}
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 tmp = self.path.with_name(f".cr-queue.{os.getpid()}.{threading.get_ident()}.tmp")
@@ -237,6 +246,7 @@ class Keeper:
         waiting = [_revived(s) for s in data.get("waiting") or [] if _kept(s) and not self._cancelled(s)]
         held = [_revived(s) for s in data.get("held") or [] if _kept(s) and not self._cancelled(s)]
         why = data.get("why") if isinstance(data.get("why"), dict) else {}
+        codes = data.get("codes") if isinstance(data.get("codes"), dict) else {}
         with self.lock, self._studio_lock():
             known = {s["slug"] for s in self._queue} | {s["slug"] for s in self.held}
             fresh = [s for s in held + waiting if s["slug"] not in known]
@@ -249,6 +259,9 @@ class Keeper:
                 self.scope = "" if waiting or data.get("scope") not in ("all", "ranking") else data["scope"]
                 for spec in fresh:
                     self.why[spec["slug"]] = CLOSED if waiting else str(why.get(spec["slug"]) or self.reason)
+                    code = "" if waiting else str(codes.get(spec["slug"]) or self.code)
+                    if code:
+                        self.codes[spec["slug"]] = code
         self.save()
 
     # ── adding videos ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -276,6 +289,7 @@ class Keeper:
             for spec in hold:
                 self._mark_held(spec)
                 self.why[spec["slug"]] = self.reason
+                self.codes[spec["slug"]] = self.code
             self.held += hold
             places = self._places()
         self.save()
@@ -388,16 +402,18 @@ class Keeper:
                 self._queue[:] = [s for s in self._queue if not any(s is t for t in take)]
                 for spec in take:
                     self._mark_held(spec)
-                    self.why[spec["slug"]] = reason
                 self.held += take
             if take or self.held:
                 # the newest stop says why (for every held video it would stop too); a shared stop covers every
                 # video submitted from now on
+                self.holds += 1
                 self.reason, self.code = reason, code
                 self.scope = "all" if scope == "all" or self.scope == "all" else scope
                 for spec in self.held:
                     if scope == "all" or is_ranking(spec):
                         self.why[spec["slug"]] = reason
+                        if not (code == "usage_limit" and self.codes.get(spec["slug"]) == "out_of_watches"):
+                            self.codes[spec["slug"]] = code     # (watches used up still need credits after)
         self.save()
         return len(take)
 
@@ -407,42 +423,66 @@ class Keeper:
     # ── what the creator does about it ──────────────────────────────────────────────────────────────────────────────
     def resume(self, use_credits=False):
         """Carry on: each held video's setup is checked again (self.check), and the ones ready go back in the waiting
-        line in their order; one that still can't start stays on hold with its own reason."""
+        line in their order; one that still can't start stays on hold with its own reason.
+
+        The check takes a few seconds (setup, an account check per video). The videos stay on hold through it, so a
+        delete, a second Resume of the same project or a Remove sees them as they are; a shared stop during it keeps
+        them all on hold (its reason wins), and a Remove during it is never undone."""
         with self.lock, self._studio_lock():
-            specs, self.held = self.held, []
-            why, self.why = self.why, {}
-            self.reason, self.code, self.scope = "", "", ""
-        if use_credits:
-            specs = [with_credits(s) if is_ranking(s) else s for s in specs]
-        specs = [s for s in specs if not self._cancelled(s)]
-        problems = {}
-        if specs and callable(self.check):
-            try:
-                problems = dict(self.check(specs) or {})
-            except Exception:                                  # noqa: BLE001 - not checked: nothing starts
-                problems = {s["slug"]: "Studio couldn't check its setup just now. Try Carry on again in a minute."
-                            for s in specs}
-        go = [s for s in specs if s["slug"] not in problems]
-        stay = [s for s in specs if s["slug"] in problems]
-        with self.lock, self._studio_lock():
-            for spec in go:
-                self._jobs[spec["slug"]] = self._job(spec, "queued")
-            self._queue.extend(go)
-            for spec in stay:
-                self._mark_held(spec)
-                self.why[spec["slug"]] = str(problems[spec["slug"]])
-            if stay:
-                self.held = stay + self.held                   # still first in line
-                self.reason, self.code = str(problems[stay[0]["slug"]]), "setup"
+            if self.checking or not self.held:
+                return 0
+            gone = [s for s in self.held if self._cancelled(s)]
+            self.held = [s for s in self.held if not any(s is g for g in gone)]
+            for spec in gone:
+                self._forget(spec)
+            specs, holds, self.checking = list(self.held), self.holds, True
+        try:
+            problems = {}
+            if specs and callable(self.check):
+                try:
+                    problems = dict(self.check(specs) or {})
+                except Exception:                              # noqa: BLE001 - not checked: nothing starts
+                    problems = {s["slug"]: "Studio couldn't check its setup just now. Try Carry on again in a minute."
+                                for s in specs}
+            with self.lock, self._studio_lock():
+                if self.holds != holds:                        # a shared stop meanwhile: they stay on hold for it
+                    return 0
+                checked = {id(s) for s in specs}
+                # still held (not removed meanwhile) and ready; videos that joined the hold meanwhile had their own
+                # check when they were submitted, so they go too, after
+                go = [s for s in self.held if id(s) in checked and s["slug"] not in problems] + \
+                     [s for s in self.held if id(s) not in checked]
+                stay = [s for s in self.held if id(s) in checked and s["slug"] in problems]
+                self.held = stay
+                if use_credits:                                # the creator's choice, for the ones carrying on
+                    go = [with_credits(s) if is_ranking(s) and id(s) in checked else s for s in go]
+                for spec in go:
+                    self._jobs[spec["slug"]] = self._job(spec, "queued")
+                    self._forget(spec)
+                self._queue.extend(go)
+                for spec in stay:
+                    self.why[spec["slug"]] = str(problems[spec["slug"]])
+                    self.codes[spec["slug"]] = "setup"
+                if stay:
+                    self.reason, self.code, self.scope = str(problems[stay[0]["slug"]]), "setup", ""
+                else:
+                    self.reason, self.code, self.scope = "", "", ""
+        finally:
+            with self.lock:
+                self.checking = False
         self.save()
         if go and callable(getattr(self.studio, "_ensure_dispatcher", None)):
             self.studio._ensure_dispatcher()
         return len(go)
 
+    def _forget(self, spec):
+        self.why.pop(spec["slug"], None)
+        self.codes.pop(spec["slug"], None)
+
     def drop(self):
         with self.lock, self._studio_lock():
             specs, self.held, self.reason, self.code, self.scope = self.held, [], "", "", ""
-            self.why = {}
+            self.why, self.codes = {}, {}
             for spec in specs:
                 if (self._jobs.get(spec["slug"]) or {}).get("state") == "held":
                     self._jobs.pop(spec["slug"], None)
@@ -454,7 +494,9 @@ class Keeper:
             return {"held": [{"slug": s["slug"], "title": s["title"], "ranking": is_ranking(s),
                               "reason": self.why.get(s["slug"]) or self.reason} for s in self.held],
                     "reason": self.reason, "code": self.code, "scope": self.scope if self.held else "",
-                    "waiting": len(self._queue), "max_ranking_batch": MAX_RANKING_BATCH}
+                    # Ranking Shorts held on used-up clip watches can carry on using credits, whatever held them since
+                    "credits": any(self.codes.get(s["slug"]) == "out_of_watches" for s in self.held),
+                    "checking": self.checking, "waiting": len(self._queue), "max_ranking_batch": MAX_RANKING_BATCH}
 
     def queue_rows(self, body):
         """The engine's /api/queue answer with each waiting video's place in line and the held ones (state held,

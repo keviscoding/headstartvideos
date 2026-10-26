@@ -287,7 +287,7 @@ def test_a_cancelled_or_finished_video_never_holds(tmp_path):
 
 
 def test_a_claude_stage_stopped_on_its_limit_or_model_holds_the_rest(tmp_path, monkeypatch):
-    for code, kind in (("usage_limit", "usage_limit"), ("model_unavailable", "auth"), ("auth_missing", "auth"),
+    for code, kind in (("usage_limit", "usage_limit"), ("model_unavailable", "model"), ("auth_missing", "auth"),
                        ("invalid_result", "")):
         studio, _ = fake_studio([spec("Titanic")])
         keeper = cr_queue.Keeper(studio, tmp_path / code)
@@ -474,3 +474,124 @@ def test_a_video_is_known_as_being_made_from_the_moment_the_queue_hands_it_over(
     thread.join(3)
     assert env.studio.JOBS["rome"]["state"] == "error"         # its attempt folder was refused before it began
     assert not env.keeper.has_project(PROJECT) and env.keeper.running is None
+
+
+# ── review 2026-10-26: the Carry on window, an exception's hold, auth holds ─────────────────────────────────────
+
+def test_through_carry_ons_check_the_videos_stay_on_hold(tmp_path):
+    """The check takes seconds: meanwhile a held video can't be deleted or resumed twice, a Remove sticks, a second
+    Carry on waits for the first, and a video added then goes after the checked ones."""
+    import cr_trash
+    first, second = spec("Titanic", cr_project_id=PROJECT), spec("Moon landing")
+    studio, dispatched = fake_studio([first, second])
+    keeper = studio._cr_queue = cr_queue.Keeper(studio, tmp_path)
+    keeper.hold(cr_queue.plain_reason("balance", "kie"), "balance")
+    entered, release = threading.Event(), threading.Event()
+
+    def check(specs):
+        entered.set()
+        assert release.wait(3)
+        return {}
+    keeper.check = check
+    results = []
+    worker = threading.Thread(target=lambda: results.append(keeper.resume()), daemon=True)
+    worker.start()
+    assert entered.wait(3)
+    assert "on hold" in cr_trash._slug_busy(studio, first["slug"]), "never binned mid-check"
+    assert keeper.has_project(PROJECT), "a second Resume of it is refused"
+    assert keeper.resume() == 0 and keeper.status()["checking"] is True
+    late = spec("Rome falls")
+    assert "held" in keeper.add([late])[late["slug"]]
+    release.set()
+    worker.join(3)
+    assert results == [2 + 1] and [s["title"] for s in studio.QUEUE] == ["Titanic", "Moon landing", "Rome falls"]
+    assert keeper.held == [] and keeper.status()["checking"] is False and dispatched == [True]
+
+
+def test_a_remove_or_a_shared_stop_during_carry_ons_check_wins(tmp_path):
+    for during in ("remove", "stop"):
+        studio, _ = fake_studio([spec("Titanic"), spec("Moon landing")])
+        keeper = cr_queue.Keeper(studio, tmp_path / during)
+        keeper.hold(cr_queue.plain_reason("balance", "kie"), "balance")
+
+        def check(specs, during=during, keeper=keeper):
+            if during == "remove":
+                keeper.drop()
+            else:
+                keeper.hold(cr_queue.plain_reason("disk_full"), "disk_full")
+            return {}
+        keeper.check = check
+        assert keeper.resume() == 0 and studio.QUEUE == [], during
+        if during == "remove":
+            assert keeper.held == [] and studio.JOBS == {}
+        else:
+            assert len(keeper.held) == 2 and keeper.status()["code"] == "disk_full"
+            assert all("disk" in h["reason"] for h in keeper.status()["held"])
+
+
+def test_a_held_video_cant_be_deleted_by_its_job_state_alone(tmp_path):
+    import cr_trash
+    studio, _ = fake_studio()
+    studio.JOBS["titanic--run"] = {"state": "held"}
+    assert "on hold" in cr_trash._slug_busy(studio, "titanic--run")
+
+
+def test_an_exception_while_making_a_video_still_holds_the_queue(env, monkeypatch):
+    """A full disk raising OSError (writing the worker's files) used to leave the video "running" for the hold check,
+    so each waiting video started and failed in turn."""
+    env.studio.mv.job_dir = lambda *a: env.home / "job"
+    monkeypatch.setattr(cr_studio.cr_bridge, "begin_project", lambda *a, **k: {"id": "crv_" + "2" * 24})
+    cells = dict(zip(env.studio._run_spec.__code__.co_freevars, env.studio._run_spec.__closure__))
+    owned = cells["run_owned_spec"].cell_contents
+    cells = dict(zip(owned.__code__.co_freevars, owned.__closure__))
+
+    def full(spec):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(cells["original_run"], "cell_contents", full)
+    waiting = spec("Titanic")
+    env.studio.QUEUE.append(waiting)
+    env.studio.JOBS[waiting["slug"]] = {"state": "queued", "title": "Titanic"}
+    env.studio.JOBS["rome"] = {"state": "queued", "lines": []}
+    env.studio._run_spec({"slug": "rome", "title": "Rome falls", "style": "history", "minutes": 5, "steps": ["script"]})
+    assert env.studio.JOBS["rome"]["state"] == "error" and "No space left" in env.studio.JOBS["rome"]["error"]
+    assert env.studio.QUEUE == [] and [s["title"] for s in env.keeper.held] == ["Titanic"]
+    assert env.keeper.status()["code"] == "disk_full"
+
+
+@pytest.mark.parametrize("error, holds", [
+    ("Pexels answered 401 Unauthorized.", False),                       # one service some videos use
+    ("HTTP Error 403: Forbidden from cdn.example.org", False),          # an unknown host
+    ("Kie.ai answered 401 Unauthorized: invalid api key.", True),
+    ("ElevenLabs answered 401 Unauthorized.", True),
+    ("Claude Code: authentication_error, please log in again (401).", True),
+])
+def test_an_auth_stop_holds_only_for_the_accounts_every_video_uses(tmp_path, error, holds):
+    studio, _ = fake_studio([spec("Titanic")])
+    keeper = cr_queue.Keeper(studio, tmp_path)
+    stopped(keeper, studio, spec("Rome falls"), error, tmp_path)
+    assert bool(keeper.held) is holds, error
+
+
+def test_an_unavailable_claude_model_says_so(tmp_path, monkeypatch):
+    studio, _ = fake_studio([spec("Titanic")])
+    keeper = cr_queue.Keeper(studio, tmp_path)
+    monkeypatch.setattr(cr_failure, "_claude_stop", lambda *a: "model_unavailable")
+    stopped(keeper, studio, spec("Rome falls", cr_project_id=PROJECT), "A Claude stage stopped.", tmp_path)
+    assert keeper.status()["code"] == "model" and "model" in keeper.status()["reason"]
+    assert "signing in" not in keeper.status()["reason"]
+
+
+def test_shorts_held_on_used_up_watches_can_still_use_credits_after_a_claude_limit(tmp_path):
+    studio, _ = fake_studio([spec("Funniest Dogs", ranking=True), spec("Titanic")])
+    keeper = cr_queue.Keeper(studio, tmp_path)
+    keeper.hold_ranking("Your clip watches for this month are used up.", "out_of_watches")
+    keeper.hold(cr_queue.plain_reason("usage_limit"), "usage_limit")
+    status = keeper.status()
+    assert status["code"] == "usage_limit" and status["credits"] is True
+    again = cr_queue.Keeper(fake_studio()[0], tmp_path)
+    again.restore()
+    assert again.status()["credits"] is True
+    keeper.check = lambda specs: {}
+    assert keeper.resume(use_credits=True) == 2
+    shorts = [s for s in studio.QUEUE if cr_queue.is_ranking(s)]
+    assert '"use_credits": true' in shorts[0]["extra"] and "use_credits" not in studio.QUEUE[1]["extra"]

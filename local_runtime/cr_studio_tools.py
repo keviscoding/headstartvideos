@@ -435,7 +435,7 @@ def tool_queue(args):
            "on_hold": sum(r["state"] == "held" for r in rows)}
     if state.get("held"):
         out["hold"] = {"reason": state.get("reason") or "", "videos": len(state["held"]),
-                       "can_use_credits": state.get("code") == "out_of_watches"}
+                       "can_use_credits": state.get("code") == "out_of_watches" or bool(state.get("credits"))}
         out["next"] = HOLD_NOTE + (" Ranking Shorts held because the month's clip watches ran out can go on with "
                                    "carry_on_queue(use_credits=true), 0.02 credits a watch, only if the creator says "
                                    "so." if out["hold"]["can_use_credits"] else "")
@@ -458,12 +458,15 @@ def tool_carry_on_queue(args):
         return {"removed": got.get("removed", 0),
                 "message": "Taken out of the queue. Nothing of theirs was made or paid for; make them again any time."}
     credits = args.get("use_credits") is True
-    if credits and state.get("code") != "out_of_watches":
+    if credits and state.get("code") != "out_of_watches" and not state.get("credits"):
         raise Refused("use_credits is only for Ranking Shorts held because the month's clip watches ran out.")
     got = call("POST", "/cr-queue/resume", {"use_credits": credits}, timeout=240)
     still = [{"id": "video:" + h["slug"], "title": h.get("title"), "on_hold_because": h.get("reason") or ""}
              for h in got.get("held") or []]
     out = {"carried_on": got.get("resumed", 0), "still_on_hold": still}
+    if got.get("checking") and not out["carried_on"]:
+        out["next"] = "Studio is already checking them (a Carry on from the Studio page). Check queue in a moment."
+        return out
     out["next"] = ("Back in the queue: Studio makes them one at a time, by itself. " if out["carried_on"] else "") + (
         "Some are still on hold: Studio checked their setup again and they can't start yet (on_hold_because). Tell "
         "the creator what to fix." if still else "Check queue or progress now and then.")

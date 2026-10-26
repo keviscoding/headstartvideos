@@ -178,6 +178,12 @@ def workspace(browser):
         return jsonify(held=held, reason=HELD if held else "", code="balance" if held else "", scope="all" if held else "",
                        waiting=1 if env.mode == "queue" else 0)
 
+    @app.post("/cr-queue/resume")
+    def queue_resume():                                        # Carry on: Studio checked them again, still blocked
+        still = "Connect ElevenLabs in Setup & accounts for this recipe's voice."
+        return jsonify(resumed=0, held=[{"slug": "held-film", "title": "Titanic", "reason": still}], reason=still,
+                       code="setup", scope="", checking=False, waiting=0)
+
     @app.get("/api/queue")
     def queue():
         if env.mode in ("queue", "queue_held"):
@@ -924,4 +930,15 @@ def test_a_held_queue_says_why_on_its_cards_and_new_videos_join_it(workspace):
     page.locator("#crw-title").fill("One more")
     page.locator("#crw-create").click()
     page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('on hold with the others')")
+    assert not env.errors
+
+
+def test_carry_on_says_why_the_videos_are_still_on_hold(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "queue_held"
+    env.open()
+    page.locator("[data-held-notice]:visible button", has_text="Carry on").first.click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('Still on hold')")
+    assert "Connect ElevenLabs" in page.locator("#crw-toast").inner_text()
+    assert "Nothing was on hold" not in page.locator("#crw-toast").inner_text()
     assert not env.errors
