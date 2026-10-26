@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import config
 from webapp import milestones
 from webapp import studio_failures
+from webapp import studio_setup
 from webapp import database as db
 from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
@@ -1365,6 +1366,12 @@ def make_router(session_user, *, prefix="/api/frontier"):
     @router.post("/stages/retry")
     def runtime_retry(req:NativeRetryStage,user=Depends(access)):
         return native_retry_stage(user,req)
+
+    @router.post("/setup-report")
+    def report_setup(req: studio_setup.SetupReport, user=Depends(access)):
+        """What this Studio's setup still lacks (check keys, ready, computer family, version): the team's counts."""
+        studio_setup.record(user["id"], req)
+        return {"saved": True}
 
     @router.post("/failures")
     def report_failure(req: FailureReport, user=Depends(access)):
