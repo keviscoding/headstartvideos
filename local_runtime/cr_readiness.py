@@ -11,6 +11,7 @@ import requests
 
 import cr_bridge
 import cr_claude
+import cr_machine
 import cr_media
 import cr_mcp
 import cr_network
@@ -79,6 +80,9 @@ def setup_rows(checks):
     if checks.get("file_paths"):                  # Windows only: a note when the Studio folder is too deep (cr_paths)
         paths = checks["file_paths"]
         rows.append({"key": "file_paths", "label": "Windows file paths", "ready": True, "message": paths.get("message", "")})
+    if checks.get("computer"):                    # memory, cores and free disk (cr_machine): a note; preset() checks
+        computer = checks["computer"]             # the disk against each video
+        rows.append({"key": "computer", "label": "This computer", "ready": True, "message": computer.get("message", "")})
     return rows
 
 
@@ -111,12 +115,12 @@ def _check_hub(provider, key):
 def own_narration(studio, style, info, why):
     """(ok, why) for narration the engine's own check does not know. That check counts only Algrow, WaveSpeed and AI33
     keys, so with ElevenLabs connected on Setup (narration on the creator's own key) every Create stopped on "The
-    voiceover needs ALGROW_API_KEY, WAVESPEED_API_KEY or AI33_API_KEY" (the owner, 2026-10-21). A Ranking Short
-    narrates itself (shorts/ranking/voice.py: ElevenLabs on the creator's key, else ElevenLabs or Gemini through
-    Kie.ai, checked again before anything is paid); any other recipe narrates with ElevenLabs once a voice is chosen
-    for it (Create, Choose voice: the engine's voice pick)."""
+    voiceover needs ALGROW_API_KEY, WAVESPEED_API_KEY or AI33_API_KEY" (the owner, 2026-10-21). A Ranking or Roblox
+    Story Short narrates itself (shorts/ranking/voice.py, shorts/roblox/make_roblox.py: ElevenLabs on the creator's
+    key, else ElevenLabs or Gemini through Kie.ai, checked again before anything is paid); any other recipe narrates
+    with ElevenLabs once a voice is chosen for it (Create, Choose voice: the engine's voice pick)."""
     eleven = bool(os.getenv("ELEVENLABS_API_KEY", "").strip())
-    if ((info or {}).get("shorts") or {}).get("pipeline") == "ranking":
+    if ((info or {}).get("shorts") or {}).get("pipeline") in ("ranking", "roblox"):
         if eleven or os.getenv("KIE_API_KEY", "").strip():
             return True, ""
         return False, "Connect ElevenLabs or Kie.ai in Setup & accounts for the narrator."
@@ -130,6 +134,24 @@ def own_narration(studio, style, info, why):
         return False, ("Choose this recipe's voice in Create, under Narration, Choose voice: your ElevenLabs voices "
                        "are there.")
     return False, why
+
+
+def saved_gb(studio, spec, titles) -> list:
+    """What each title's own working folder already holds on the disk, in GB (0.0 for a video not started yet): a
+    saved project carrying on needs only the rest."""
+    mv = getattr(studio, "mv", None)
+    find, slugify = getattr(mv, "find_job", None), getattr(mv, "slugify", None)
+    if not callable(find):
+        return []
+    slug = str(spec.get("cr_attempt_slug") or "")
+    out = []
+    for i, title in enumerate(titles or [""]):
+        try:
+            job = find(slug) if slug and i == 0 else find(slugify(title)) if callable(slugify) and title else None
+        except Exception:                                      # noqa: BLE001 - not found: nothing saved to count
+            job = None
+        out.append(cr_machine.folder_gb(job) if job else 0.0)
+    return out
 
 
 def preset(studio, checks, spec):
@@ -200,6 +222,20 @@ def preset(studio, checks, spec):
         problem = cr_paths.title_problem(paths["folder"], style, titles, studio.mv.youtube_filename) if titles else ""
         if problem:
             results.append(item("title_length", "Title fits Windows' path limit", False, problem))
+    # A disk that fills up stops a video halfway, with nothing anyone can read: it stops here instead (cr_machine),
+    # only when even the measured need can't fit; under the comfortable margin it goes ahead with a warning. A saved
+    # project carrying on (Resume, a presenter choice, a 3D reassembly) needs only what its folder doesn't hold yet.
+    warnings = []
+    free = (checks.get("computer") or {}).get("free_disk_gb")
+    if free is not None and "video" in steps:
+        titles = [line for line in str(spec.get("title") or "").splitlines() if line.strip()]
+        room, warning = cr_machine.disk_check(free, spec.get("minutes") or 1, len(titles) or 1,
+                                              threed=bool(wanted.get("threed")) or backend == "manimgx",
+                                              saved=saved_gb(studio, spec, titles))
+        if room:
+            results.append(item("disk_space", "Room for this video on the disk", False, room))
+        elif warning:
+            warnings.append(warning)
     # YouTube has no way around it: a recipe that uses it stops here on a network that can't reach it, not mid-video
     youtube = cr_network.youtube_problem(checks.get("network") or {})
     ranking = ((info or {}).get("shorts") or {}).get("pipeline") == "ranking"
@@ -224,6 +260,8 @@ def preset(studio, checks, spec):
             results.append(item("account_"+task,task.title()+" account",False,"Reconnect or top up the selected "+task+" account in step 4."))
     result = {"ready":all(r["ready"] for r in results),"checks":results,
               "blockers":[r["message"] for r in results if not r["ready"]],"features":wanted}
+    if warnings:
+        result["warnings"] = warnings
     if renderer_identity:
         result["manimgx_identity"] = renderer_identity
     checks["claude_code"] = ready["claude_code"]

@@ -310,6 +310,16 @@
         .price-card .cta-btn.outline { background: transparent; color: var(--accent); border: 2px solid var(--accent); }
         .price-card .cta-btn.outline:hover { background: var(--accent-soft); }
         .price-note { text-align: center; margin: 22px auto 0; font-size: 13px; color: var(--ink-3); max-width: 720px; line-height: 1.6; }
+        /* what a creator's computer needs (Studio renders on it): the numbers are cr_machine's, a test holds them */
+        .computer-needs { max-width: 1040px; margin: 40px auto 0; background: var(--white); border: 1px solid var(--hairline); border-radius: 18px; padding: 28px 32px; scroll-margin-top: 90px; }
+        .computer-needs h3 { font-family: var(--font-display); font-size: 22px; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 4px; }
+        .computer-needs-sub { font-size: 15px; color: var(--ink-2); line-height: 1.6; margin-bottom: 22px; }
+        .computer-needs-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; }
+        .computer-needs-grid dt { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); margin-bottom: 6px; }
+        .computer-needs-grid dd { font-size: 14px; color: var(--ink-2); line-height: 1.5; }
+        .computer-needs-grid dd b { display: block; font-size: 16px; color: var(--ink); font-weight: 700; margin-bottom: 4px; }
+        @media (max-width: 900px) { .computer-needs-grid { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 520px) { .computer-needs { padding: 22px 20px; } .computer-needs-grid { grid-template-columns: 1fr; } }
 
         /* -- Classic recipes -- */
         .recipes-section { padding: 96px 0; }
@@ -628,6 +638,16 @@
                 </div>
             </div>
             <p class="price-note">Yearly plans save 2 months. Studio runs on your computer with your own Claude account (Pro or Max) and a Kie.ai or Atlas Cloud balance for voice and images, so you pay those providers directly with no markup.</p>
+            <div class="computer-needs" id="computer-needs">
+                <h3>What your computer needs</h3>
+                <p class="computer-needs-sub">Studio makes your videos on your own computer. Setup checks all of this for you, along with the free tools it uses (Python, FFmpeg and Node).</p>
+                <dl class="computer-needs-grid">
+                    <div><dt>Computer</dt><dd><b>A Mac or a Windows PC</b>Keep Studio open while a video is made.</dd></div>
+                    <div><dt>Memory</dt><dd><b>8 GB or more</b>16 GB for long or 3D videos. Studio uses up to about 4 GB while it renders.</dd></div>
+                    <div><dt>Processor</dt><dd><b>4 cores or more</b>Fewer still works, just more slowly.</dd></div>
+                    <div><dt>Free disk space</dt><dd><b>About 4 GB for a 10-minute video</b>14 GB with 3D scenes, and a little more to be comfortable (6 GB, or 16 GB with 3D). Studio checks the room before each video starts.</dd></div>
+                </dl>
+            </div>
         </div>
     </section>
 
@@ -742,7 +762,7 @@
                 </div>
                 <div class="faq-item">
                     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What do I need to use Studio?</div>
-                    <div class="faq-a">A Mac or Windows computer, a Claude account (Pro or Max) for the writing and directing, and a Kie.ai or Atlas Cloud account for voice and images. You pay those providers directly at their own prices. Setup checks everything and tells you exactly what’s missing, and Claude Code can install Studio for you.</div>
+                    <div class="faq-a">A Mac or Windows computer, a Claude account (Pro or Max) for the writing and directing, and a Kie.ai or Atlas Cloud account for voice and images. You pay those providers directly at their own prices. Setup checks everything and tells you exactly what’s missing, and Claude Code can install Studio for you. See <a href="#computer-needs" style="color: var(--accent); font-weight: 600;">what your computer needs</a>.</div>
                 </div>
                 <div class="faq-item">
                     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">Where do I get help?</div>

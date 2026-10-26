@@ -66,6 +66,15 @@ jobs:
         # its real launcher in a fresh folder, no keys, npm's claude.cmd; setup, status, diagnostics, Whisper timing
         if: ${{ !cancelled() }}
         run: .venv\Scripts\python tests\studio_smoke\smoke.py --artifacts studio-smoke --report studio-smoke\report.md
+      - name: The real Claude Code takes FOLIO's long rules from a file (tests/studio_smoke/claude_prompt_file.py)
+        # npm's real claude.cmd in its own folder, no account: the smoke's stand-in above stays as it is
+        if: ${{ !cancelled() }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm install --prefix "$env:RUNNER_TEMP\real claude" --no-fund --no-audit @anthropic-ai/claude-code
+          $claude = Join-Path "$env:RUNNER_TEMP\real claude" "node_modules\.bin\claude.cmd"
+          & $claude --version
+          .venv\Scripts\python tests\studio_smoke\claude_prompt_file.py $claude "$env:RUNNER_TEMP\prompt file" --report studio-smoke\prompt-file.md
       - name: Keep the reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

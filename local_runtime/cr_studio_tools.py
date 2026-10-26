@@ -5,6 +5,7 @@ Every tool calls Studio's own local routes on http://127.0.0.1:7860 with the loc
 each check, gate and receipt the Studio page uses applies here too. Nothing here renders, reads keys or spends by
 itself: paid work starts only through make_videos and clone_style, which Claude Code asks the creator to approve
 (permissions.ask in .claude/settings.json), and make_videos starts nothing until the cost was shown (its quote_id).
+delete_video and delete_style are asked too; they move the item into Studio's trash (30 days), never delete at once.
 
     .venv/bin/python cr_studio_tools.py            what Claude Code runs
     .venv/bin/python cr_studio_tools.py --check    one setup check, printed (for support)
@@ -43,6 +44,8 @@ _STYLE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}\Z")
 _PICK = re.compile(r"pk_[a-f0-9]{24}\Z")
 _LOOK = re.compile(r"lk_[a-f0-9]{24}\Z")
 _OPERATION = re.compile(r"op_[a-f0-9]{24}\Z")
+_SAMPLE = re.compile(r"sm_[a-f0-9]{24}\Z")
+_LEARNED = re.compile(r"cr_clone_[a-z0-9_-]{1,40}\Z")
 # What only this computer makes for now (cr_cloud.blocked says the same to the Studio page).
 LOCAL_ONLY = "renders on this computer for now"
 
@@ -60,11 +63,21 @@ class Refused(RuntimeError):
 
 # ── talking to Studio ─────────────────────────────────────────────────────────────────────────────────────────
 
-def _token() -> str:
+def _runtime() -> dict:
     try:
-        return str(json.loads((HOME / ".cr-runtime.json").read_text(encoding="utf-8")).get("token") or "")
+        data = json.loads((HOME / ".cr-runtime.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return ""
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _token() -> str:
+    return str(_runtime().get("token") or "")
+
+
+def output_root():
+    """Where the running Studio's videos go (its engine's OUTPUT_ROOT: CHANNELRECIPE_OUTPUT moves it), or None."""
+    return str(_runtime().get("output") or "") or None
 
 
 def call(method: str, path: str, body=None, *, timeout: float = 60, wait_busy: float = 75):
@@ -280,7 +293,10 @@ def media_estimate(cat: dict, row: dict, minutes: int, features: dict) -> dict:
     per = prices.get("features") or {}
     voice = float(((prices.get("voice") or {}).get("per_min")) or 0)
     total = voice + sum(float((per.get(k) or {}).get("per_min") or 0) for k, on in features.items() if on)
-    return {"per_video_usd": round(total * minutes, 2), "recipe_note": one_line(row.get("cost"), 260),
+    each = total * minutes
+    if kind(row) == "short" and isinstance(row.get("short_cost_usd"), (int, float)):
+        each = float(row["short_cost_usd"])                        # the recipe's own estimate for one Short
+    return {"per_video_usd": round(each, 2), "recipe_note": one_line(row.get("cost"), 260),
             "note": "Media runs on your own accounts (pictures, voice, footage watching). Claude's writing and "
                     "directing run on your Claude Code plan, not billed per video."}
 
@@ -311,6 +327,25 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
     else:
         out["expected_total_usd"] = round(media["per_video_usd"] * titles, 2)
         out["this_computer"] = "Renders on this computer, one video at a time; no machine to pay for."
+        # the disk holds each video's working folder: one that can't fit is said with the cost, not after it; the
+        # videos are made one at a time, so a batch only warns about the ones after the first
+        import cr_machine
+        threed = bool(features.get("threed"))
+        free = cr_machine.free_disk_gb(HOME, output_root())
+        out["disk"] = {"needs_gb": cr_machine.need_gb(minutes, 1, threed),
+                       "comfortable_gb": cr_machine.comfortable_gb(minutes, titles, threed), "free_gb": free}
+        room, warning = cr_machine.disk_check(free, minutes, titles, threed)
+        if room:
+            out["disk"]["problem"] = room
+        elif warning:
+            out["disk"]["warning"] = warning
+    if features.get("youtube") and kind(row) != "short":
+        # Research footage watches YouTube videos before the video is made: how long that adds, said with the cost
+        import cr_watch
+        b = cr_watch.budget(minutes)
+        out["footage"] = {"videos_watched_at_most": b["videos"], "adds_minutes": b["typical_minutes"],
+                          "stops_watching_after_minutes": b["stop_minutes"], "note": cr_watch.estimate_text(minutes)
+                          + " Turn off the youtube feature (options.features) for a faster video without real footage."}
     key = json.dumps([row["name"], titles, minutes, where, sorted(k for k, v in features.items() if v)])
     out["quote_id"] = "q_" + hashlib.sha256(key.encode()).hexdigest()[:16]
     quotes = _read(STATE / "quotes.json")
@@ -325,6 +360,10 @@ def summary(q: dict) -> str:
     n, each = q["titles"], " each" if q["titles"] > 1 else ""
     usd = q["media"]["per_video_usd"]
     media = f"media about ${usd:.2f}{each}" if usd >= 0.01 else "media a few cents"
+    footage = q.get("footage")
+    # the footage is watched on this computer wherever the video renders
+    watching = (f" Research footage adds about {footage['adds_minutes'][0]} to {footage['adds_minutes'][1]} minutes a "
+                f"video (it watches up to {footage['videos_watched_at_most']} YouTube videos)." if footage else "")
     if q["where"] == "studio_cloud":
         c = q["cloud"]
         text = (f"{n} × {q['minutes']}-min {q['style_name']} on Studio Cloud: machine about "
@@ -333,9 +372,11 @@ def summary(q: dict) -> str:
                 f"${c['balance_usd']:.2f}.")
         if q.get("short_by_usd"):
             text += f" Short by ${q['short_by_usd']:.2f}: top up at {c['topup_url']}."
-        return text
+        return text + watching
+    disk = q.get("disk") or {}
+    room = (" " + (disk.get("problem") or disk.get("warning"))) if disk.get("problem") or disk.get("warning") else ""
     return (f"{n} × {q['minutes']}-min {q['style_name']} on this computer: {media}; about "
-            f"${q['expected_total_usd']:.2f} in all, plus Claude Code usage on your plan.")
+            f"${q['expected_total_usd']:.2f} in all, plus Claude Code usage on your plan." + watching + room)
 
 
 # ── the tools ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -370,6 +411,7 @@ def tool_setup_check(args):
                                  "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
                                  "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
             "network": network_summary(status.get("network") or {}),
+            "computer": computer_summary(status.get("computer")),
             "speech_model": {"ready": bool(speech.get("ready")), "state": speech.get("state") or "",
                              "why": speech.get("reason") or "",
                              "fix": "" if speech.get("ready") else
@@ -382,6 +424,23 @@ def tool_setup_check(args):
             "studio_cloud": {"available": bool(cloud.get("available")), "balance_usd": cloud.get("balance_usd"),
                              "why": cloud.get("why") or "", "topup_url": cloud.get("topup_url")},
             "gallery_url": link("/cr-gallery")}
+
+
+def computer_summary(pc) -> dict:
+    """What this computer has (memory, cores, free disk) and where it's short of what Studio uses. Never a stop by
+    itself: make_videos checks the disk against each video and refuses one that can't fit, saying how much to free."""
+    if not pc:
+        return {"checked": False}
+    return {"checked": True, "memory_gb": pc.get("memory_gb"), "cores": pc.get("cores"),
+            "free_disk_gb": pc.get("free_disk_gb"),
+            "disk_needed_gb": {"10_minute_video": pc.get("ten_minute_video_gb"),
+                               "10_minute_3d_video": pc.get("ten_minute_3d_video_gb")},
+            "disk_comfortable_gb": {"10_minute_video": pc.get("ten_minute_comfortable_gb"),
+                                    "10_minute_3d_video": pc.get("ten_minute_3d_comfortable_gb")},
+            "short_of": pc.get("short") or [], "notes": pc.get("notes") or [],
+            "what_to_do": "Tell the creator these notes in plain words before a long video: free disk space (empty "
+                          "the Bin or Recycle Bin, delete old downloads) or close other apps. Never delete their files "
+                          "yourself." if pc.get("notes") else ""}
 
 
 def network_summary(net: dict) -> dict:
@@ -650,6 +709,14 @@ def _job_status(slug: str) -> dict:
     out = {"id": "video:" + slug, "state": status.get("state"), "done": bool(status.get("done")),
            "percent": round(100 * float(status.get("progress") or 0)), "error": status.get("error") or "",
            "last_lines": [line for line in (status.get("lines") or [])[-6:] if line.strip()]}
+    # Research footage: how far its YouTube watching is (cr_watch says "watched N of M videos" as it goes; once the
+    # video has moved on, newer lines have pushed it out of the last ten)
+    watched = next((m for m in (re.search(r"YouTube: watched (\d+) of (\d+) videos", line or "")
+                                for line in reversed((status.get("lines") or [])[-10:])) if m), None)
+    if watched and not out["done"]:
+        out["watching_clips"] = {"watched": int(watched.group(1)), "of": int(watched.group(2)),
+                                 "note": "Still watching YouTube videos for its footage; it stops by itself at its "
+                                         "budget and carries on with the clips it found."}
     if status.get("video"):
         out.update(watch_url=link("/f/video/" + _quote_path(slug)), project_url=link("/editor/" + _quote_path(slug)))
     elif out["done"] or out["state"] in ("error", "stopped"):
@@ -667,13 +734,27 @@ def _job_status(slug: str) -> dict:
                                  "recording's path as recording. An ElevenLabs key goes in Setup & accounts, never in chat.")
             if voice.get("script_file"):
                 out["script_file"] = voice["script_file"]
+        try:
+            presenter = call("GET", "/cr-workspace/presenter-choice/" + _quote_path(slug), timeout=20)
+        except Refused:
+            presenter = {}
+        if presenter.get("stopped_on_presenter"):
+            out["stopped_on"] = "presenter"
+            out["presenter_failed"] = presenter.get("failed")
+            out["presenter_choices"] = [{k: c.get(k) for k in ("id", "label", "ready", "note")}
+                                        for c in presenter.get("choices") or []]
+            out["presenter_note"] = ("The presenter service couldn't make this video's presenter; the rest of the video "
+                                     "is finished and saved. Ask the creator: finish it without the presenter, or try "
+                                     "the presenter again in a few minutes (read them the choice's note, which says "
+                                     "whether that could pay twice). Then resume_video(id, presenter=<choice id>).")
     return out
 
 
 def tool_progress(args):
     ident = str(args.get("id") or "").strip()
     if ident.startswith("video:") or (ident and _SLUG.fullmatch(ident) and not
-                                       (_LOOK.fullmatch(ident) or _OPERATION.fullmatch(ident) or ident == "cloud")):
+                                       (_LOOK.fullmatch(ident) or _OPERATION.fullmatch(ident) or _SAMPLE.fullmatch(ident)
+                                        or ident == "cloud")):
         return _job_status(ident.removeprefix("video:"))
     if ident == "cloud":
         return cloud_progress()
@@ -681,8 +762,10 @@ def tool_progress(args):
         return look_progress(ident)
     if _OPERATION.fullmatch(ident):
         return clone_progress(ident)
+    if _SAMPLE.fullmatch(ident):
+        return sample_progress(ident)
     if ident:
-        raise Refused("Use an id from make_videos (video:…, cloud) or a style clone (lk_…, op_…).")
+        raise Refused("Use an id from make_videos (video:…, cloud), a style clone (lk_…, op_…) or a style sample (sm_…).")
     queue = call("GET", "/api/queue", timeout=20)
     jobs = []
     for job in queue.get("jobs") or []:
@@ -736,8 +819,12 @@ def tool_resume_video(args):
     if voice:
         call("POST", "/cr-workspace/voice/" + _quote_path(slug),
              {"choice": voice, "recording": str(args.get("recording") or "").strip()}, timeout=180)
+    presenter = str(args.get("presenter") or "").strip()
+    if presenter:
+        call("POST", "/cr-workspace/presenter-choice/" + _quote_path(slug), {"choice": presenter}, timeout=60)
     result = call("POST", "/cr-submit-project", {"project_id": saved["project_id"]}, timeout=120)
     return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
+            **({"presenter": presenter} if presenter else {}),
             "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
             "next": "It carries on from where it stopped and reuses everything already made (script, pictures, "
                     "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
@@ -767,7 +854,9 @@ def look_progress(look_id: str) -> dict:
                    suggested_base=m.get("base"), because=m.get("base_why"), made_with=route.get("engine"),
                    how_made=route.get("why") or "",
                    medium_gap=route.get("medium_gap") or "", cost_note=m.get("cost") if isinstance(m.get("cost"), str)
-                   else "", not_watched=d.get("not_watched") or [],
+                   else "", not_watched=d.get("not_watched") or [], shorts=bool(d.get("shorts")),
+                   similar_styles=similar_styles(d.get("similar")),
+                   **({"shorts_note": SHORTS_NOTE} if d.get("shorts") else {}),
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
                         "with look_id, a style name, an example title and their answers. The 'made' question decides "
                         "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
@@ -776,7 +865,36 @@ def look_progress(look_id: str) -> dict:
                         "few background pictures, and the renderer can be improved later with style_lab. Instead of "
                         "code gives Studio's ready-made pictures or 3D engine, which won't look or move exactly like the "
                         "channel. Say both before they choose. A medium_gap is something Studio can't make yet: read it "
-                        "to the creator before anything is paid.")
+                        "to the creator before anything is paid. " + SIMILAR_NEXT)
+
+    return out
+
+
+SHORTS_NOTE = ("These references are Shorts. Written in code (the default answer to 'made'), the style makes vertical "
+               "Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9) "
+               "videos for now: tell the creator before the paid study (their Shorts recipes, similar_styles "
+               "kind='short', make vertical Shorts too).")
+SIMILAR_NEXT = ("similar_styles are the styles they already have that come closest (suggestions only, never a reason not "
+                "to study): before the paid study, mention them in a line each. They can use one now (make_videos with its "
+                "id), try a few seconds of one on their topic first (style_sample: try_first.cost_usd on their own "
+                "accounts, ask before), or go on with the study.")
+
+
+def similar_styles(rows) -> list:
+    """The installed styles closest to the looked-at channel (cr_style_look.similar), as the tools say them."""
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict) or not r.get("id"):
+            continue
+        sample = r.get("sample") or {}
+        out.append({"id": r["id"], "name": r.get("name"), "closeness_percent": r.get("closeness"), "why": r.get("why"),
+                    "kind": r.get("kind"), "yours": bool(r.get("mine")),
+                    "the_study_builds_on_it": bool(r.get("recommended")),
+                    "learned_from_these_videos": bool(r.get("same_references")),
+                    "picture_url": link(r["preview_url"]) if r.get("preview_url") else "",
+                    "try_first": ({"tool": "style_sample", "cost_usd": sample.get("cost_usd"),
+                                   "seconds": sample.get("seconds")} if sample.get("can")
+                                  else {"not_offered": sample.get("why_not") or ""})})
     return out
 
 
@@ -918,8 +1036,10 @@ def tool_clone_style_look(args):
     looks = _read(STATE / "looks.json")
     looks[look["look_id"]] = {"preview_id": preview["preview_id"], "reference_ids": chosen, "url": url, "at": time.time()}
     _write(STATE / "looks.json", dict(sorted(looks.items(), key=lambda kv: -kv[1]["at"])[:40]))
+    similar = similar_styles(look.get("similar")) if look.get("state") == "done" else []
     return {"look_id": look["look_id"], "state": look.get("state"), "message": look.get("message"),
             "combining": preview.get("reference_urls") or [],
+            **({"similar_styles": similar, "about_similar": SIMILAR_NEXT} if similar else {}),
             "studying": [{"id": c["id"], "title": c["title"], "channel": c.get("channel"), "views": c.get("views"),
                           "minutes": round((c.get("duration_seconds") or 0) / 60)} for c in eligible if c["id"] in chosen],
             "other_videos": [{"id": c["id"], "title": c["title"]} for c in eligible if c["id"] not in chosen][:9],
@@ -947,10 +1067,13 @@ def tool_clone_style(args):
         plan_body["base_style"] = str(args["base_style"])
     mapping = call("POST", f"/cr-style-clone/look/{look_id}/plan", plan_body, timeout=60).get("mapping") or {}
     visual = str(args.get("visual_mode") or "mixed")
+    budget = args.get("budget_minutes", 22)
+    if not isinstance(budget, int) or isinstance(budget, bool) or not 15 <= budget <= 30:
+        raise Refused("budget_minutes is the Claude study budget: 15 to 30 minutes (22 unless a study ran out of time).")
     payload = {"preview_id": saved["preview_id"], "reference_ids": saved["reference_ids"], "look_id": look_id,
                "answers": answers, "label": label[:80], "title": title[:280],
                "base_style": str(args.get("base_style") or mapping.get("base") or "documentary"),
-               "brief": str(args.get("brief") or "")[:4000], "budget_minutes": 22, "max_calls": 40,
+               "brief": str(args.get("brief") or "")[:4000], "budget_minutes": budget, "max_calls": 40,
                "minutes": max(1, min(int(args.get("example_minutes") or 10), 60)),
                "visual_mode": visual if visual in ("mixed", "reference_only") else "mixed",
                "acknowledge_costs": True, "accept_medium": bool(args.get("accept_medium")),
@@ -963,8 +1086,85 @@ def tool_clone_style(args):
     status = call("POST", "/cr-style-clone/start", payload, timeout=120)
     return {"started": True, "id": status.get("operation_id"), "state": status.get("state"),
             "message": status.get("message"), "page": link("/cr-style-clone?operation=" + str(status.get("operation_id"))),
+            **({"shorts_note": SHORTS_NOTE} if look.get("shorts") else {}),
             "next": "The study runs on your Claude Code for about 15 to 30 minutes. Check with progress(id) now and "
                     "then; Studio shows a notification when the style is ready."}
+
+
+def _learned_style(wanted) -> str:
+    wanted = str(wanted or "").strip()
+    if _LEARNED.fullmatch(wanted):
+        return wanted
+    rows = [r for r in catalog().get("channels") or [] if r.get("custom")]
+    if not rows:
+        raise Refused("There are no learned styles yet: clone one with clone_style_look and clone_style.")
+    name = find_style(rows, wanted)["name"]
+    if not _LEARNED.fullmatch(name):
+        raise Refused("Only styles learned from a channel can be edited here.")
+    return name
+
+
+def tool_edit_style(args):
+    """A learned style's name, description, creative direction and Create's starting options: shown, or changed."""
+    same_studio()
+    style = _learned_style(args.get("style"))
+    keys = ("name", "tagline", "description", "script_notes", "director_notes", "character", "forget_character_picture",
+            "features_on", "pictures_per_min", "subtitles")
+    changes = {k: args[k] for k in keys if k in args}
+    path = "/cr-style-clone/style/" + _quote_path(style)
+    d = call("POST", path, {"changes": changes}, timeout=60) if changes else call("GET", path, timeout=30)
+    features = d.get("features") or {}
+    study = d.get("study") or {}
+    out = {k: d.get(k) for k in ("style", "name", "tagline", "description", "script_notes", "director_notes", "character",
+                                 "has_character_picture", "subtitles", "versions_kept")}
+    out.update(saved=bool(d.get("saved")), pictures_per_min=d.get("pictures"),
+               options={"offered": [f.get("key") for f in features.get("offered") or []], "on": features.get("on") or []},
+               study_again={"example_title": study.get("title") or "", "brief": study.get("brief") or "",
+                            "base_style": study.get("base_style") or "", "studied": study.get("reference_urls") or []},
+               page=link("/cr-style-clone?edit=" + _quote_path(style)),
+               next=("Saved: their next videos in this style use it (the version before is kept on their computer). "
+                     if d.get("saved") else "") +
+                    "To change it, call edit_style again with only what changes (script_notes and director_notes are "
+                    "one note per line, up to ten; features_on from options.offered; pictures_per_min within its "
+                    "floor and ceiling). character changes the words for who appears in every picture: pass "
+                    "forget_character_picture=true too when it's a different character, or the old picture keeps "
+                    "coming back. To study it again with other videos, call clone_style_look with the new links, then "
+                    "clone_style with a new style_name and study_again's example_title and brief: that makes a new "
+                    "style and keeps this one.")
+    return out
+
+
+def sample_progress(ident: str) -> dict:
+    d = call("GET", "/cr-style-clone/sample/" + ident + "/status", timeout=30)
+    out = {k: d.get(k) for k in ("sample_id", "state", "style", "topic", "line", "message", "cost_usd", "credits",
+                                 "voiced")}
+    if d.get("state") == "done":
+        out.update(file=d.get("video") or "", watch_url=link(d["video_url"]) if d.get("video_url") else "",
+                   next="Show them the sample (the file, or watch_url in the Browser pane). If they like it, "
+                        "make_videos with this style; if not, try another similar style or go on with the study.")
+    return out
+
+
+def tool_style_sample(args):
+    """A few seconds of an installed style on the creator's topic, before a paid study (or a progress check)."""
+    same_studio()
+    ident = str(args.get("id") or "").strip()
+    if ident:
+        if not _SAMPLE.fullmatch(ident):
+            raise Refused("Use the sample id style_sample returned (sm_…).")
+        return sample_progress(ident)
+    rows = catalog().get("channels") or []
+    style = find_style(rows, args.get("style"))["name"]
+    topic = str(args.get("topic") or "").strip()
+    if not topic:
+        raise Refused("Give the topic of a video they'd make, in a few words.")
+    d = call("POST", "/cr-style-clone/sample", {"style": style, "topic": topic[:200],
+                                                "line": str(args.get("line") or "")[:240], "acknowledge_costs": True},
+             timeout=60)
+    return {"id": d.get("sample_id"), "state": d.get("state"), "message": d.get("message"),
+            "cost_usd": d.get("cost_usd"),
+            "next": "Studio draws two pictures in the style, reads the line and moves over each picture (a minute or "
+                    "two). Check progress(id) or style_sample(id=…); it gives the video's file when done."}
 
 
 def tool_product_ideas(args):
@@ -1028,6 +1228,58 @@ def tool_products(args):
             "next": "Your videos can sell a finished product: pick it under Your product on the Studio page."}
 
 
+# ── deleting (into Studio's trash) ──────────────────────────────────────────────────────────────────────────────
+
+def _same_name(given, actual) -> bool:
+    """The name the creator approved is the item's own (spacing, case and curly quotes aside)."""
+    def key(value):
+        text = str(value or "")
+        for curly, plain in (("’", "'"), ("‘", "'"), ("“", '"'), ("”", '"'), ("—", "-"), ("–", "-")):
+            text = text.replace(curly, plain)
+        return " ".join(text.split()).casefold()
+    return bool(key(given)) and key(given) == key(actual)
+
+
+def _trashed(done: dict, page: str) -> dict:
+    until = time.strftime("%d %b %Y", time.localtime(done.get("empties_at") or time.time() + 30 * 86400))
+    return {"deleted": True, "title": done.get("title"), "moved_to_trash": done.get("goes") or [],
+            "kept": done.get("kept") or [],
+            "restore": f"It waits in Studio's trash until {until}, then Studio empties it for good. To bring it back "
+                       f"before then: Recently deleted on the Studio page ({link(page)}), Restore.",
+            "next": "Tell the creator in a line what went, what was kept and that it can be restored for 30 days."}
+
+
+def tool_delete_video(args):
+    same_studio()
+    slug = str(args.get("id") or "").strip().removeprefix("video:")
+    if not _SLUG.fullmatch(slug):
+        raise Refused("Give the video's id from list_videos or progress() (video:…).")
+    path = "/cr-workspace/delete/video/" + _quote_path(slug)
+    plan = call("GET", path, timeout=60)
+    if not _same_name(args.get("title"), plan.get("title")):
+        raise Refused(f"video:{slug} is “{plan.get('title')}”, not “{args.get('title') or ''}”. Nothing was deleted: "
+                      "check the video with list_videos and ask the creator again.")
+    if plan.get("blocked"):
+        raise Refused(f"“{plan.get('title')}” {plan['blocked']} Nothing was deleted.")
+    return _trashed(call("POST", path, {}, timeout=120), "/#projects")
+
+
+def tool_delete_style(args):
+    same_studio()
+    style = str(args.get("id") or "").strip()
+    if not _STYLE.fullmatch(style) or not style.startswith("cr_clone_"):
+        raise Refused("Only a style the creator cloned can be deleted (an id from list_styles(kind='mine'), cr_clone_…). "
+                      "Studio's own recipes stay.")
+    path = "/cr-workspace/delete/style/" + _quote_path(style)
+    plan = call("GET", path, timeout=60)
+    if not _same_name(args.get("name"), plan.get("title")):
+        raise Refused(f"{style} is “{plan.get('title')}”, not “{args.get('name') or ''}”. Nothing was deleted: check "
+                      "the style with list_styles and ask the creator again.")
+    if plan.get("blocked"):
+        raise Refused(f"{plan['blocked']} Nothing was deleted.")
+    return _trashed(call("POST", path, {}, timeout=60), "/#styles")
+
+
 # ── MCP plumbing ──────────────────────────────────────────────────────────────────────────────────────────────
 
 def tool_style_lab(args):
@@ -1063,6 +1315,7 @@ _WHERE = {"type": "string", "enum": ["this_computer", "studio_cloud"],
           "description": "this_computer (free machine, one video at a time) or studio_cloud (a ChannelRecipe machine "
                          "renders it, paid from the cloud balance; videos render side by side)."}
 _FREE = {"readOnlyHint": True, "openWorldHint": False}
+_DELETES = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 
 TOOLS = {
     "setup_check": (tool_setup_check, "Is ChannelRecipe Studio running and ready to make videos? Also Claude Code's "
@@ -1117,9 +1370,10 @@ TOOLS = {
     "cloud_balance": (tool_cloud_balance, "The Studio Cloud balance, top-up link and machine prices. Free.",
                       _schema(), _FREE),
     "clone_style_look": (tool_clone_style_look, "Step 1 of cloning a style from a YouTube channel or video, or of "
-                         "COMBINING two or three channels into one style (youtube_urls): Studio lists their videos and "
-                         "looks at up to 3 (the most viewed, taken in turn from each channel, or reference_ids). Free "
-                         "(no Claude). Then progress(look_id) until done: it brings questions for the creator.",
+                         "COMBINING two or three channels into one style (youtube_urls): Studio lists their videos (a channel "
+                         "of Shorts: its Shorts) and looks at up to 3 (the most viewed, taken in turn from each channel, "
+                         "or reference_ids). Free (no Claude). Then progress(look_id) until done: it brings questions "
+                         "for the creator and similar_styles, the styles they already have that come closest.",
                          _schema({"youtube_url": {"type": "string"},
                                   "youtube_urls": {"type": "array", "items": {"type": "string"}, "maxItems": 3,
                                                    "description": "Two or three channels to combine into one style."},
@@ -1147,8 +1401,16 @@ TOOLS = {
                      "stopped). Reuses everything already made, so only the rest is paid for. Tell the creator what "
                      "stopped it first (progress(id)). When progress(id) shows voice_choices (its voice service "
                      "failed), ask which they want and pass it as voice: the same voice again, Gemini through Kie, "
-                     "their own ElevenLabs account, or their own recording (pass its file path as recording).",
+                     "their own ElevenLabs account, or their own recording (pass its file path as recording). When it "
+                     "shows presenter_choices (its AI presenter failed), ask and pass presenter: skip (finish without "
+                     "the presenter) or again. Before again, read them the again choice's note: when "
+                     "presenter_failed.uncertain is true, the last attempt got no clear answer and may have started, "
+                     "so again can pay for a second presenter; pass again only after they say yes to that.",
                      _schema({"id": {"type": "string", "description": "video:<slug> from progress()."},
+                              "presenter": {"type": "string", "enum": ["skip", "again"],
+                                            "description": "Only for a video that stopped on its presenter: finish "
+                                                           "without it (skip) or try it again (this video only; "
+                                                           "can pay twice when presenter_failed.uncertain)."},
                               "voice": {"type": "string", "enum": ["again", "gemini-man", "gemini-woman", "elevenlabs",
                                                                    "own"],
                                         "description": "Only for a video that stopped on its voice: how to voice it now "
@@ -1156,16 +1418,43 @@ TOOLS = {
                               "recording": {"type": "string", "description": "voice=own: the path of the creator's "
                                                                              "recording on this computer."}}, ["id"]),
                      {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
+    "edit_style": (tool_edit_style, "Show or change one of the creator's learned styles (from clone_style): its name, "
+                   "tagline, description, creative direction for the script (script_notes) and for the pictures and "
+                   "edit (director_notes), its recurring character, which options are on (features_on), pictures a "
+                   "minute and subtitles. Pass only what changes; with none it shows the style. Free: no study, no "
+                   "money; the version before is kept. Its study_again has what to reuse to study it again with other "
+                   "videos (a new style; this one stays).",
+                   _schema({"style": {"type": "string", "description": "A learned style's id or name (list_styles kind='mine')."},
+                            "name": {"type": "string"}, "tagline": {"type": "string"},
+                            "description": {"type": "string", "description": "What the channel's videos are about."},
+                            "script_notes": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+                            "director_notes": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+                            "character": {"type": "string"}, "forget_character_picture": {"type": "boolean"},
+                            "features_on": {"type": "array", "items": {"type": "string"}},
+                            "pictures_per_min": {"type": "number"}, "subtitles": {"type": "boolean"}}, ["style"]),
+                   {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
+    "style_sample": (tool_style_sample, "Try a style first: about 5 seconds of an installed style on the creator's "
+                     "topic (two pictures drawn as its videos draw them, one line read by their voice, a slow move "
+                     "over each). Spends about $0.05 on the creator's own accounts: ask first. Offered for picture "
+                     "styles (clone_style_look's similar_styles say which, try_first). id=sm_… checks one.",
+                     _schema({"style": {"type": "string"}, "topic": {"type": "string"},
+                              "line": {"type": "string", "description": "What the narrator says (default: the topic)."},
+                              "id": {"type": "string"}}),
+                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "clone_style": (tool_clone_style, "Step 2: study the looked-at references and build a new reusable style. Uses "
                     "the creator's Claude Code for 15-30 minutes and one of their plan's style clones. Needs look_id, a "
                     "style_name, an example_title and the creator's answers to the look's questions. accept_medium: "
-                    "only after the creator read and accepted the medium_gap this returns (what Studio can't make yet).",
+                    "only after the creator read and accepted the medium_gap this returns (what Studio can't make yet). "
+                    "budget_minutes: the Claude study budget (15-30, default 22); raise it only when a study stopped "
+                    "because its time ran out. A style learned from Shorts makes regular 16:9 videos for now, not "
+                    "vertical Shorts.",
                     _schema({"look_id": {"type": "string"}, "style_name": {"type": "string"},
                              "example_title": {"type": "string"},
                              "answers": {"type": "object", "additionalProperties": {"type": "string"}},
                              "base_style": {"type": "string"}, "visual_mode": {"type": "string",
                                                                                "enum": ["mixed", "reference_only"]},
                              "brief": {"type": "string"}, "example_minutes": {"type": "integer"},
+                             "budget_minutes": {"type": "integer", "minimum": 15, "maximum": 30},
                              "accept_medium": {"type": "boolean"}},
                             ["look_id", "style_name", "example_title"]),
                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
@@ -1183,6 +1472,25 @@ TOOLS = {
                            "seconds": {"type": "number", "description": "preview: video length, 1-8 s (default 5)."}},
                           ["action", "style"]),
                   {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
+    "delete_video": (tool_delete_video, "Delete a finished or stopped video, only when the creator asks: it moves to "
+                     "Studio's trash (the finished file, its description and thumbnails, its working files) and "
+                     "Recently deleted on the Studio page restores it for 30 days. Their voice library, styles and "
+                     "other videos stay. Refused while the video is being made. Tell the creator which video goes "
+                     "first; Claude Code asks them to approve.",
+                     _schema({"id": {"type": "string", "description": "video:<slug> from list_videos or progress()."},
+                              "title": {"type": "string", "description": "The video's title as list_videos or "
+                                                                         "progress() shows it. It must match the "
+                                                                         "video, so the approval names what goes."}},
+                             ["id", "title"]), _DELETES),
+    "delete_style": (tool_delete_style, "Delete a style the creator cloned (list_styles kind='mine', id cr_clone_…), "
+                     "only when they ask: its recipe moves to Studio's trash and Recently deleted restores it for 30 "
+                     "days. Videos made with it, their voice library and the study's notes stay; their plan's style "
+                     "clone count doesn't change. Studio's own recipes can't be deleted. Tell the creator which style "
+                     "goes first; Claude Code asks them to approve.",
+                     _schema({"id": {"type": "string", "description": "The style's id from list_styles (cr_clone_…)."},
+                              "name": {"type": "string", "description": "The style's name as list_styles shows it. It "
+                                                                        "must match the style, so the approval names "
+                                                                        "what goes."}}, ["id", "name"]), _DELETES),
 }
 
 

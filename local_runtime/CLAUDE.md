@@ -91,6 +91,11 @@ Studio through its own checks, so nothing needs the Studio web page.
   recipes that use YouTube. When `network.on_this_computer.suspected`, an antivirus or firewall on the computer is
   blocking Studio itself (their browser still works): help them allow `allow_programs` and 127.0.0.1:7860 in the
   antivirus it names, step by step. Never suggest switching the antivirus off.
+- `setup_check`'s `computer` says what this computer has (memory, processor cores, free space on the disk its videos
+  go on) and, in `notes`, where it's short of what Studio uses. Tell them before a long video. `make_videos` refuses a
+  video the disk can't hold and says how much to free; `quote`'s `disk.warning` says when it fits with little to spare
+  (or a batch's later videos may not): help them free space (the Bin or Recycle Bin, old downloads), but never delete
+  their files.
 - No `studio` tools in this session? Studio's tools load when a Claude Code session starts. If Studio, Node or
   Python was installed or first started during this session, ask them to open a new Claude Code session in this
   folder (or run /mcp in a terminal session), then carry on. Never drive the Studio web page instead.
@@ -111,12 +116,23 @@ Studio through its own checks, so nothing needs the Studio web page.
   notification when a video is done. `list_videos` has each finished video's file and watch link.
 - A video that stopped (a provider hiccup, a closed Studio): `progress()` lists it under `stopped`; tell them what
   stopped it (`progress(id)`), then `resume_video(id)` carries it on and reuses everything already made.
+- Deleting, only when the creator asks: `delete_video(id, title)` (a finished or stopped video) and
+  `delete_style(id, name)` (a style they cloned; Studio's own recipes can't be deleted) move it into Studio's trash,
+  never delete it at once. Recently deleted on the Studio page (Projects, or the Style library) restores it for 30
+  days, then Studio empties it for good. Say first which video or style goes and what stays (their voice library,
+  styles and other videos; for a style, the videos made with it), and that Claude Code asks them to approve. A video
+  being made is refused: don't cancel it to delete it unless they ask for that too.
 - A video that stopped on its voice (`progress(id)` shows `voice_choices`, for example Kie answering "Internal Error"):
   tell them what failed and whether anything was charged (`voice_failed`), then ask which way to carry on: the same
   voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs account, or their own recording.
   Offer only the ready ones (an ElevenLabs key goes in Setup & accounts, never in chat) and never pick for them. For
   their own recording, show them the script (`script_file`) to read, then `resume_video(id, voice="own",
   recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.
+- A video that stopped on its AI presenter (`progress(id)` shows `presenter_choices`, for example Kie answering 500 on
+  the presenter intro): the rest of the video is finished and saved. Tell them what failed (`presenter_failed`) and ask
+  how to carry on: finish without the presenter (`resume_video(id, presenter="skip")`, nothing more is paid) or try the
+  presenter again after a few minutes (`presenter="again"`; read them its note, which says when that could pay twice).
+  Never pick for them.
 - Cloning a style (/clone-style): any channel is cloned in code by default. The look's `made` question comes first:
   ask it before anything else, in plain words. Written in code (Studio's recommendation, first) means the study has
   their Claude Code write this channel's own renderer from its frames, whatever they show (characters, graphics, maps,
@@ -134,6 +150,16 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Improving a style after it's saved (any style written in code): the `style_lab` tool and the /clone-style
   skill's Style Lab section. They can prompt it like any code: edit its workspace files, preview, check against the
   channel, save. Free.
+- Before the paid study, the finished look's `similar_styles` are the styles they already have that come closest. Mention
+  them in a line each, as suggestions only, never as a reason not to study: they can use one now, or try a few seconds
+  of one on their topic first with `style_sample` (about $0.05 on their own accounts: say so and ask first). A channel
+  that posts only Shorts is read from its Shorts tab and studied like any other. Written in code, its videos are
+  vertical Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9)
+  videos for now, so say so before the study.
+- A learned style can be changed after it is saved, without studying again: `edit_style` shows or changes its name,
+  description, creative direction (script_notes, director_notes), character and the options Create starts from. On the
+  Studio page it is Style library → Edit or study again. To study it again with other videos, run the clone again
+  (`clone_style_look`, then `clone_style` with edit_style's `study_again`): that saves a new style and keeps this one.
 
 ## Making videos through ChannelRecipe tools
 
@@ -191,8 +217,9 @@ only reconciles receipts and does not generate again.
 
 ## Style cloning
 
-Clone a style at /cr-style-clone: it previews a public YouTube reference and runs
-the reference learner as its own creative project. The validated style becomes a
+Clone a style at /cr-style-clone: it previews one to three public YouTube channels
+or videos (mixed into one style when there are several) and runs the reference
+learner as its own creative project. The validated style becomes a
 local recipe. Study actual frames, use captions when available, and report
 evidence gaps; never substitute metadata for a viewed reference. Keep the learned
 visual language separate from copying the reference script or footage. Each plan

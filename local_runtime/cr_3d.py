@@ -254,9 +254,15 @@ def run_operation(home,source_project_id,arguments,bridge,proof,execute,operatio
                 needs_reassembly=needs_reassembly,finish_receipt={"project_id":operation["id"],"status":"done",
                 "error_code":"","artifacts":[{"name":"3d-operation-report.json","sha256":_digest(safe_report),"media_type":"application/json"}]})
             cr_claude._private_write(path,saved)
-        except BaseException:
+        except BaseException as error:
             saved.update(state="failed",finish_receipt={"project_id":operation["id"],"status":"failed",
                 "artifacts":[],"error_code":"runtime_failed"})
+            try:
+                import cr_failure                                # why it stopped, privacy-safe, for ChannelRecipe's counts
+                saved["finish_receipt"]["failure"]=cr_failure.from_exception(error,step="threed",source="threed",
+                    recipe=style,titles=[title])
+            except Exception:
+                pass
             cr_claude._private_write(path,saved)
             try:_reconcile(bridge,path,saved)
             except Exception:pass

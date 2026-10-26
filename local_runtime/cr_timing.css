@@ -1,0 +1,22 @@
+/* Picture timing in the timeline editor (cr_timing.js): the Timing panel, word chips, words on the voice track and
+   shot edges you can see. Uses the editor's own colours, with fallbacks. */
+#laneV .clip .eh::after{content:"";position:absolute;top:28%;bottom:28%;left:3px;width:2px;border-radius:2px;background:rgba(255,255,255,.7);opacity:0;transition:opacity .15s}
+#laneV .clip:hover .eh::after,#laneV .clip.sel .eh::after{opacity:1}
+#laneV .clip.sel .eh{background:rgba(255,176,32,.22)}
+.crt-panel{margin:10px 0 4px;padding:10px 0;border-top:1px solid var(--line,rgba(255,255,255,.09));border-bottom:1px solid var(--line,rgba(255,255,255,.09))}
+.insp:has(.crt-panel){max-height:72%}
+.crt-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--dimmer,#8d8880);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+.crt-head-hint{text-transform:none;letter-spacing:0;font-size:11.5px}
+.crt-edge{margin-top:9px}
+.crt-edge-top{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.crt-edge-top b{flex-basis:100%;font-size:12.5px;font-weight:600;color:var(--ink,#f6f4f0)}
+.crt-edge-top b.is-pending{color:var(--amber,#ffb020)}
+.crt-words-row{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.crt-chip{border:1px solid var(--line2,rgba(255,255,255,.16));background:var(--panel,rgba(255,255,255,.035));color:var(--ink,#f6f4f0);border-radius:999px;padding:2px 8px;font-size:12px;line-height:1.5;cursor:pointer}
+.crt-chip:hover{border-color:rgba(255,176,32,.6)}
+.crt-chip.is-now{background:rgba(255,176,32,.18);border-color:var(--amber,#ffb020)}
+.crt-chip:focus-visible{outline:2px solid var(--amber,#ffb020);outline-offset:1px}
+.crt-note,.crt-keys{color:var(--dimmer,#8d8880);font-size:11.5px;line-height:1.5;margin-top:8px}
+.crt-tip{display:block;margin-top:8px;color:var(--amber,#ffb020)}
+.crt-words{position:absolute;inset:0;pointer-events:none;z-index:1}
+.crt-word{position:absolute;bottom:2px;height:15px;padding-left:2px;border-left:1px solid rgba(74,222,128,.6);color:#d9f7e6;font-size:10.5px;line-height:15px;white-space:nowrap;overflow:hidden;text-shadow:0 1px 2px #000}

@@ -2,7 +2,8 @@
 
 A style whose JSON says "format": "short" is a Shorts recipe. `install(engine)` wraps the engine's run_custom /
 run_pipeline: those jobs go to the Shorts pipeline named by the style ("shorts": {"pipeline": "zack3d" | "photo2d" |
-"ranking"}), every other job runs exactly as before. The ranking pipeline (Ranking Shorts: real viral clips counted
+"ranking" | "roblox"}), every other job runs exactly as before. The roblox pipeline (Roblox Story Shorts: blocky-avatar
+world-rule stories) uses the 3D engine and the asset pack like zack3d, and narrates itself like ranking. The ranking pipeline (Ranking Shorts: real viral clips counted
 down to #1) finds its own clips and needs no asset pack; its options arrive as a [[ranking={...}]] marker. The finished Short is left in the job folder the way a long video is
 (video.mp4, title.txt, script.txt, subs.srt, youtube.txt) and published by the engine itself, so Projects, the player,
 reveal and re-render work unchanged.
@@ -20,7 +21,7 @@ from pathlib import Path
 
 HOME = Path(__file__).resolve().parent
 PIPELINES = {"zack3d": ("zack", "make_zack.py"), "photo2d": ("hoodie", "make_short.py"),
-             "ranking": ("ranking", "make_ranking.py")}
+             "ranking": ("ranking", "make_ranking.py"), "roblox": ("roblox", "make_roblox.py")}
 PACKLESS = {"ranking"}                                       # pipelines that need no Shorts asset pack
 # Pipelines that lower their own priority as they start (make_ranking and board.py call find.lower_priority). nice is
 # relative on Mac and Linux: our nice 10 under their own os.nice(10) ran the Short at 19, the very lowest.
@@ -197,7 +198,9 @@ STEPS = [(r"^(finding|picking)", "Finding the clips: searching for the moments t
          (r"^writing", "Writing the script: the narrator's lines"),
          (r"^sound design", "Designing the sound: vine booms, punch-ins and sound effects"),
          (r"^director", "Writing the script: planning the story, sets and shots"),
-         (r"^(sets \+ props|props)", "Building the sets and the story's props"),
+         (r"^staging", "Staging every shot: who stands where, what they hold, where the camera looks"),
+         (r"^(sets|props)\b", "Building the sets and the story's props"),
+         (r"^storyboard check", "Checking a still of every shot against its words"),
          (r"^voice", "Creating narration voice"),
          (r"^(scenes|scene pictures|render)", "Building visual scenes"),
          # text removal is the edit's long part (minutes a clip): its own words, so a frozen-looking render reads right
@@ -393,6 +396,10 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
             env["CR_SHORTS_TONE"] = tone                         # dark: true crime / horror (the director's dark-story rules)
         if pipe == "ranking":
             env["CR_RANKING"] = json.dumps(ranking)
+        if pipe == "roblox":
+            picked = ranking_voice(style)
+            if picked:
+                env["CR_RBX_VOICE"] = picked.split(":", 1)[1]    # the ElevenLabs voice chosen for this recipe
         args = [sys.executable, str(root / folder / script), str(HOME), str(work), title]
         args += (["auto", str(seconds)] if pipe == "photo2d" else [str(seconds)])
         _say(sink, engine, f"Short: {info.get('label') or style}, " + (f"{ranking.get('ranks', 5)} ranks" if pipe == "ranking"

@@ -76,6 +76,82 @@ class TaskFailed(AccountStop):
                          (" " + self.reason if self.reason else "") + action)
 
 
+class ModelsExhausted(AccountStop):
+    """Every image model chosen in Setup failed this one picture, each for certain (a refusal or a failed task).
+    free: every one of those attempts was refused up front or charged 0 credits."""
+    free = False
+
+
+class PictureFailed(RuntimeError):
+    """One picture or clip that could not be made, for certain: the engine skips it, as it does on its own services
+    (a story holds the picture before; more than a third missing still stops the video; an AI image becomes stock
+    footage; a thumbnail is left out). Nothing is submitted again for it."""
+
+
+# A failure that would stop every picture the same way stops the video; anything else stops only its own picture.
+# A rate limit stops it too: a burst of 429s across the parallel picture slots would otherwise skip many pictures,
+# and a failed picture's receipt is never submitted again on resume (review, 2026-10-26).
+ACCOUNT_WIDE = ("balance", "access", "rate_limit")
+
+# This run's pictures and clips whose failure was charged, or not known to be free: never bought again in this run.
+# The engine gives a failed picture one "plainer" try on the same file, and the presenter's set-ups try other models
+# under new file names with the same prompt, so a picture is known by its file and by its prompt (review, 2026-10-26).
+_settled = set()
+_settled_lock = threading.Lock()
+
+
+def _free(failed) -> bool:
+    """Certain that this failure cost nothing: Kie refused it up front, or reported 0 credits for every attempt."""
+    if isinstance(failed, TaskFailed):
+        credits = failed.credits
+        return bool(failed.rejected) or (isinstance(credits, (int, float)) and not isinstance(credits, bool)
+                                         and credits == 0)
+    return bool(getattr(failed, "free", False))
+
+
+def _picture_keys(args, kwargs, prompt_at, dest_at):
+    dest = kwargs.get("dest", args[dest_at] if len(args) > dest_at else None)
+    prompt = kwargs.get("prompt", args[prompt_at] if len(args) > prompt_at else None)
+    keys = set()
+    if dest:
+        keys.add(("file", os.path.normcase(os.path.abspath(str(dest)))))
+    if isinstance(prompt, str) and prompt.strip():
+        keys.add(("prompt", " ".join(prompt.split())))
+    return keys
+
+
+def skippable(make, *, prompt_at=0, dest_at=1):
+    """`make` as the engine's own picture and clip calls meet it. AccountStop is a BaseException so the engine can't
+    swap wallets behind it, but that also went past every "one picture failing must not abort the video" handler in
+    the engine: one picture Kie couldn't make (a refusal on every model, or Kie's "422 task id is blank", 2 of 266
+    of the owner's own pictures) stopped a whole video. A 6-minute stick-figure story draws about 140 pictures, so
+    most long story videos stopped (cr-stick-stories 61% failed, sweep 2026-10-25). Certain, single-picture failures
+    are now the engine's to skip; balance and access problems, and anything uncertain (a pending task, an
+    interrupted submission or transfer), still stop the video with their own message and receipt."""
+    def made(*args, **kwargs):
+        keys = _picture_keys(args, kwargs, prompt_at, dest_at)
+        with _settled_lock:
+            if keys & _settled:
+                raise PictureFailed("This picture already failed once in this video and may have been charged, so it "
+                                    "is not bought again: the video goes on without it.")
+        try:
+            return make(*args, **kwargs)
+        except TaskFailed as failed:
+            if failed.category in ACCOUNT_WIDE:
+                raise
+            if not _free(failed):
+                with _settled_lock:
+                    _settled.update(keys)
+            raise PictureFailed(str(failed)) from None
+        except ModelsExhausted as stopped:
+            if not _free(stopped):
+                with _settled_lock:
+                    _settled.update(keys)
+            raise PictureFailed(str(stopped)) from None
+    made._cr_skippable = True
+    return made
+
+
 TRANSIENT = re.compile(r"internal error|try again later|timed? ?out|temporarily|overloaded|busy|service unavailable", re.I)
 
 
@@ -87,8 +163,14 @@ def fresh_attempt_ok(provider, task, receipt, *, asked=False) -> bool:
 
     asked: the creator pressed Resume (a new run met the failed receipt). Kie's answer is then enough even when it
     didn't say what the failed task cost: it produced nothing, so a new task can't pay twice for the same voice.
-    Studio's own automatic retries need Kie to report 0 credits."""
-    if provider != "kie" or task != "narration" or not isinstance(receipt, dict):
+    Studio's own automatic retries need Kie to report 0 credits.
+
+    A presenter (avatars) Kie failed the same way is made again only when the creator asks: a video whose presenter
+    stopped offers "try the presenter again" (cr-presenter.json), and before this a failed receipt stopped every Resume
+    of that video for good (a customer's video, 2026-10-25). Studio never retries a presenter by itself."""
+    if provider != "kie" or task not in ("narration", "avatars") or not isinstance(receipt, dict):
+        return False
+    if task == "avatars" and not asked:
         return False
     if receipt.get("status") != "failed" or receipt.get("rejected") or not receipt.get("id"):
         return False
@@ -346,6 +428,28 @@ def _never_sent(error) -> bool:
 
 
 def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
+    """One media task, from its receipt when it was already made. A narration Kie ran and then failed on its own side,
+    charging nothing (fresh_attempt_ok: "Internal Error", "generate task timeout"), is submitted again after
+    NARRATION_RETRY_PAUSES for every caller. Only the long-video voice used to ride these out; the Shorts call run()
+    directly, so one of them stopped the whole Short ("The Short stopped unexpectedly (cr_media.TaskFailed: Kie.ai failed
+    this narration task. generate task timeout. Kie charged nothing for it ...)", Photo Comedy Shorts, sweep
+    2026-10-26)."""
+    pauses = NARRATION_RETRY_PAUSES if task == "narration" else ()
+    for attempt, pause in enumerate(pauses + (None,)):
+        try:
+            return _run_once(task, inputs, dest, model=model, log=log, timeout_s=timeout_s)
+        except TaskFailed as failed:
+            receipt = {"status": "failed", "id": getattr(failed, "task_id", None), "rejected": failed.rejected,
+                       "credits": failed.credits, "failure_code": failed.code, "failure_message": failed.reason}
+            provider = account(task)[0]
+            if pause is None or not fresh_attempt_ok(provider, task, receipt):
+                raise
+            log(f"{PROVIDERS[provider]['label']} {task} hit a passing error ({failed.reason or failed.code}) and charged "
+                f"nothing; trying again in {pause} s (attempt {attempt + 2} of {len(pauses) + 1}).")
+            time.sleep(pause)
+
+
+def _run_once(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     provider, key = account(task)
     dest = Path(dest)
     model = model or PROVIDERS[provider]["models"][task]
@@ -540,7 +644,7 @@ def image(prompt, dest, label="image", ref_urls=None, model=None, **kwargs):
         if refs:
             inputs["images"] = refs[:8]
         return run("images", inputs, dest, model=model, **wait)
-    last = None
+    last, free = None, True
     plan = image_plan(cfg, prefer=model or _style_model["id"])
     for index, model_id in enumerate(plan):
         choice = image_model(model_id)
@@ -552,10 +656,12 @@ def image(prompt, dest, label="image", ref_urls=None, model=None, **kwargs):
         except TaskFailed as error:
             if not error.fallback_allowed:
                 raise
-            last = error
+            last, free = error, free and _free(error)
             if index + 1 < len(plan):
                 print(f"  {label}: {choice['label']} failed ({error.category}); trying {image_model(plan[index+1])['label']} on the same Kie account.")
-    raise AccountStop(f"Image generation stopped after {len(plan)} selected models. {last} Saved attempts will not be submitted again on resume.")
+    exhausted = ModelsExhausted(f"Image generation stopped after {len(plan)} selected models. {last} Saved attempts will not be submitted again on resume.")
+    exhausted.free = free
+    raise exhausted
 
 
 def motion(image_url, prompt, dest, label="motion", retries=1, **kwargs):
@@ -592,7 +698,25 @@ def native_motion(*args, **kwargs):
         return motion(*args, **kwargs)
 
 
-def avatar_clip(provider, image_url, audio_url, dest, log=print):
+# The engine's own words for how a presenter moves (avatar.MOTION_PROMPT), used when the engine can't be read.
+PRESENTER_MOTION = ("The person speaks naturally to camera, subtle head movement, natural blinking, relaxed shoulders, "
+                    "small hand gesture, static camera.")
+
+
+def presenter_prompt(motion=""):
+    """What Kie's Kling avatar models are told about the presenter's movement. Kie requires it: without a prompt
+    every presenter was refused ({"code": 500, "msg": "prompt is required"}), so every video with an AI presenter on
+    a Kie account stopped at its intro (sweep 2026-10-25). The engine's own Kling call always sent one."""
+    try:
+        import avatar
+        base = str(getattr(avatar, "MOTION_PROMPT", "") or PRESENTER_MOTION)
+    except Exception:                                   # noqa: BLE001 - the engine's words are a nicety, not a need
+        base = PRESENTER_MOTION
+    motion = str(motion or "").strip()
+    return (((motion + " ") if motion else "") + base)[:5000]
+
+
+def avatar_clip(provider, image_url, audio_url, dest, log=print, motion=""):
     if provider not in ("kling-standard", "kling-pro"):
         # Setup's "Kling Standard / Pro presenters": every presenter on this account is Kling. A recipe written for
         # another presenter model (Pruna on WaveSpeed) speaks through Kling Standard, as the engine itself does when
@@ -600,7 +724,8 @@ def avatar_clip(provider, image_url, audio_url, dest, log=print):
         log(f"    avatar: {provider} presenter shots run as Kling Standard on your model account")
         provider = "kling-standard"
     hub = profile()["provider"]
-    inputs = {"image_url": image_url, "audio_url": audio_url} if hub == "kie" else {"image": image_url, "audio": audio_url}
+    inputs = ({"image_url": image_url, "audio_url": audio_url, "prompt": presenter_prompt(motion)} if hub == "kie"
+              else {"image": image_url, "audio": audio_url})
     model = PROVIDERS[hub]["models"]["avatar_pro" if provider == "kling-pro" else "avatars"]
     run("avatars", inputs, dest, model=model, log=log)
     return Path(dest)
@@ -610,7 +735,9 @@ def route_avatar(original):
     """Forward native positional options when presenter replacement is off."""
     def routed(provider, image_url, audio_url, dest, log=print, *args, **kwargs):
         if active("avatars"):
-            return avatar_clip(provider, image_url, audio_url, dest, log)
+            # the engine's presenter calls pass a shot's movement as their next argument (motion=)
+            motion = kwargs.get("motion", args[0] if args and isinstance(args[0], str) else "")
+            return avatar_clip(provider, image_url, audio_url, dest, log, motion=motion)
         return original(provider, image_url, audio_url, dest, log, *args, **kwargs)
     return routed
 
@@ -688,19 +815,8 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
     try:
         for i, piece in enumerate(_chunks(text)):
             part = folder / f"part-{i:03d}.{model['format']}"
-            for attempt, pause in enumerate(NARRATION_RETRY_PAUSES + (None,)):
-                try:
-                    run("narration", narration_input(piece, voice, model["id"]), part, model=model["id"], log=engine.log)
-                    break
-                except TaskFailed as failed:
-                    receipt = {"status": "failed", "id": getattr(failed, "task_id", None), "rejected": failed.rejected,
-                               "credits": failed.credits, "failure_code": failed.code, "failure_message": failed.reason}
-                    if pause is None or not fresh_attempt_ok(provider, "narration", receipt):
-                        raise
-                    engine.log(f"{PROVIDERS[provider]['label']} narration hit a passing error ({failed.reason or failed.code}) "
-                               f"and charged nothing; trying again in {pause} s (attempt {attempt + 2} of "
-                               f"{len(NARRATION_RETRY_PAUSES) + 1}).")
-                    time.sleep(pause)
+            # run() rides out a passing Kie error that charged nothing (NARRATION_RETRY_PAUSES)
+            run("narration", narration_input(piece, voice, model["id"]), part, model=model["id"], log=engine.log)
             parts.append(part)
     except (AccountStop, Exception) as failed:              # what stopped this voice, for the choices offered
         if getattr(failed, "category", "") != "cancelled":
@@ -812,6 +928,102 @@ def own_recording(engine, script, job: Path, file: str, force=False):
     return mp3, srt
 
 
+# A video whose presenter couldn't be made (Kie answering 500 on a 9-second avatar intro, 2026-10-25) stopped at its
+# very last step with the whole film finished, and every Resume met the same failure. It now stops with a choice, for
+# that video only: finish without the presenter, or try the presenter again later. Both are read from its folder.
+PRESENTER_CHOICE = "cr-presenter.json"          # {"skip": true}: this video finishes without its presenter
+PRESENTER_FAILED = "cr-presenter-failed.json"   # why the presenter stopped (the choices offered read it)
+
+
+def job_presenter(job) -> dict:
+    """This video's own presenter choice: {"skip": True}, or {} for the presenter it asked for."""
+    try:
+        choice = json.loads((Path(job) / PRESENTER_CHOICE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {"skip": True} if isinstance(choice, dict) and choice.get("skip") is True else {}
+
+
+def uncertain_presenter(job) -> list:
+    """The receipts of this video's presenter tasks whose submission has an uncertain result (sent, no task ID came
+    back, as when Kie answers a submission with a server error): run() never sends those again by itself."""
+    models = {m for p in PROVIDERS.values() if isinstance(p, dict)
+              for k, m in (p.get("models") or {}).items() if k in ("avatars", "avatar_pro")}
+    out = []
+    for receipt in sorted((Path(job) / ".cr-tasks").glob("*.json")):
+        if ".uncertain-" in receipt.name or ".failed-" in receipt.name:
+            continue                                  # one set aside before: kept, never read by run() again
+        try:
+            data = json.loads(receipt.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("model") in models and data.get("status") == "submitting" \
+                and not data.get("id"):
+            out.append(receipt)
+    return out
+
+
+def retry_presenter(job) -> int:
+    """The creator chose to try the presenter again: an uncertain receipt is kept under its own name, so the next run
+    submits the presenter again (the choice said that may pay for a second one). A failed receipt needs nothing here:
+    run() tries a task Kie failed on its own side again when a Resume meets it (fresh_attempt_ok)."""
+    n = 0
+    for receipt in uncertain_presenter(job):
+        receipt.replace(receipt.with_name(receipt.stem + f".uncertain-{int(time.time() * 1000)}.json"))
+        n += 1
+    return n
+
+
+def _presenter_failed(job, failed) -> None:
+    try:
+        provider = profile("avatars").get("provider") if active("avatars") else "kie"
+        (Path(job) / PRESENTER_FAILED).write_text(json.dumps({
+            "provider": provider, "label": PROVIDERS.get(provider, {}).get("label", provider),
+            "category": getattr(failed, "category", ""), "code": getattr(failed, "code", ""),
+            "reason": str(getattr(failed, "reason", "") or failed)[:300], "charged": getattr(failed, "credits", None),
+            "uncertain": bool(uncertain_presenter(job)), "at": int(time.time())}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def make_presenter(engine, original):
+    """The engine's presenter step (make_video._maybe_presenter) with this video's own choice. The engine lets a
+    presenter that fails go ("an avatar service having a bad minute is no reason to hand back nothing"), but a paid
+    task's stop here is a BaseException and went past it, so the finished film never published. Now such a stop saves
+    what failed and asks the creator (Projects, or progress() in Claude Code); "skip" finishes the video as it is."""
+    if getattr(original, "_cr_presenter", False):
+        return original
+
+    def maybe_presenter(final, job, mp3, srt, avatar_id="", avatar_s=0, force=False, avatar_count=1):
+        job, final = Path(job), Path(final)
+        if job_presenter(job).get("skip"):
+            if avatar_s:
+                engine.log("presenter: left out of this video, as chosen when it stopped")
+            out = original(final, job, mp3, srt, avatar_id, 0, force, avatar_count)
+            (job / PRESENTER_FAILED).unlink(missing_ok=True)
+            return out
+        try:
+            out = original(final, job, mp3, srt, avatar_id, avatar_s, force, avatar_count)
+        except AccountStop as failed:
+            plain = final.with_name(f"{final.stem}_plain{final.suffix}")
+            if not final.exists() and plain.exists():
+                os.replace(plain, final)                # the film goes back where everything expects it
+            if getattr(failed, "category", "") == "cancelled":
+                raise
+            _presenter_failed(job, failed)
+            label = PROVIDERS.get(profile("avatars").get("provider") if active("avatars") else "kie", {}).get(
+                "label", "The presenter service")
+            why = str(getattr(failed, "reason", "") or getattr(failed, "code", "") or "").strip()
+            raise AccountStop(f"{label} couldn't make this video's presenter" + (f" ({why[:160]})" if why else "")
+                              + ". The rest of the video is finished and saved. Open it in Projects and choose: "
+                                "finish it without the presenter, or try the presenter again in a few minutes.") \
+                from None
+        (job / PRESENTER_FAILED).unlink(missing_ok=True)
+        return out
+    maybe_presenter._cr_presenter = True
+    return maybe_presenter
+
+
 def wrap_whisper(engine):
     """The engine's speech-timing model reads narration as PCM, and loads the copy setup downloaded (cr_whisper), so a
     video never asks huggingface.co for it mid-run."""
@@ -856,7 +1068,7 @@ def install(engine):
     def hook(name, task, replacement):
         original = getattr(engine, name)
         setattr(engine, name, lambda *a, **k: replacement(*a, **k) if active(task) else original(*a, **k))
-    hook("image_gen", "images", image)
+    hook("image_gen", "images", skippable(image))
     hook("_image_provider", "images", lambda: "channelrecipe-hub")
     # The first frame of a moving picture is drawn against the channel's style drawing too (look.style_image),
     # like every still, so an animated picture keeps the same look. Jobs run one per worker process.
@@ -887,7 +1099,7 @@ def install(engine):
         except Exception:
             refs = []
         note = getattr(engine, "STYLE_REF_NOTE", "") if refs else ""
-        return image(note + prompt, dest, label, ref_urls=refs)
+        return skippable(image)(note + prompt, dest, label, ref_urls=refs)
     hook("_kie_still_with_url", "images", still_with_url)
     try:
         import cr_panels
@@ -910,7 +1122,7 @@ def install(engine):
         pass
     # Native Kie motion and the history kit previously bypassed the hub.
     # Both must use the same cheap model and the same durable receipts.
-    engine._kie_video_gen = native_motion
+    engine._kie_video_gen = skippable(native_motion, prompt_at=1, dest_at=2)   # a clip that can't be made shows its first frame instead
     engine.KIE_VIDEO_MODEL = PROVIDERS["kie"]["models"]["motion"]
     engine.KIE_VIDEO_RES, engine.KIE_VIDEO_DUR = "720p", "5"
     import history_kit
@@ -941,13 +1153,13 @@ def install(engine):
         image_model = any(x in model for x in ("nano-banana", "gpt-image", "seedream", "flux", "qwen-image"))
         if image_model and active("images"):
             refs = payload.get("images") or ([payload["image"]] if payload.get("image") else [])
-            image(payload.get("prompt", ""), dest, ref_urls=refs)
+            skippable(image)(payload.get("prompt", ""), dest, ref_urls=refs)
             return Path(dest)
         if "image-to-video" in model and active("motion"):
             source = payload.get("image") or payload.get("image_url")
             if not source:
                 raise AccountStop("This motion model needs a source image. Review the scene before retrying.")
-            motion(source, payload.get("prompt", ""), dest)
+            skippable(motion, prompt_at=1, dest_at=2)(source, payload.get("prompt", ""), dest)
             return Path(dest)
         if (active("images") and image_model) or (active("motion") and ("video" in model or "wan" in model)):
             raise AccountStop("This specialised model needs its original account. Turn off its task replacement in Setup & accounts.")
@@ -962,3 +1174,5 @@ def install(engine):
     for name in ("_kie", "_wavespeed", "_wavespeed_avatar"):
         original = getattr(avatar, name)
         setattr(avatar, name, route_avatar(original))
+    if callable(getattr(engine, "_maybe_presenter", None)):
+        engine._maybe_presenter = make_presenter(engine, engine._maybe_presenter)

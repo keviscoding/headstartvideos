@@ -2,8 +2,9 @@
 
 - configure(home) registers the `studio` tool server (cr_studio_tools.py, run by Studio's own Python) in .mcp.json next
   to the ChannelRecipe server, and merges .claude/settings.json: both servers approved, the free tools allowed, the
-  paid ones (make_videos, clone_style) always asked, and the key files never read. Studio runs it on every start and
-  cr_update after every update. It never copies a key anywhere; .mcp.json keeps its other entries untouched.
+  paid ones (make_videos, clone_style) and the deletes (delete_video, delete_style) always asked, and the key files
+  never read. Studio runs it on every start and cr_update after every update. It never copies a key anywhere;
+  .mcp.json keeps its other entries untouched.
 - install(studio, ...) adds the style gallery (/cr-gallery), whose "Use this style" records a pick that Claude reads
   back with get_style_pick, plus the read-only routes the tools need (finished videos with their files, a cloud quote).
 - Watcher sends a desktop notification when a video (on this computer or Studio Cloud) or a style study finishes.
@@ -24,8 +25,10 @@ from pathlib import Path
 HOME = Path(__file__).resolve().parent
 SERVER = "studio"
 FREE_TOOLS = ("setup_check", "fix_graphics_browser", "fix_speech_model", "list_styles", "get_style_pick", "quote", "progress", "list_videos", "open_in_studio",
-              "cloud_balance", "clone_style_look", "product_ideas", "products", "style_lab")
-PAID_TOOLS = ("make_videos", "clone_style", "build_product", "resume_video")
+              "cloud_balance", "clone_style_look", "product_ideas", "products", "edit_style", "style_lab")
+PAID_TOOLS = ("make_videos", "clone_style", "build_product", "resume_video", "style_sample")
+# a video or a learned style moved into Studio's trash (cr_trash): the creator approves each one
+DESTRUCTIVE_TOOLS = ("delete_video", "delete_style")
 # ChannelRecipe's hosted niche database (the account's `channelrecipe` server beside `studio`): reading it is free
 NICHE_TOOLS = ("list_niches", "list_niche_subjects", "list_niche_channels")
 NEVER_READ = ("Read(./.env)", "Read(./.mcp.json)", "Read(./.cr-connection.json)", "Read(./.cr-runtime.json)")
@@ -73,13 +76,14 @@ def _add(items, wanted) -> list:
 
 def folder_settings(settings=None) -> dict:
     """The folder's .claude/settings.json: both servers approved, the free tools and niche reads allowed, the paid
-    tools always asked, the key files never read. Merged into what is there; the download ships it as is."""
+    tools and the deletes always asked, the key files never read. Merged into what is there; the download ships it
+    as is."""
     settings = dict(settings or {})
     settings["enabledMcpjsonServers"] = _add(settings.get("enabledMcpjsonServers"), ["channelrecipe", SERVER])
     permissions = dict(settings.get("permissions")) if isinstance(settings.get("permissions"), dict) else {}
-    paid = [f"mcp__{SERVER}__{n}" for n in PAID_TOOLS]
+    paid = [f"mcp__{SERVER}__{n}" for n in PAID_TOOLS + DESTRUCTIVE_TOOLS]
     free = [f"mcp__{SERVER}__{n}" for n in FREE_TOOLS] + [f"mcp__channelrecipe__{n}" for n in NICHE_TOOLS]
-    # a paid tool is always asked, even when someone allowed the whole server
+    # a paid tool or a delete is always asked, even when someone allowed the whole server
     permissions["allow"] = [x for x in _add(permissions.get("allow"), free) if x not in paid]
     permissions["ask"] = _add(permissions.get("ask"), paid)
     permissions["deny"] = _add(permissions.get("deny"), NEVER_READ)
@@ -552,25 +556,12 @@ def small_pictures(app, home: Path, row: dict) -> dict:
 
 def combine_preview(home: Path, urls: list, *, preview=None) -> dict:
     """One saved preview holding the videos of two or three YouTube channels or videos, so the existing look and
-    study take references from all of them (each candidate keeps its channel). Lists only: no model is asked."""
+    study take references from all of them (each candidate keeps its channel). Lists only: no model is asked. The
+    Studio page combines them the same way (cr_style_clone.preview_many)."""
     import cr_style_clone
     if not 2 <= len(urls) <= 3 or len(set(urls)) != len(urls):
         raise ValueError("Give two or three different YouTube channels or videos to combine.")
-    preview = preview or cr_style_clone.preview
-    sources, candidates, seen = [], [], set()
-    for number, url in enumerate(urls):
-        got = preview(home, url)
-        sources.append(got["reference_url"])
-        for row in got.get("candidates") or []:
-            if row["id"] not in seen:
-                seen.add(row["id"])
-                candidates.append({**row, "source": number})
-    result = {"reference_url": sources[0], "reference_urls": sources, "candidates": candidates,
-              "no_model_requests": True, "combined": True}
-    identifier = "pv_" + cr_style_clone._hash(result)
-    cr_style_clone._write(cr_style_clone._folder(home) / ".previews" / (identifier + ".json"),
-                          {**result, "created_at": time.time()})
-    return {**result, "preview_id": identifier}
+    return cr_style_clone.preview_many(home, list(urls), preview=preview)
 
 
 def catalog_rows(studio) -> list:

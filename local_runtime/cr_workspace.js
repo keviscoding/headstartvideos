@@ -291,6 +291,16 @@
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
+    footageNote();
+  }
+  // Research footage watches YouTube videos on the creator's video-model account before the video is made: what that
+  // adds, said before Create (a customer's 10-minute video watched clips for 22 hours, 2026-10-25). The numbers are
+  // Studio's own budget for the length (cr_watch.budget, sent with the catalog).
+  function footageNote() {
+    const r = state.selected, b = (state.catalog?.footage_watch || [])[number('crw-minutes',10,1,60) - 1];
+    const on = !!(r && b && featureValues().youtube && !strict(r) && !isShort(r) && !isRanking(r) && state.narration !== 'own');
+    hide('crw-footage-note', !on);
+    if (on) text('crw-footage-note', `Research footage adds about ${b.typical_minutes[0]} to ${b.typical_minutes[1]} minutes to a ${b.minutes}-minute video: Studio watches up to ${b.videos} YouTube videos on your video-model account to find its clips. It stops watching after ${b.stop_minutes} minutes and goes on with what it found.`);
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
@@ -311,6 +321,7 @@
     text('crw-page-name', {create:'Create video',projects:'Your projects',styles:'Style library'}[state.page]);
     if (persist) history.replaceState(null,'',`${location.pathname}${location.search}#${state.page}`);
     if (state.page === 'projects') {renderProjects(); cloudPanel();} if (state.page === 'styles') renderStyles();
+    if (state.page !== 'create') loadTrash();
     $('crw-main').focus({preventScroll:true});
   }
   function inspect(recipe, reveal = false) {
@@ -363,7 +374,16 @@
   function renderStyles() {
     renderAllowance();
     const customs = rows().filter(r => r.custom); const target = $('crw-styles-list'); target.replaceChildren();
-    for (const recipe of customs) {const card = recipeCard(recipe,r => {selectRecipe(r); showPage('create');}); target.append(card);}
+    for (const recipe of customs) {
+      const card = recipeCard(recipe,r => {selectRecipe(r); showPage('create');});
+      if (!/^cr_clone_[a-z0-9_-]{1,40}$/.test(recipe.name || '')) {target.append(card); continue;}     // only styles you cloned
+      // a learned style can be edited (name, creative direction, Create's options), studied again, or deleted
+      const item = el('div','crw-style-item'), actions = el('div','crw-style-actions');
+      const edit = el('a','crw-inline-link','Edit or study again'); edit.href = `/cr-style-clone?edit=${encoded(recipe.name)}`;
+      const del = el('button','crw-text-button crw-delete-button','Delete style'); del.type = 'button';
+      del.setAttribute('aria-label', `Delete ${recipe.label}`); del.addEventListener('click', () => openDelete('style', recipe.name));
+      actions.append(edit, del); item.append(card, actions); target.append(item);
+    }
     hide('crw-styles-empty',!!customs.length);
     // a finished study is already a saved style above; only studies still running or stopped are listed here
     const studies = state.studies.filter(study => study.state !== 'done');
@@ -374,15 +394,32 @@
   }
   const phaseCopy = line => {
     const v = String(line || ''); if (/DONE|published:/i.test(v)) return 'Finishing your video';
+    const watching = /YouTube: watched (\d+) of (\d+) videos/.exec(v); if (watching) return `Watching YouTube clips (${watching[1]} of ${watching[2]})`;
     if (/ffmpeg|final render|concat|mux/i.test(v)) return 'Rendering the film'; if (/review|critique|verify|repair/i.test(v)) return 'Reviewing visuals';
     if (/subtitles|whisper|timing narration/i.test(v)) return 'Timing narration and captions'; if (/voice|tts|narration/i.test(v)) return 'Creating narration';
     if (/design|scene|graphic|image|motion|kit/i.test(v)) return 'Building visual scenes'; if (/script|fact check/i.test(v)) return 'Writing and checking the story'; return 'Preparing the project';
+  };
+  // The step the studio is on now, read from the job's last log line: a short heading, plus a line that says what is
+  // really happening (a 3D review round can take half an hour, and "Reviewing visuals" alone told customers nothing)
+  const phaseInfo = line => {
+    const raw = String(line || '').trim(), said = raw.replace(/^3D:\s*/,''), threed = raw !== said;
+    let m;
+    if (threed && (m = said.match(/^review (\d+)\/(\d+) [—-] Claude is looking at (\d+) stills of (\d+) scenes/)))
+      return {phase:`3D review, round ${m[1]} of ${m[2]}`,detail:`Claude is checking ${m[3]} stills of ${m[4]} scenes and fixing what looks wrong. A round often takes 15 to 30 minutes and uses your Claude plan.`};
+    if (threed && (m = said.match(/^review (\d+)\/(\d+) [—-] (\d+) of (\d+) scenes fixed/)))
+      return {phase:`3D review, round ${m[1]} of ${m[2]}`,detail:`${m[3]} of ${m[4]} scenes fixed in this round.`};
+    if (threed && (m = said.match(/^previews [—-] round (\d+)\/(\d+), (\d+) scenes/)))
+      return {phase:`3D previews, round ${m[1]} of ${m[2]}`,detail:`Rendering quick stills of ${m[3]} scenes for Claude to check.`};
+    if (threed && /^repair/.test(said)) return {phase:'Fixing empty 3D shots',detail:said.slice(0,160)};
+    if (threed && /^checking the last fixes/.test(said)) return {phase:'Checking the last 3D fixes',detail:said.slice(0,160)};
+    return {phase:phaseCopy(raw),detail:raw.slice(0,160)};
   };
   function statusBadge(value) {const kind = value === 'done' ? 'done' : ['running','queued'].includes(value) ? 'running' : 'stopped'; return el('span',`crw-status-badge is-${kind}`,{done:'Ready',running:'In production',queued:'Queued',held:'On hold',cancelled:'Cancelled',error:'Needs review',failed:'Needs review'}[value] || 'Saved');}
   function combinedProjects() {
     // stopped videos saved on disk first, so a live or finished entry for the same folder wins
     const map = new Map((state.stopped || []).map(j => [j.slug,{...j}]));
-    for (const j of state.jobs) map.set(j.slug,{...j,state:'done',hasVideo:true});
+    // a video stopped on its presenter has its film on disk but isn't finished: it stays stopped, with its choices
+    for (const j of state.jobs) map.set(j.slug,map.get(j.slug)?.stopped_on ? {...j,...map.get(j.slug)} : {...j,state:'done',hasVideo:true});
     for (const q of state.queue) map.set(q.slug,{...(map.get(q.slug) || {}),...q});
     return [...map.values()];
   }
@@ -400,7 +437,9 @@
       posterObserver?.observe(video);
     } else {media.classList.add('crw-preview-unavailable');media.append(el('span','', ['running','queued'].includes(job.state)?'Video is in production':'No finished video yet'));}
     const body=el('div','crw-card-body');body.append(statusBadge(job.state),el('h3','',job.title||'Untitled video'),el('p','crw-card-meta',`${r?.label||'Video project'}${job.mtime?' · '+date(job.mtime):''}`));
-    const actions=el('div','crw-card-actions');const open=el('button','crw-secondary-button',job.hasVideo?'Video & exports':['running','queued'].includes(job.state)?'View progress':'Review issue');open.type='button';open.addEventListener('click',()=>job.hasVideo?openOutput(job):openProgress(job));actions.append(open);body.append(actions);card.append(media,body);return card;
+    const actions=el('div','crw-card-actions');const open=el('button','crw-secondary-button',job.hasVideo?'Video & exports':['running','queued'].includes(job.state)?'View progress':'Review issue');open.type='button';open.addEventListener('click',()=>job.hasVideo?openOutput(job):openProgress(job));actions.append(open);
+    if(!['running','queued','held'].includes(job.state)){const del=el('button','crw-text-button crw-delete-button','Delete');del.type='button';del.setAttribute('aria-label',`Delete ${job.title||'this video'}`);del.addEventListener('click',()=>openDelete('video',job.slug));actions.append(del);}
+    body.append(actions);card.append(media,body);return card;
   }
   function renderProjects() {
     const projects=combinedProjects().filter(j=>state.projectFilter==='all'||(state.projectFilter==='done'?j.state==='done':state.projectFilter==='active'?['running','queued'].includes(j.state):!['running','queued','done'].includes(j.state)));
@@ -430,7 +469,9 @@
         data = {done: true, state: 'error', lines: [], error: 'This video stopped before Studio last restarted. Its saved work is kept: press Resume saved project to carry on from where it stopped.'};
       }
       const lines = data.lines || [];
-      const last = lines[lines.length-1] || ''; text('crw-progress-phase', data.done ? (data.state === 'done' ? 'Ready to watch' : 'This project stopped') : phaseCopy(last));
+      const last = lines[lines.length-1] || '', now = phaseInfo(last);
+      text('crw-progress-phase', data.done ? (data.state === 'done' ? 'Ready to watch' : 'This project stopped') : now.phase);
+      text('crw-progress-detail', data.done ? '' : now.detail); hide('crw-progress-detail', data.done || !now.detail);
       const queued = state.queue.find(q=>q.slug===state.openJob); text('crw-progress-time',data.elapsed != null ? elapsed(data.elapsed) : queued?.elapsed != null ? elapsed(queued.elapsed) : '');
       const bar = $('crw-progress-bar'); const percent = data.done && data.state === 'done' ? 100 : Number.isFinite(data.progress) ? Math.max(0,Math.min(100,data.progress*100)) : null;
       bar.parentElement.hidden = percent === null; if (percent !== null) {bar.style.width = `${percent}%`; bar.parentElement.setAttribute('role','progressbar'); bar.parentElement.setAttribute('aria-valuemin','0'); bar.parentElement.setAttribute('aria-valuemax','100'); bar.parentElement.setAttribute('aria-valuenow',String(Math.round(percent)));}
@@ -453,6 +494,7 @@
           const saved = await api(`/cr-workspace/project/${encoded(state.openJob)}`);
           if (saved.available_for_resume) {const resume=el('button','crw-text-button','Resume saved project'); resume.type='button'; resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/cr-submit-project',{method:'POST',body:{project_id:saved.project_id}});toast('Saved project submitted. Completed assets will be reused.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}finally{resume.disabled=false;}});$('crw-progress-actions').append(resume);}
           if (saved.available_for_resume) {try {const voice=await api(`/cr-workspace/voice/${encoded(state.openJob)}`); if ((voice.stopped_on_voice || /narration (task|service)/i.test(data.error || '')) && !voice.has_voice) voiceChoices(voice, saved);} catch (_) {/* Resume stays available */}}
+          if (saved.available_for_resume) {try {const presenter=await api(`/cr-workspace/presenter-choice/${encoded(state.openJob)}`); if (presenter.stopped_on_presenter) presenterChoices(presenter, saved);} catch (_) {/* Resume stays available */}}
         }
       }
     } catch (e) {text('crw-progress-note',e.message);}
@@ -494,15 +536,116 @@
     }
     $('crw-progress-actions').append(box);
   }
+  // Delete a finished or stopped video, or a learned style (thatguygab, 2026-10-25). Studio says what goes and what is
+  // kept, then moves it into its trash (cr_trash): Undo, or Restore in Recently deleted for 30 days. Never at once.
+  async function openDelete(kind, id) {
+    state.deleting = {kind, id};
+    text('crw-delete-title', kind === 'style' ? 'Delete this style?' : 'Delete this video?');
+    text('crw-delete-name', ''); $('crw-delete-goes').replaceChildren(); $('crw-delete-kept').replaceChildren();
+    text('crw-delete-note', 'Checking what goes…'); hide('crw-delete-error', true); $('crw-delete-confirm').disabled = true;
+    if (!$('crw-delete').open) $('crw-delete').showModal();
+    try {
+      const plan = await api(`/cr-workspace/delete/${kind}/${encoded(id)}`);
+      if (state.deleting?.id !== id) return;
+      text('crw-delete-name', `“${plan.title}”`);
+      $('crw-delete-goes').replaceChildren(...(plan.goes || []).map(v => el('li', '', v)));
+      $('crw-delete-kept').replaceChildren(...(plan.kept || []).map(v => el('li', '', v)));
+      text('crw-delete-note', `It waits in Studio’s trash for ${plan.keep_days || 30} days, then Studio empties it for good. Until then, Restore in Recently deleted puts it back.`);
+      if (plan.blocked) {text('crw-delete-error', kind === 'video' ? `This video ${plan.blocked}` : plan.blocked); hide('crw-delete-error', false);}
+      $('crw-delete-confirm').disabled = !!plan.blocked;
+      if (!plan.blocked) $('crw-delete-cancel').focus();
+    } catch (e) {text('crw-delete-note', ''); text('crw-delete-error', e.message); hide('crw-delete-error', false);}
+  }
+  // Windows can't move a file a page is still streaming: this page's players let go of the video before it moves
+  function releaseVideo(slug) {
+    const src = `/f/video/${encoded(slug)}`, released = [];
+    for (const v of document.querySelectorAll('video')) {
+      if (v.getAttribute('src') !== src) continue;
+      v.pause(); v.removeAttribute('src'); v.load(); released.push(v);
+    }
+    return () => {for (const v of released) v.src = src;};
+  }
+  async function confirmDelete() {
+    const target = state.deleting, button = $('crw-delete-confirm'); if (!target) return; button.disabled = true;
+    const putBack = target.kind === 'video' ? releaseVideo(target.id) : () => {};
+    try {
+      const done = await api(`/cr-workspace/delete/${target.kind}/${encoded(target.id)}`, {method: 'POST', body: {}});
+      $('crw-delete').close();
+      undoToast(`“${done.title}” is in Studio’s trash.`, done.trash_id);
+      await afterTrashChange(target.kind);
+    } catch (e) {putBack(); text('crw-delete-error', e.message); hide('crw-delete-error', false); button.disabled = false;}
+  }
+  function undoToast(message, entry) {
+    const box = $('crw-toast'), undo = el('button', 'crw-inline-link crw-toast-undo', 'Undo'); undo.type = 'button';
+    undo.addEventListener('click', () => restoreEntry(entry, undo));
+    box.replaceChildren(el('span', '', message), undo); hide('crw-toast', false);
+    clearTimeout(toast.timer); toast.timer = setTimeout(() => hide('crw-toast', true), 10000);
+  }
+  async function restoreEntry(id, button) {
+    if (button) button.disabled = true;
+    try {
+      const back = await api(`/cr-workspace/trash/${encoded(id)}/restore`, {method: 'POST', body: {}});
+      toast(`“${back.title}” is back ${back.kind === 'style' ? 'in your Style library' : 'in Projects'}.`);
+      await afterTrashChange(back.kind);
+    } catch (e) {toast(e.message); if (button) button.disabled = false;}
+  }
+  async function afterTrashChange(kind) {
+    if (kind === 'style') {
+      try {state.catalog = await api('/cr-workspace/catalog');} catch (_) {/* the next page load has it */}
+      // a deleted style can't stay chosen on Create: its saved recipe file is gone
+      if (state.selected && !findRecipe(identity(state.selected))) selectRecipe(findRecipe('documentary') || rows()[0]);
+      if (state.page === 'styles') renderStyles();
+    } else await refreshActivity(true);
+    await loadTrash();
+  }
+  async function loadTrash() {
+    try {state.trash = (await api('/cr-workspace/trash')).entries || [];} catch (_) {state.trash = state.trash || [];}
+    for (const [id, kind] of [['crw-trash-videos', 'video'], ['crw-trash-styles', 'style']]) {
+      const box = $(id); if (!box) continue;
+      const mine = state.trash.filter(r => r.kind === kind);
+      box.hidden = !mine.length; box.querySelector('[data-trash-count]').textContent = mine.length ? `(${mine.length})` : '';
+      box.querySelector('.crw-trash-list').replaceChildren(...mine.map(r => {
+        const row = el('div', 'crw-trash-row'), copy = el('div'), days = Number(r.days_left) || 0;
+        copy.append(el('strong', '', r.name || 'Untitled'), el('span', 'crw-field-help', `Deleted ${date(r.deleted_at)} · emptied for good in ${days} day${days === 1 ? '' : 's'}`));
+        const back = el('button', 'crw-secondary-button', 'Restore'); back.type = 'button'; back.setAttribute('aria-label', `Restore ${r.name || 'this item'}`);
+        back.addEventListener('click', () => restoreEntry(r.id, back)); row.append(copy, back); return row;
+      }));
+    }
+  }
+  // A video whose presenter couldn't be made: its film is finished, so it can finish without the presenter, or try
+  // the presenter again later. The choice is for this video only.
+  function presenterChoices(presenter, saved) {
+    const slug = state.openJob, box = el('div', 'crw-voice-choices');
+    box.append(el('p', 'crw-voice-title', 'Finish without the presenter?'));
+    const failed = presenter.failed || {};
+    const why = `${failed.label || 'The presenter service'} couldn't make this video's presenter${failed.reason ? ` ("${failed.reason}")` : ''}.`;
+    box.append(el('p', 'crw-field-help', `${why} The rest of the video is finished and saved. Pick how to carry on.`));
+    for (const choice of presenter.choices || []) {
+      const row = el('div', 'crw-voice-choice'), button = el('button', choice.id === 'skip' ? 'crw-primary-button' : 'crw-secondary-button', choice.label);
+      button.type = 'button'; button.disabled = !choice.ready; row.append(button, el('span', 'crw-field-help', choice.note));
+      button.addEventListener('click', async () => {
+        // its last attempt got no clear answer: that task may have started, and trying again would pay for a second one
+        if (choice.id === 'again' && failed.uncertain && !confirm(`${failed.label || 'The presenter service'} gave no clear answer to this video's last presenter attempt, so it may have started and been charged. Trying again pays for a second presenter if it did. Check that service's task log first. Try the presenter again anyway?`)) return;
+        button.disabled = true;
+        try {
+          await api(`/cr-workspace/presenter-choice/${encoded(slug)}`, {method: 'POST', body: {choice: choice.id}});
+          await api('/cr-submit-project', {method: 'POST', body: {project_id: saved.project_id}});
+          toast(choice.id === 'skip' ? 'Finishing the video without its presenter.' : 'Trying the presenter again. Everything else is reused.'); await refreshActivity();
+        } catch (e) {text('crw-progress-note', e.message);} finally {button.disabled = false;}
+      });
+      box.append(row);
+    }
+    $('crw-progress-actions').append(box);
+  }
   async function openOutput(job) {
     try {
       const data = await api(`/api/result/${encoded(job.slug)}`); if (!data.video) throw new Error('This project has no finished video to open yet.');
       for(const player of all('.crw-video-preview'))player.pause();state.currentOutput = job; text('crw-output-title',job.title || 'Your video'); text('crw-output-message','');
       $('crw-output-video').poster=`/cr-workspace/preview/project/${encoded(job.slug)}.jpg`;$('crw-output-video').src = `/f/video/${encoded(job.slug)}`; $('crw-output-download').href = `/f/video/${encoded(job.slug)}`;
       $('crw-output-editor').href = `/editor/${encoded(job.slug)}`; $('crw-output-editor').hidden = job.editable === false;
-      text('crw-output-editor-label', 'Open timeline');
+      text('crw-output-editor-label', 'Open timeline'); hide('crw-output-timing', job.editable === false);
       // A Ranking Short: its own editor (change a line, swap a clip, remake), the owner's "mini timeline for this format"
-      try {const rk = await api(`/cr-ranking/edit/${encoded(job.slug)}`); if (rk && rk.slots) {$('crw-output-editor').href = `/cr-ranking-edit?job=${encoded(job.slug)}`; text('crw-output-editor-label', 'Edit countdown'); $('crw-output-editor').hidden = false;}} catch (_) {}
+      try {const rk = await api(`/cr-ranking/edit/${encoded(job.slug)}`); if (rk && rk.slots) {$('crw-output-editor').href = `/cr-ranking-edit?job=${encoded(job.slug)}`; text('crw-output-editor-label', 'Edit countdown'); $('crw-output-editor').hidden = false; hide('crw-output-timing', true);}} catch (_) {}
       const exports = [['audio','Narration','audio'],['script','Script','script'],['srt','Subtitles','srt'],['desc','Description','desc']];
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
       for (const name of data.thumbs || data.thumbnails || []) {const filename=typeof name==='string'?name:name.name; if (!filename) continue;const a=el('a','crw-export-link','Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
@@ -716,7 +859,7 @@
       // /api/run performs the authoritative option, account and renderer checks
       // before creating work; a second preflight would repeat those requests.
       const result=await api('/api/run',{method:'POST',body:p});$('crw-rank-reference').value='';save();showPage('projects');   // a Short to remake goes with that video only
-      toast('Your new video project has started.');await refreshActivity(true);
+      toast(['Your new video project has started.', ...(result.warnings || [])].join(' '));await refreshActivity(true);
       const first=(result.queued||[])[0];if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
     } catch(e){error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}finally{state.submitting=false;$('crw-create').textContent='Create video';gate();}
   }
@@ -774,6 +917,9 @@
   $('crw-output').addEventListener('close',()=>{$('crw-output-video').pause();$('crw-output-video').removeAttribute('src');$('crw-output-video').load();});
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
   $('crw-projects-refresh').addEventListener('click',()=>refreshActivity(true));
+  $('crw-delete-confirm').addEventListener('click',confirmDelete);
+  for(const id of ['crw-delete-cancel','crw-delete-close'])$(id).addEventListener('click',()=>$('crw-delete').close());
+  $('crw-delete').addEventListener('close',()=>{state.deleting=null;});
   $('crw-progress-cancel').addEventListener('click',async()=>{const b=$('crw-progress-cancel');if(!b.dataset.run||!state.openJob)return;b.disabled=true;try{await api(`/cr-video/${encoded(state.openJob)}/cancel`,{method:'POST',body:{run_id:b.dataset.run}});toast('Cancellation requested. Completed work stays saved.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}});
   $('crw-presenter-add').addEventListener('click',async()=>{const file=$('crw-presenter-photo').files[0];if(!file){text('crw-presenter-status','Choose a photo of your presenter.');return;}state.uploading=true;gate();text('crw-presenter-status','Adding your presenter…');const form=new FormData();form.append('file',file);form.append('name',$('crw-presenter-name').value);form.append('gender',$('crw-presenter-gender').value);form.append('persona',$('crw-presenter-persona').value);try{const result=await api('/cr-workspace/presenter',{method:'POST',body:form});const row=result.presenter;const o=el('option','',row.name||row.id);o.value=row.id;$('crw-avatar-id').prepend(o);$('crw-avatar-id').value=row.id;text('crw-presenter-status',`${row.name} is ready to present.`);}catch(e){text('crw-presenter-status',e.message);}finally{state.uploading=false;gate();}});
   $('crw-character').addEventListener('input',()=>{characterView();summary();});

@@ -15,8 +15,10 @@ import cr_readiness
 import cr_presentation
 import cr_style_anchor
 import cr_style_clone
+import cr_style_edit
 import cr_style_look
 import cr_style_refine
+import cr_style_sample
 
 HOME = Path(__file__).resolve().parent
 
@@ -162,8 +164,11 @@ def install(studio, activity, setup_status, *, token, home=None):
 
     @app.post("/cr-style-clone/preview")
     def cr_style_preview():
+        """One link, or up to three channels or videos to mix into one style (urls): their videos, listed only."""
         try:
             payload = data()
+            if isinstance(payload.get("urls"), list):
+                return no_store(jsonify(cr_style_clone.preview_many(home, payload["urls"])))
             return no_store(jsonify(cr_style_clone.preview(home, payload.get("url"))))
         except Exception as error:
             return error_response(error)
@@ -400,6 +405,91 @@ def install(studio, activity, setup_status, *, token, home=None):
             if not result.get("style_ready") or not board.is_file() or not board.resolve().is_relative_to(folder.resolve()):
                 return jsonify(error="A validated style board is not available yet."), 404
             return no_store(send_file(board, mimetype="image/jpeg", conditional=False))
+        except Exception as error:
+            return error_response(error)
+
+    def reload_styles():
+        try:
+            studio.styles.load_all()
+            studio.styles.apply_to_engine(studio.mv, studio.motion)
+        except Exception:                                  # noqa: BLE001 - the file is saved; Studio reads it on start
+            app.logger.exception("Styles could not be reloaded after an edit")
+
+    @app.get("/cr-style-clone/style/<name>")
+    def cr_style_editable(name):
+        """A learned style's name, description, creative direction and Create's starting options, to edit."""
+        try:
+            local_access()
+            return no_store(jsonify(cr_style_edit.editable(home, name)))
+        except LookupError as error:
+            return jsonify(error=str(error)), 404
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/style/<name>")
+    def cr_style_edit_save(name):
+        """Save the creator's changes to a learned style (the version before is kept). No model or paid call."""
+        try:
+            payload = data()
+            result = cr_style_edit.save(home, name, payload.get("changes"))
+            reload_styles()
+            return no_store(jsonify(result))
+        except LookupError as error:
+            return jsonify(error=str(error)), 404
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/sample")
+    def cr_style_try_sample():
+        """A few seconds of an installed style on the creator's topic (two pictures, a line of voice, a slow move
+        over each): about $0.05 on their own accounts, only with their approval. A suggestion, never a gate."""
+        try:
+            payload = data()
+            if payload.get("acknowledge_costs") is not True:
+                raise ValueError("Approve the sample's cost on your own accounts first.")
+            if not cr_bridge.load_settings().get("costs_accepted"):
+                raise ValueError("Review your provider spending in setup before drawing a sample.")
+            name = str(payload.get("style") or "")
+            style = (getattr(studio.styles, "STYLES", {}) or {}).get(name)
+            if not isinstance(style, dict):
+                style = cr_style_clone._read(home / "styles" / (name + ".json")) if name.replace("-", "").replace(
+                    "_", "").isalnum() else {}
+            if not style:
+                raise ValueError("Choose an installed style.")
+            look = style.get("look") if isinstance(style.get("look"), dict) else {}
+            import cr_media
+            # drawn only on the creator's own image account through Studio's media receipts (quoted, never paid
+            # twice); the engine's own image path tries other wallets without them, so it never draws a sample
+            if not cr_media.active("images"):
+                raise ValueError(cr_style_sample.NEEDS_IMAGES)
+
+            def generate(prompt, dest, label, ref_urls):
+                return cr_media.image(prompt, dest, label, ref_urls=ref_urls, model=look.get("image_model") or None)
+            return no_store(jsonify(cr_style_sample.start(home, name, style, payload.get("topic"), payload.get("line"),
+                                                          generate=generate, host=studio.mv.host_image,
+                                                          voice=cr_style_sample.kie_voice)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.get("/cr-style-clone/sample/<ident>/status")
+    def cr_style_sample_status(ident):
+        try:
+            local_access()
+            return no_store(jsonify(cr_style_sample.status(home, ident)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.get("/cr-style-clone/sample/<ident>/video.mp4")
+    def cr_style_sample_video(ident):
+        try:
+            local_access()
+            video = cr_style_sample.folder(home, ident) / "sample.mp4"
+            if not video.is_file():
+                return jsonify(error="That sample isn't ready yet."), 404
+            response = send_file(video, mimetype="video/mp4", conditional=True)
+            response.headers["Cache-Control"] = "private, no-cache"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
         except Exception as error:
             return error_response(error)
 

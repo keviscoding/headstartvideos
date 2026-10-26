@@ -85,7 +85,8 @@ def test_running_cancel_stops_owned_group_and_preserves_uncertain_native_receipt
     runner = threading.Thread(target=manager.run, args=(spec(), PROJECT))
     runner.start()
     deadline = time.monotonic() + 5
-    while not ready.exists() and time.monotonic() < deadline:
+    # the file appears before the child's process id is in it: wait for the id (a busy machine lost this race)
+    while not (ready.exists() and ready.read_text().strip()) and time.monotonic() < deadline:
         time.sleep(0.01)
     assert ready.exists()
     assert manager.info("selected")["can_cancel"]
@@ -307,6 +308,7 @@ def test_owned_nonce_is_assigned_before_original_queue_publication_only_for_stan
 
 def test_native_cancel_saves_failed_project_and_reconciles_only_saved_receipts(tmp_path):
     import cr_claude
+    import cr_failure
     studio = fixture_studio(tmp_path)
     saved = tmp_path / "output/cr-claude-cache" / PROJECT
     saved.mkdir(parents=True)
@@ -331,11 +333,15 @@ def test_native_cancel_saves_failed_project_and_reconciles_only_saved_receipts(t
     node = next(node for node in ast.walk(ast.parse((RUNTIME / "cr_studio.py").read_text()))
                 if isinstance(node, ast.FunctionDef) and node.name == "run_owned_spec")
     ns = {"activity": activity, "studio": studio, "json": json, "cr_bridge": bridge,
-          "cr_claude": cr_claude, "video_workers": workers, "original_run": lambda _: pytest.fail("in-process pipeline"),
+          "cr_claude": cr_claude, "cr_failure": cr_failure, "HOME": tmp_path, "video_workers": workers,
+          "original_run": lambda _: pytest.fail("in-process pipeline"),
           "output_artifacts": lambda *a: pytest.fail("Cancelled work cannot publish final artifacts")}
     exec(compile(ast.Module(body=[node], type_ignores=[]), "actual-native-video-wrapper", "exec"), ns)
     ns["run_owned_spec"](spec())
+    failure = report[0].pop("failure")                  # why it stopped, privacy-safe (cr_failure)
     assert report == [{"project_id": PROJECT, "status": "failed", "artifacts": [], "error_code": "cancelled"}]
+    assert failure["category"] == "cancelled" and failure["source"] == "video"
+    assert failure["message"] == "Cancelled on this computer. Saved media and caches are kept."
     assert stages == [complete] and released == ["reservation"]
     assert json.loads((saved / "running.json").read_text())["state"] == "running"
     assert json.loads((saved / "complete.json").read_text())["state"] == "complete"

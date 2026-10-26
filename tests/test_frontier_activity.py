@@ -854,3 +854,20 @@ def test_restricted_elevenlabs_key_is_refused_and_nothing_changes(runtime, monke
     assert refused.status_code == 400 and "Text to Speech" in refused.json["error"]
     assert r.cfg["narration"]["provider"] == "kie"
     assert not (r.job / ".env").exists() or "ELEVENLABS_API_KEY" not in (r.job / ".env").read_text()
+
+
+def test_a_studio_started_from_a_claude_code_chat_drops_the_chats_settings(monkeypatch):
+    chat = {"CLAUDE_EFFORT": "xhigh", "CLAUDECODE": "1", "CLAUDE_PID": "123", "CLAUDE_CODE_ENTRYPOINT": "sdk-ts",
+            "CLAUDE_CODE_SESSION_ID": "s", "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/x.sock", "CLAUDE_CODE_USER_EMAIL": "a@b.c",
+            "CLAUDE_AGENT_SDK_VERSION": "1", "CLAUDE_CODE_SIMPLE": "1", "MCP_CONNECTION_NONBLOCKING": "1"}
+    own = {"CLAUDE_CODE_OAUTH_TOKEN": "t", "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_GIT_BASH_PATH": "C:/git/bash.exe",
+           "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000", "ANTHROPIC_API_KEY": "k", "PATH": "/usr/bin", "CLAUDE_PROVIDER": "claudecode"}
+    environ = {**chat, **own}
+    gone = cr_studio.forget_claude_chat(environ)
+    assert environ == own, "the login and the customer's own Claude settings stay"
+    assert "CLAUDE_EFFORT=xhigh" in gone and "CLAUDE_CODE_USER_EMAIL" in gone
+    assert not any("a@b.c" in x for x in gone), "only names leave, never a personal value"
+    monkeypatch.setattr(cr_studio, "CHAT_SETTINGS_DROPPED", gone)
+    assert cr_studio.chat_line() == "yes, its settings were left out (CLAUDE_EFFORT=xhigh)"
+    monkeypatch.setattr(cr_studio, "CHAT_SETTINGS_DROPPED", [])
+    assert cr_studio.chat_line() == "no"

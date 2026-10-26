@@ -148,8 +148,50 @@ def status(home, look_id) -> dict:
             except Exception:                  # noqa: BLE001 - a recipe since removed: the saved plan is shown
                 pass
         out.update(profile=saved.get("profile"), mapping=mapping, sheets=saved.get("sheets", []),
-                   not_watched=saved.get("not_watched", []), not_measured=saved.get("not_measured", []))
+                   not_watched=saved.get("not_watched", []), not_measured=saved.get("not_measured", []),
+                   shorts=bool(saved.get("references")) and all(r.get("short") for r in saved["references"]))
+        try:
+            out["similar"] = similar(home, look_id, saved.get("profile") or {}, base=mapping.get("base") or "",
+                                     shorts=out["shorts"])
+        except Exception:                      # noqa: BLE001 - a suggestion never stands in the way of the look
+            out["similar"] = []
     return out
+
+
+def similar(home, look_id, profile, *, base="", shorts=False) -> list:
+    """The 2-3 installed styles closest to what Studio saw (cr_style_map.similar), each with its name, a picture of it,
+    a link to use it and whether a few seconds of it can be drawn on the creator's topic first (cr_style_sample).
+    Suggestions only: the study is offered the same either way."""
+    import cr_presentation
+    import cr_style_map
+    import cr_style_sample
+    from urllib.parse import quote
+    styles, profiles = {}, {}
+    for path in sorted(glob.glob(str(Path(home) / "styles" / "*.json"))):
+        style = _read(path)
+        if style:
+            styles[Path(path).stem] = style
+            seen = learned_profile(home, style)
+            if seen:
+                profiles[Path(path).stem] = seen
+    out = []
+    for row in cr_style_map.similar(profile, styles, profiles=profiles, shorts=shorts, base=base, look_id=look_id):
+        style = styles[row["id"]]
+        named = cr_presentation.RECIPES.get(row["id"])
+        out.append({**row, "name": named[0] if named else str(style.get("label") or row["id"]),
+                    "description": str(named[2] if named else style.get("tagline") or style.get("description") or "")[:240],
+                    "preview_url": "/cr-workspace/preview/recipe/" + quote(row["id"], safe="") + ".jpg",
+                    "use_url": "/?cr-preset=" + quote(row["id"], safe=""),
+                    "sample": cr_style_sample.offer(style, name=row["id"], profile=profiles.get(row["id"]))})
+    return out
+
+
+def learned_profile(home, style) -> dict:
+    """What Studio saw of the channel a learned style was studied from (its look's profile), {} for any other style."""
+    learned = (((style or {}).get("cr_style_clone") or {}).get("learned_v2") or {}).get("look_id")
+    if not learned or not _ID.fullmatch(str(learned)):
+        return {}
+    return _read(folder(home, learned) / "look.json").get("profile") or {}
 
 
 # ── the work ───────────────────────────────────────────────────────────────────────────────────────────────

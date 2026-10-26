@@ -182,6 +182,26 @@ def test_native_kie_motion_does_not_switch_unselected_tasks_or_an_explicit_hub(h
     assert observed[-1][0] == "atlas" and observed[-1][1]["image"] == "https://files.example/frame"
 
 
+def test_a_kie_presenter_is_sent_the_prompt_kie_requires(hub, monkeypatch):
+    """Kie's Kling avatar models refuse a request without a prompt ({"code": 500, "msg": "prompt is required"},
+    measured 2026-10-25), so every AI presenter on a Kie account stopped its video at the intro."""
+    sent = []
+    monkeypatch.setattr(media.requests, "post", lambda url, **k: sent.append(k["json"]) or
+                        response({"code": 200, "data": {"taskId": "avatar-task"}}))
+    monkeypatch.setattr(media.requests, "get", lambda *a, **k: response({"code": 200, "data": {
+        "state": "success", "resultJson": json.dumps({"resultUrls": ["https://files.example/presenter.mp4"]})}}))
+    media.avatar_clip("kling-standard", "https://files.example/face", "https://files.example/voice", hub / "avatar.mp4")
+    assert sent[0]["model"] == "kling/ai-avatar-standard"
+    prompt = sent[0]["input"]["prompt"]
+    assert prompt.strip() and len(prompt) <= 5000 and "speaks" in prompt
+    # a shot's own movement (the engine's motion argument) leads the prompt, through the engine's routed call
+    wrapped = media.route_avatar(lambda *a, **k: pytest.fail("the Kie account renders the presenter"))
+    wrapped("pruna", "https://files.example/face", "https://files.example/voice", hub / "avatar_2.mp4", lambda *_: None,
+            "Leans toward the camera")
+    assert sent[1]["input"]["prompt"].startswith("Leans toward the camera ")
+    assert sent[1]["input"]["image_url"] == "https://files.example/face"
+
+
 def test_native_presenter_receives_positional_motion_when_replacement_is_off(hub, monkeypatch):
     media.cr_bridge.save_settings({"costs_accepted": True, "narration": {"provider": "kie"}})
     calls = []
@@ -519,6 +539,25 @@ def test_narration_stops_after_three_uncharged_failures_and_resume_tries_again(h
     assert len(creates) == 4
 
 
+def test_a_shorts_voice_rides_out_a_passing_kie_timeout_like_a_long_video(hub, monkeypatch):
+    """The Shorts call run("narration") themselves. One uncharged Kie "generate task timeout" (failCode 524) stopped a
+    whole Photo Comedy Short on the dev Studio (sweep, 2026-10-26); the long-video voice already rode such errors out."""
+    timeout = {"state": "fail", "failCode": "524", "failMsg": "generate task timeout.", "creditsConsumed": 0}
+    creates = kie_tasks(monkeypatch, [timeout, "success"])
+    pauses, said = [], []
+    monkeypatch.setattr(media.time, "sleep", pauses.append)
+    dialogue = {"speakers": [{"speaker_id": "Speaker 1", "voice_name": "Puck"}],
+                "dialogue_turns": [{"speaker_id": "Speaker 1", "text": "Hello."}]}
+    media.run("narration", dialogue, hub / "voice_raw.wav", model="google/gemini-3-8-flash-tts", log=said.append)
+    assert len(creates) == 2 and creates[0] == creates[1] and (hub / "voice_raw.wav").read_bytes() == b"generated media"
+    assert pauses == [30] and any("trying again in 30 s" in line for line in said)
+    # a picture's failure is never submitted again here (pictures keep their own model fallbacks)
+    picture = kie_tasks(monkeypatch, [timeout, "success"])
+    with pytest.raises(media.TaskFailed):
+        media.run("images", {"prompt": "A cat"}, hub / "cat.png", model="nano-banana-2-1")
+    assert len(picture) == 1
+
+
 def test_resume_tries_again_when_kie_did_not_say_what_the_failed_voice_cost(hub, monkeypatch):
     unknown = {"state": "fail", "failCode": "500", "failMsg": "Internal Error, Please try again later"}
     creates = kie_tasks(monkeypatch, [unknown, "success"])
@@ -694,3 +733,92 @@ def test_a_refused_upload_is_not_sent_again(hub, monkeypatch):
     with pytest.raises(media.AccountStop, match="HTTP 401"):
         media.upload(clip, task="images")
     assert len(posts) == 1, "a refusal is the account, not the connection"
+
+
+# A presenter intro that Kie failed with a 500 stopped a customer's finished 10-minute video at its last step, and
+# every Resume met the same failed receipt (2026-10-25). It now stops with a choice for that video, and the creator's
+# Resume may try a presenter Kie failed on its own side again; Studio never does by itself.
+
+def _presenter_engine(job, behaviour):
+    calls = []
+
+    def original(final, job_, mp3, srt, avatar_id, avatar_s, force, avatar_count=1):
+        calls.append(avatar_s)
+        return behaviour(Path(final), avatar_s)
+    engine = SimpleNamespace(log=lambda *_: None, _maybe_presenter=original)
+    engine._maybe_presenter = media.make_presenter(engine, original)
+    return engine, calls
+
+
+def test_a_failed_presenter_stops_with_a_choice_and_skip_finishes_without_it(hub, monkeypatch):
+    job = hub / "the-heist"
+    job.mkdir()
+    final = job / "video.mp4"
+    final.write_bytes(b"the finished film")
+    receipt = {"status": "failed", "id": "avatar-task", "credits": 0, "failure_code": "500",
+               "failure_message": "Internal Error, Please try again later"}
+
+    def fails(final_, avatar_s):
+        final_.replace(final_.with_name("video_plain.mp4"))        # the engine moved the film aside first
+        raise media.TaskFailed("kie", receipt, "avatars")
+    engine, _ = _presenter_engine(job, fails)
+    with pytest.raises(media.AccountStop) as stop:
+        engine._maybe_presenter(final, job, job / "audio.mp3", job / "subs.srt", "anna", 9.0, False, 1)
+    message = str(stop.value)
+    assert "couldn't make this video's presenter" in message and "Internal Error" in message
+    assert "finish it without the presenter" in message and "try the presenter again" in message
+    assert final.read_bytes() == b"the finished film", "the film is back where everything expects it"
+    failed = json.loads((job / media.PRESENTER_FAILED).read_text(encoding="utf-8"))
+    assert failed["charged"] == 0 and failed["category"] == "model_failure" and failed["uncertain"] is False
+    (job / media.PRESENTER_CHOICE).write_text(json.dumps({"skip": True}), encoding="utf-8")
+    finishing = []
+    engine2, _ = _presenter_engine(job, lambda f, s: finishing.append(s) or f)
+    assert engine2._maybe_presenter(final, job, job / "audio.mp3", job / "subs.srt", "anna", 9.0, False, 1) == final
+    assert finishing == [0], "the presenter step runs with no presenter asked for"
+    assert not (job / media.PRESENTER_FAILED).exists(), "a video that finished clears its stop"
+    assert media.job_presenter(hub / "another") == {}
+
+
+def test_a_cancelled_presenter_is_not_offered_choices(hub):
+    job = hub / "cancelled"
+    job.mkdir()
+    cancelled = {"status": "failed", "id": "t", "failure_code": "cancelled", "credits": 0}
+    engine, _ = _presenter_engine(job, lambda f, s: (_ for _ in ()).throw(media.TaskFailed("kie", cancelled, "avatars")))
+    with pytest.raises(media.TaskFailed):
+        engine._maybe_presenter(job / "video.mp4", job, job / "a.mp3", job / "s.srt", "anna", 9.0, False)
+    assert not (job / media.PRESENTER_FAILED).exists()
+
+
+def test_resume_tries_a_presenter_kie_failed_on_its_side_but_studio_never_does(hub, monkeypatch):
+    creates = kie_tasks(monkeypatch, [KIE_INTERNAL, "success"])
+    dest = hub / "avatar.mp4"
+    with pytest.raises(media.TaskFailed, match="Resume saved project"):
+        media.avatar_clip("kling-standard", "https://files.example/face", "https://files.example/voice", dest)
+    assert len(creates) == 1, "no automatic retry of a paid presenter"
+    media.avatar_clip("kling-standard", "https://files.example/face", "https://files.example/voice", dest)  # Resume
+    assert len(creates) == 2 and dest.read_bytes() == b"generated media"
+    receipt = {"status": "failed", "id": "t", "credits": 0, "failure_code": "500", "failure_message": "Internal error"}
+    assert not media.fresh_attempt_ok("kie", "avatars", receipt), "never by itself"
+    assert media.fresh_attempt_ok("kie", "avatars", receipt, asked=True)
+    assert not media.fresh_attempt_ok("kie", "avatars", {**receipt, "credits": 2.5}, asked=True)
+    assert not media.fresh_attempt_ok("kie", "avatars", {**receipt, "failure_code": "402",
+                                                         "failure_message": "Insufficient credits"}, asked=True)
+
+
+def test_an_uncertain_presenter_submission_is_sent_again_only_when_the_creator_chooses(hub, monkeypatch):
+    """Kie answering the submission itself with a server error leaves it unclear whether the task started: Resume
+    never sends it again by itself; "try the presenter again" (whose note says it may pay twice) does."""
+    sent = []
+    monkeypatch.setattr(media.requests, "post", lambda *a, **k: sent.append(1) or response({"code": 500, "msg": "busy"}))
+    dest = hub / "avatar.mp4"
+    with pytest.raises(media.AccountStop, match="code 500"):
+        media.avatar_clip("kling-standard", "https://f/face", "https://f/voice", dest)
+    with pytest.raises(media.AccountStop, match="uncertain result"):
+        media.avatar_clip("kling-standard", "https://f/face", "https://f/voice", dest)
+    assert len(sent) == 1
+    assert len(media.uncertain_presenter(hub)) == 1
+    assert media.retry_presenter(hub) == 1 and media.uncertain_presenter(hub) == []
+    creates = kie_tasks(monkeypatch, ["success"])
+    media.avatar_clip("kling-standard", "https://f/face", "https://f/voice", dest)
+    assert len(creates) == 1 and dest.read_bytes() == b"generated media"
+    assert any(".uncertain-" in p.name for p in (hub / ".cr-tasks").glob("*.json")), "the uncertain receipt is kept"
