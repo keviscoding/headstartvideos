@@ -468,7 +468,9 @@ def _install_budget(module):
 # video with one plain line, and the video goes on with the clips already found. Each line also reaches Create's
 # footage note (.cr-logs/footage-watcher.json) and Claude Code's progress tool.
 CR_WINDOW_S = 240                                     # the server's scout window (studio_ranking.MODES["scout"])
-CR_WHOLE_MAX_S = 480                                  # the most of one whole video watched there (engine: FOCUS_MAX_S)
+# a video watched whole goes there as one window: its first four minutes (the plan's clip watches are shared with
+# Ranking Shorts, and a trial has 60 a month); a stretch the engine chose is watched in full, window by window
+CR_WHOLE_MAX_S = CR_WINDOW_S
 CR_WAIT_S = 600                                       # one watch's wait, queue included (the server gives up at 900)
 CR_POLL_S = 4.0
 CR_PATIENCE_S = 90                                    # connection trouble retried this long (POSTs are deduplicated)

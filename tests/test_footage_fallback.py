@@ -152,11 +152,11 @@ def test_kie_down_hands_every_watch_to_channelrecipe_and_stops_asking_kie_after_
     posts = run.service.posts
     assert {p["use_credits"] for p in posts} == {False} and {p["mode"] for p in posts} == {"scout"}
     assert all(p["end"] - p["start"] <= 240 for p in posts)
-    assert sorted({(p["start"], p["end"]) for p in posts}) == [(0, 240), (240, 300)], "a 5-minute video in 2 windows"
-    assert len(posts) == 12
+    assert {(p["start"], p["end"]) for p in posts} == {(0, 240)}, "a video watched whole: its first four minutes"
+    assert len(posts) == 6
     taken = said(run.engine.lines, "ChannelRecipe's own watcher takes over")
     assert len(taken) == 1 and "never your credits" in taken[0] and "Kie's video watcher isn't answering" in taken[0]
-    assert said(run.engine.lines, "ChannelRecipe's watcher watched 6 video(s) (12 clip watches) because Kie's watcher "
+    assert said(run.engine.lines, "ChannelRecipe's watcher watched 6 video(s) (6 clip watches) because Kie's watcher "
                                   "wasn't answering.")
     outcome = watch.last_outcome(run.home)
     assert outcome["channelrecipe_watched"] == 6 and outcome["kie_failed"] == 3
@@ -344,16 +344,15 @@ def test_the_engines_own_watch_path_takes_channelrecipes_shots_on_its_own_clock(
     work = tmp_path / "youtube"
     watch._budget[watch._bkey(work)] = b
     try:
-        whole = module.shots("vidwhole001", work)              # watched whole: 0-240 and 240-300
+        whole = module.shots("vidwhole001", work)              # watched whole: its first four minutes
         long_ = module.shots("vidstretch1", work, [[400.0, 700.0]])   # a stretch of a long video
     finally:
         watch._budget.pop(watch._bkey(work), None)
-    assert [module._sec(s["start"]) for s in whole["shots"]] == [10.0, 250.0]
+    assert [module._sec(s["start"]) for s in whole["shots"]] == [10.0]
     # the engine's own stretch() put the clip's clock back on the video's: 400 + 10 and 640 + 10, then (its rule: a
     # model can stop before the clip ends) it watched the tail after the last shot once more: 653-700, a shot at 663
     assert [module._sec(s["start"]) for s in long_["shots"]] == [410.0, 650.0, 663.0]
-    assert [(p["start"], p["end"]) for p in run.service.posts] == [(0, 240), (240, 300), (400, 640), (640, 700),
-                                                                    (653, 700)]
+    assert [(p["start"], p["end"]) for p in run.service.posts] == [(0, 240), (400, 640), (640, 700), (653, 700)]
     saved = json.loads((work / "catalog" / "vidstretch1.json").read_text(encoding="utf-8"))
     assert saved["schema"] == module.CATALOG_SCHEMA and saved["spans"] == [[400.0, 700.0]]
     assert any("api.kie.ai" in url for url in sent), "Kie was asked first"
