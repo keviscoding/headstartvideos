@@ -259,6 +259,19 @@ def _option(args, name, default=""):
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 VISUAL_EFFORT = "medium"
 _effort_flag: dict = {}
+_call_effort = ContextVar("cr_call_effort", default=None)
+
+
+@contextmanager
+def call_effort(level):
+    """Every stage started by this thread inside the block asks for `level` ("default": the CLI's own, no --effort).
+    For a caller deep in the engine that can't add options to its command (Style Lab's renderer drafts); the stage's
+    fingerprint is unchanged, and other threads' stages are not affected."""
+    token = _call_effort.set(str(level or "").strip().lower())
+    try:
+        yield
+    finally:
+        _call_effort.reset(token)
 
 
 def stage_effort(role, environ=None):
@@ -559,7 +572,13 @@ class Runtime:
         asked = _option(args, "--effort", "")
         if asked == "default":                             # a caller that wants the CLI's own effort for this call
             command = _drop_option(command, "--effort")
-        effort = "" if asked else stage_effort(role)
+        scoped = _call_effort.get()
+        if asked:
+            effort = ""                                    # the caller's own (or "default", dropped above)
+        elif scoped == "default":
+            effort = ""
+        else:
+            effort = scoped if scoped in EFFORT_LEVELS else stage_effort(role)
         if effort and supports_effort(self.executable, environment=kwargs.get("env")):
             command = _replace_option(command, "--effort", effort)
         env = clean_environment(kwargs.get("env"))

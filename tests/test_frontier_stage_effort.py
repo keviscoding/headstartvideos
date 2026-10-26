@@ -145,3 +145,19 @@ def test_a_caller_can_keep_the_clis_own_effort_for_one_call(tmp_path, monkeypatc
     runtime(tmp_path, monkeypatch, invoke).run(OPUS + ["--effort", "default"], input="Write the renderer", text=True)
     (command, env), = stages(calls)
     assert "--effort" not in command and "default" not in command
+
+
+def test_a_block_can_ask_for_its_own_effort_on_this_thread_only(tmp_path, monkeypatch):
+    import threading
+    invoke, calls = cli()
+    run = runtime(tmp_path, monkeypatch, invoke)
+    with cr_claude.call_effort("default"):
+        run.run(OPUS, input="Renderer draft", text=True)
+        other = threading.Thread(target=lambda: run.run(OPUS, input="Another section", text=True))
+        other.start()
+        other.join()
+    with cr_claude.call_effort("high"):
+        run.run(OPUS, input="Think harder", text=True)
+    run.run(OPUS, input="After the block", text=True)
+    asked = [cr_claude._option(command, "--effort") or None for command, env in stages(calls)]
+    assert asked == [None, "medium", "high", "medium"], "only the block's own thread changes"
