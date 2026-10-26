@@ -20,6 +20,7 @@ from webapp import database as db
 KEY = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
 OS_FAMILIES = {"windows", "mac", "linux", "other"}
 MAX_FAILING = 24
+MAX_DAYS = 90                    # a report older than this says nothing about today's setup
 
 _ready: set = set()
 _ready_lock = threading.Lock()
@@ -62,13 +63,13 @@ def initialize():
         if key in _ready:
             return
         with db._conn() as conn:
-            if db.IS_PG:
-                conn.execute("SELECT pg_advisory_xact_lock(726346124)")
+            db.schema_lock(conn, "studio_setup")
             conn.execute("""CREATE TABLE IF NOT EXISTS studio_setup_reports (
                 user_id INTEGER PRIMARY KEY, ready INTEGER NOT NULL DEFAULT 0, failing_json TEXT NOT NULL DEFAULT '[]',
                 os TEXT NOT NULL DEFAULT 'other', version TEXT NOT NULL DEFAULT '',
                 first_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL,
                 first_ready_at DOUBLE PRECISION)""")
+            conn.execute(db._q("DELETE FROM studio_setup_reports WHERE updated_at < ?"), (time.time() - MAX_DAYS * 86400,))
         _ready.add(key)
 
 
