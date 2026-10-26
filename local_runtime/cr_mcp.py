@@ -151,7 +151,10 @@ def _message(url, headers, payload):
                 if len(data) > 2_000_000:
                     raise RuntimeError("ChannelRecipe returned an oversized workflow response.")
             return json.loads(data), session
-    except requests.RequestException:
+    except requests.RequestException as error:
+        if never_reached_server(error):
+            # the connection retry above already waited out about 90 s of a deploy or a network drop: give up now
+            raise RuntimeError("Could not connect to ChannelRecipe's workflow tools. Check setup and your connection.") from None
         # a read timeout, a reset or a cut stream after the request went out: the answer was lost
         raise TransportError("Could not connect to ChannelRecipe's workflow tools. Check setup and your connection.") from None
     except (ValueError, UnicodeError):

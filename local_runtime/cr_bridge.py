@@ -1,6 +1,7 @@
 """ChannelRecipe Studio bridge. No CR platform generation credentials in the download."""
 from __future__ import annotations
 import base64
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -58,24 +59,40 @@ def workflow_view(result):
 # lost answer can never make work twice: a stage is authorized once per stage id (asking again gets that stage's saved
 # state or a refusal, never a second run), and a stage's or a project's result is saved once (the same result again
 # is "reused"). One gateway error page on one of these (Cloudflare's 521, 2026-10-26) stopped a whole FOLIO video at
-# shot 8 of 22: "ChannelRecipe could not authorize this stage". Starting a project (begin) and an approved retry are
-# never resent; page reads (prepare, progress) answer at once as before.
+# shot 8 of 22: "ChannelRecipe could not authorize this stage". Only a video's own stage calls are this patient
+# (cr_claude.Runtime, inside patient_stage_calls()), for about 3 minutes in all: Studio's pages, receipt syncs and
+# the run thread's completion record answer at once as before, so a lock they hold is never held for minutes.
+# Starting a project (begin), an approved retry and page reads (prepare, progress) are never resent.
 RETRY_TOOLS = {"local_studio_authorize_stage", "local_studio_finish_stage", "local_studio_finish_project"}
-TOOL_RETRY_DELAYS = (5, 15, 30, 60, 90)          # about 3 minutes: a deploy, a gateway hiccup or a Wi-Fi drop
+TOOL_RETRY_DELAYS = (5, 15, 30, 60)
+STAGE_CALL_PATIENCE_S = 180                      # a deploy, a gateway hiccup or a Wi-Fi drop
+_patience = threading.local()
 
 
-def _mcp_tool(name, payload, *, sleep=None):
+@contextmanager
+def patient_stage_calls():
+    """Within this block, this thread's stage calls are sent again after a lost answer (cr_mcp.TransportError)."""
+    previous = getattr(_patience, "on", False)
+    _patience.on = True
+    try:
+        yield
+    finally:
+        _patience.on = previous
+
+
+def _mcp_tool(name, payload, *, sleep=None, clock=None):
     try:
         import cr_mcp
     except ImportError:
         from . import cr_mcp
-    sleep = sleep or time.sleep
-    delays = TOOL_RETRY_DELAYS if name in RETRY_TOOLS else ()
+    sleep, clock = sleep or time.sleep, clock or time.monotonic
+    delays = TOOL_RETRY_DELAYS if name in RETRY_TOOLS and getattr(_patience, "on", False) else ()
+    deadline = clock() + STAGE_CALL_PATIENCE_S
     for attempt in range(len(delays) + 1):
         try:
             return workflow_view(cr_mcp.call_tool(name, {"payload": payload}, load_settings()))
         except cr_mcp.TransportError:
-            if attempt == len(delays):
+            if attempt == len(delays) or clock() + delays[attempt] > deadline:
                 raise
             sleep(delays[attempt])
 

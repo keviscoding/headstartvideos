@@ -3,7 +3,9 @@
 A FOLIO video stopped at shot 8 of 22 with "ChannelRecipe could not authorize this stage": the dev Studio's log showed
 one Cloudflare 521 page ("web server is down") for that one authorization. Lost answers are now TransportError, and
 cr_bridge sends again only the calls ChannelRecipe records under their own ids (authorize, finish a stage, finish a
-project). The request-level rule in test_studio_connect_retry stays: _message itself never resends anything.
+project), and only for a video's own stage calls (cr_claude.Runtime, inside patient_stage_calls), for about 3
+minutes in all: Studio's pages, receipt syncs and the run thread's completion record answer at once (review,
+2026-10-26). The request-level rule in test_studio_connect_retry stays: _message itself never resends anything.
 """
 import sys
 from pathlib import Path
@@ -85,22 +87,53 @@ def flaky(monkeypatch, failures, answer=None):
 @pytest.mark.parametrize("tool", sorted(cr_bridge.RETRY_TOOLS))
 def test_a_stage_call_rides_out_lost_answers_with_the_same_request(monkeypatch, tool):
     sent, sleeps = flaky(monkeypatch, 2), []
-    assert cr_bridge._mcp_tool(tool, {"stage_id": "cc_" + "a" * 64}, sleep=sleeps.append)["execute"] is True
+    with cr_bridge.patient_stage_calls():
+        assert cr_bridge._mcp_tool(tool, {"stage_id": "cc_" + "a" * 64}, sleep=sleeps.append)["execute"] is True
     assert sent == [(tool, {"payload": {"stage_id": "cc_" + "a" * 64}})] * 3 and sleeps == [5, 15]
 
 
-def test_a_long_outage_still_stops_after_about_three_minutes(monkeypatch):
-    sent, sleeps = flaky(monkeypatch, 99), []
+@pytest.mark.parametrize("tool", sorted(cr_bridge.RETRY_TOOLS))
+def test_pages_syncs_and_the_completion_record_answer_at_once(monkeypatch, tool):
+    """Outside a video's stage calls (Setup's recovery list syncing receipts under Studio's busy lock, the run thread's
+    completion record) nothing waits: a lost answer is reported at once, as before."""
+    sent = flaky(monkeypatch, 1)
     with pytest.raises(cr_mcp.TransportError):
-        cr_bridge._mcp_tool("local_studio_authorize_stage", {}, sleep=sleeps.append)
-    assert len(sent) == len(cr_bridge.TOOL_RETRY_DELAYS) + 1 and sum(sleeps) == 200
+        cr_bridge._mcp_tool(tool, {}, sleep=lambda s: pytest.fail("no wait outside a stage call"))
+    assert len(sent) == 1
+
+
+def test_a_long_outage_still_stops_after_about_three_minutes(monkeypatch):
+    now = [0.0]
+
+    def call_tool(name, arguments, settings):
+        now[0] += 50                                      # each lost answer took a 45 s read timeout and more
+        raise cr_mcp.TransportError("ChannelRecipe's workflow connection needs attention. Check setup and try again.")
+
+    monkeypatch.setattr(cr_mcp, "call_tool", call_tool)
+    monkeypatch.setattr(cr_bridge, "load_settings", lambda: {})
+    with cr_bridge.patient_stage_calls(), pytest.raises(cr_mcp.TransportError):
+        cr_bridge._mcp_tool("local_studio_authorize_stage", {}, sleep=lambda s: now.__setitem__(0, now[0] + s),
+                            clock=lambda: now[0])
+    assert now[0] <= cr_bridge.STAGE_CALL_PATIENCE_S + 60, f"gave up after {now[0]:.0f} s"
+
+
+def test_a_connection_that_never_reached_channelrecipe_is_not_waited_out_twice(monkeypatch):
+    """The connection retry already waited out about 90 s; the stage call doesn't wait all of that again."""
+    from urllib3.exceptions import MaxRetryError, NewConnectionError
+    reason = NewConnectionError(None, "Failed to establish a new connection: [Errno 61] Connection refused")
+    refused = requests.exceptions.ConnectionError(MaxRetryError(None, "/mcp", reason=reason))
+    monkeypatch.setattr(cr_mcp, "CONNECT_RETRY_DELAYS", ())
+    monkeypatch.setattr(cr_mcp.requests, "post", lambda *a, **k: (_ for _ in ()).throw(refused))
+    with pytest.raises(RuntimeError, match="Could not connect") as failure:
+        cr_mcp._message("https://channelrecipe.com/mcp", {}, {"jsonrpc": "2.0", "id": 2, "method": "tools/call"})
+    assert not isinstance(failure.value, cr_mcp.TransportError)
 
 
 @pytest.mark.parametrize("tool", ["local_studio_begin", "local_studio_retry_stage", "local_studio_prepare",
                                   "local_studio_progress"])
 def test_starting_work_an_approved_retry_and_page_reads_are_never_resent(monkeypatch, tool):
     sent, sleeps = flaky(monkeypatch, 1), []
-    with pytest.raises(cr_mcp.TransportError):
+    with cr_bridge.patient_stage_calls(), pytest.raises(cr_mcp.TransportError):
         cr_bridge._mcp_tool(tool, {}, sleep=sleeps.append)
     assert len(sent) == 1 and sleeps == []
 
@@ -116,7 +149,7 @@ def test_answers_and_protocol_faults_are_not_resent(monkeypatch, error):
 
     monkeypatch.setattr(cr_mcp, "call_tool", call_tool)
     monkeypatch.setattr(cr_bridge, "load_settings", lambda: {})
-    with pytest.raises(type(error)):
+    with cr_bridge.patient_stage_calls(), pytest.raises(type(error)):
         cr_bridge._mcp_tool("local_studio_authorize_stage", {}, sleep=lambda s: pytest.fail("no wait"))
     assert sent == [1]
 
@@ -177,14 +210,15 @@ def rows(owner, project):
 def test_a_gateway_page_before_the_server_acted_authorizes_the_stage_once(server, monkeypatch):
     owner, project = server
     wire(monkeypatch, owner, lambda n: "before" if n == 1 else None)
-    approval = cr_bridge._mcp_tool("local_studio_authorize_stage", stage_request(project), sleep=lambda s: None)
+    with cr_bridge.patient_stage_calls():
+        approval = cr_bridge._mcp_tool("local_studio_authorize_stage", stage_request(project), sleep=lambda s: None)
     assert approval["execute"] is True and len(rows(owner, project)) == 1
 
 
 def test_an_answer_lost_after_the_server_authorized_is_refused_not_run_twice(server, monkeypatch):
     owner, project = server
     wire(monkeypatch, owner, lambda n: "after" if n == 1 else None)
-    with pytest.raises(cr_mcp.WorkflowError, match="already started or stopped"):
+    with cr_bridge.patient_stage_calls(), pytest.raises(cr_mcp.WorkflowError, match="already started or stopped"):
         cr_bridge._mcp_tool("local_studio_authorize_stage", stage_request(project), sleep=lambda s: None)
     assert [r["status"] for r in rows(owner, project)] == ["authorized"], "one stage, one authorization"
 
@@ -192,9 +226,32 @@ def test_an_answer_lost_after_the_server_authorized_is_refused_not_run_twice(ser
 def test_a_saved_result_whose_answer_was_lost_is_reused(server, monkeypatch):
     owner, project = server
     wire(monkeypatch, owner, lambda n: "after" if n == 2 else None)
-    approval = cr_bridge._mcp_tool("local_studio_authorize_stage", stage_request(project), sleep=lambda s: None)
+    with cr_bridge.patient_stage_calls():
+        approval = cr_bridge._mcp_tool("local_studio_authorize_stage", stage_request(project), sleep=lambda s: None)
     receipt = {"project_id": project["id"], "stage_id": "cc_" + "b" * 64, "authorization_token": approval["authorization_token"],
                "status": "complete", "result_fingerprint": "c" * 64, "error_code": "",
                "usage": {"input_tokens": 10, "output_tokens": 5}}
-    saved = cr_bridge._mcp_tool("local_studio_finish_stage", receipt, sleep=lambda s: None)
+    with cr_bridge.patient_stage_calls():
+        saved = cr_bridge._mcp_tool("local_studio_finish_stage", receipt, sleep=lambda s: None)
     assert saved["saved"] and saved["reused"] and [r["status"] for r in rows(owner, project)] == ["complete"]
+
+
+def test_a_videos_claude_stage_is_patient_and_nothing_else_is(tmp_path, monkeypatch):
+    """cr_claude.Runtime (a video's Claude stage) sends a lost authorization again; a receipt sync does not."""
+    import json
+    from types import SimpleNamespace
+    import cr_claude
+    sent = flaky(monkeypatch, 1, answer={"execute": True, "authorization_token": "x" * 32,
+                                         "selected_model": cr_claude.GENERAL_MODEL})
+    monkeypatch.setattr(cr_bridge.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **kw: {"ready": True, "account_fingerprint": "a" * 64})
+    monkeypatch.setattr(cr_claude, "_source_context", lambda: (2000, "make_video:metadata"))
+    cfg = {"brain_mode": "claudecode", "costs_accepted": True}
+    bridge = SimpleNamespace(HOME=tmp_path, load_settings=lambda: cfg, current_project=lambda: {"id": "crv_" + "1" * 24},
+                             authorize_stage=cr_bridge.authorize_stage, finish_stage=lambda receipt: {"saved": True},
+                             patient_stage_calls=cr_bridge.patient_stage_calls)
+    done = SimpleNamespace(returncode=0, stderr="", stdout="A description.")
+    cr_claude.Runtime(SimpleNamespace(), bridge, "/fake/claude", lambda *a, **k: done).run(
+        ["/fake/claude", "--print", "--model", "sonnet"], input="Describe the video.", text=True)
+    assert [name for name, _ in sent] == ["local_studio_authorize_stage"] * 2
+    assert not getattr(cr_bridge._patience, "on", False), "patience ends with the stage"

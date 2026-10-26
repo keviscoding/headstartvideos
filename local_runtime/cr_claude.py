@@ -16,7 +16,7 @@ import subprocess
 import threading
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 
 try:
@@ -464,7 +464,9 @@ class Runtime:
     def run(self, args, *positional, **kwargs):
         if not self.handles(args):
             return self.real_run(args, *positional, **kwargs)
-        with _slots:
+        # the stage's own calls to ChannelRecipe ride out a lost answer for about 3 minutes (cr_bridge)
+        patient = getattr(self.bridge, "patient_stage_calls", None)
+        with _slots, (patient() if callable(patient) else nullcontext()):
             return self.execute(args,*positional,**kwargs)
 
     def execute(self,args,*positional,**kwargs):
