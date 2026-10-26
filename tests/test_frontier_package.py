@@ -254,9 +254,12 @@ def test_engine_machine_checks_are_patched_for_customer_computers():
     patched = package.patch_engine("reflearn.py", reflearn).decode()
     assert '_envf("REFLEARN_MIN_DISK_GB", 3)' in patched and '"REFLEARN_MIN_MEM_LEVEL", 20' in patched
     quest = (b"def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:\n"
-             b"    pass\n    lvl = 45 if light else 40\n")
+             b"    pass\n    lvl = 45 if light else 40\n"
+             b"    fonts = [{\"family\": fam, \"b64\": (FONTS / f).read_bytes(), \"desc\": d}\n"
+             b"             for fam, f, d in FONT_FACES]\n")
     patched = package.patch_engine("quest_hud.py", quest).decode()
     assert "min_free_gb: float = 3.0" in patched and "lvl = 25 if light else 20" in patched
+    assert "for fam, f, d in FONT_FACES if (FONTS / f).is_file()]" in patched, "QUEST's HUD without Montserrat-Book"
     assert package.patch_engine("other.py", b"unchanged") == b"unchanged"
     with pytest.raises(ValueError, match="no longer matches"):
         package.patch_engine("reflearn.py", b"a different engine")
@@ -634,3 +637,21 @@ def test_the_designed_cast_kit_ships_only_from_the_private_folder(tmp_path, monk
         package.private_threed_resources(root)
     monkeypatch.setattr(package, "ROOT", tmp_path / "nothing")
     assert package.patch_engine("threed/catalog.json", b'{"kinds": {}}') == b'{"kinds": {}}', "no kit: unchanged"
+
+
+def test_quests_hud_is_laid_although_the_release_lacks_one_font_face(tmp_path):
+    """The real engine source, patched as the release builds it: every face it registers either ships or is left out
+    (Montserrat-Book.ttf never shipped, so every QUEST video lost its whole game HUD; sweep 2026-10-26)."""
+    import zipfile
+    source = Path.home() / "Downloads" / "Frontier" / "files" / "v5" / "Frontier-5.3-FULL.zip"
+    if not source.is_file():
+        pytest.skip("the private engine source is not on this computer")
+    with zipfile.ZipFile(source) as engine:
+        names = set(engine.namelist())
+        patched = package.patch_engine("quest_hud.py", engine.read("Frontier/quest_hud.py")).decode()
+    faces = __import__("re").findall(r'\("QMont", "([^"]+)"|\("QCinzel", "([^"]+)"', patched)
+    files = [a or b for a, b in faces]
+    assert "Montserrat-Book.ttf" in files and "Frontier/assets/fonts/Montserrat-Book.ttf" not in names
+    assert "if (FONTS / f).is_file()" in patched
+    shipped = [f for f in files if "Frontier/assets/fonts/" + f in names]
+    assert shipped and set(files) - set(shipped) == {"Montserrat-Book.ttf"}, "only that one face is missing"
