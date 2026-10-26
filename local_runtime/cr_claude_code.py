@@ -193,13 +193,13 @@ class Watcher:
             elif self.cloud_state in ("preparing", "starting", "rendering") and state == "failed":
                 said.append(("Your cloud video stopped", title or "Studio Cloud stopped. Studio shows why."))
             self.cloud_state = state
-        for operation, (state, label) in self.study_states().items():
+        for operation, (state, label, change) in self.study_states().items():
             before = self.studies.get(operation)
             self.studies[operation] = state
             if before in ("running", "prepared") and state in ("done", "pending"):
-                said.append(("Your new style is ready", label))
+                said.append(("Your style change is ready to compare" if change else "Your new style is ready", label))
             elif before in ("running", "prepared") and state == "failed":
-                said.append(("Your style study stopped", label))
+                said.append(("Your style change stopped" if change else "Your style study stopped", label))
         for title, message in said:
             self.notify(title, message)
         return said
@@ -238,7 +238,7 @@ class Watcher:
                 continue
             state = {"complete": "done", "complete_local": "pending"}.get(saved.get("state"), saved.get("state"))
             label = str(((saved.get("spec") or {}).get("label")) or "Your learned style")[:80]
-            out[folder.name] = (str(state or ""), label)
+            out[folder.name] = (str(state or ""), label, saved.get("renderer_improve") is True)
         return out
 
     def run(self, every: float = 10.0) -> None:

@@ -644,7 +644,58 @@ def prepare(home, supplied, proof, bridge):
 
 
 IMPROVE_MINUTES = 25                     # two renderer calls at most (the change, one fix), then a free preview
+IMPROVE_DRAW_MINUTES = 10                # Studio's own drawing and checking, on top of Claude's time
 IMPROVE_MAX_CALLS = 3
+INTERRUPTED = ("Studio closed while Claude was making this change, so it stopped. Nothing in your style changed; ask "
+               "for the change again.")
+
+
+def change_working(folder) -> bool:
+    """A change's worker holds its folder's lock for its whole run (released when its process ends, however it
+    ends): True while it is working."""
+    try:
+        with _lock(Path(folder)):
+            return False
+    except RuntimeError:
+        return True
+
+
+def settle_improvement(home, operation_id, bridge) -> dict:
+    """A change Studio is no longer working on never blocks its style (a new change, Delete style): one left
+    validated is finished (its version waits for the creator, nothing is redone); one left prepared or running with
+    no worker stopped, said plainly. Returns its saved record as it is after."""
+    folder, saved = _saved(home, operation_id, bridge)
+    if not saved.get("renderer_improve") or saved.get("state") not in {"prepared", "running", "validated"}:
+        return saved
+    held = _lock(folder)
+    try:
+        held.__enter__()
+    except RuntimeError:                                    # its worker is still working
+        return saved
+    try:
+        folder, saved = _saved(home, operation_id, bridge)
+        said = INTERRUPTED
+        if saved.get("state") == "validated":
+            try:
+                _finish_improvement(home, folder, saved)
+            except RuntimeError as error:
+                said = str(error)
+        if saved.get("state") in {"prepared", "running", "validated"}:
+            _write(folder / "failure.json", {"schema": 1, "failure_code": "study_failed",
+                                             "exception_type": "StudyStopped", "message": said,
+                                             "phase": saved.get("phase"), "at": time.time(), "frames": []})
+            saved.update(state="failed", failure_code="study_failed", completed_at=time.time())
+            if saved.get("project_id"):
+                saved["finish_receipt"] = {"project_id": saved["project_id"], "status": "failed", "artifacts": [],
+                                           "error_code": "runtime_failed"}
+            _write(folder / "operation.json", saved)
+    finally:
+        held.__exit__(None, None, None)
+    try:
+        _sync(folder, saved, bridge)
+    except Exception:                                       # noqa: BLE001 - recorded on the next sync
+        pass
+    return _saved(home, operation_id, bridge)[1]
 
 
 def prepare_improvement(home, source_operation, request, proof, bridge):
@@ -668,9 +719,12 @@ def prepare_improvement(home, source_operation, request, proof, bridge):
         index = _folder(home) / ".improvements" / (source_operation + ".json")
         last = _read(index).get("operation_id")
         if last:
-            _, before = _saved(home, last, bridge)
+            before = settle_improvement(home, last, bridge)
             if before.get("state") in {"prepared", "running", "validated"}:
-                return status(home, last, bridge)
+                if before.get("request") == request:          # the same click again: that change
+                    return status(home, last, bridge)
+                raise RuntimeError("Claude is still making your last change (\u201c" + str(before.get("request"))[:80]
+                                   + "\u201d). Ask for the next one when it's ready.")
         bridge.prepare_runtime(proof)
         operation_id = "op_" + secrets.token_hex(12)
         folder = _operation(home, operation_id)
@@ -704,10 +758,15 @@ def improve_style(home, engine, folder, saved, progress, *, learner=None):
             handle.write(str(message) + "\n")
     clock = learner.Clock(saved["spec"]["budget_minutes"], log)
     progress("improve")
-    with _renderer_effort():
-        return cr_style_lab.run_improvement(home, saved["source_style"], Path(folder).name, saved["request"],
-                                            see=lambda prompt, images: learner._see(engine, clock, "renderer", prompt,
-                                                                                    images, max_tokens=32000), log=log)
+    try:
+        with _renderer_effort():
+            return cr_style_lab.run_improvement(home, saved["source_style"], Path(folder).name, saved["request"],
+                                                see=lambda prompt, images: learner._see(engine, clock, "renderer",
+                                                                                        prompt, images,
+                                                                                        max_tokens=32000),
+                                                log=log, left=clock.left)
+    except cr_style_lab.LabError as error:                  # said as it is: nothing for setup to review
+        raise StudyStopped(str(error)) from None
 
 
 def _finish_improvement(home, folder, saved):
@@ -735,6 +794,15 @@ def _improvement(home, operation_id, saved, state) -> dict:
     for key in ("check", "problems", "warnings", "version"):
         if cand.get(key):
             out[key] = cand[key]
+    plates = cand.get("plates") or {}
+    if plates.get("new") and not plates.get("current"):
+        import cr_animated2d
+        out["cost_note"] = (f"This version draws background pictures: about ${cr_animated2d.PLATE_USD:.2f} each on your "
+                            f"Kie account, up to {cr_animated2d.PLATES_PER_VIDEO} a video (about "
+                            f"${cr_animated2d.PLATE_USD * cr_animated2d.PLATES_PER_VIDEO:.2f}), which the current one "
+                            "doesn't.")
+    elif plates.get("current") and plates.get("new") is False and cand.get("state") != "failed":
+        out["cost_note"] = "This version draws every place in code: no background pictures to pay for."
     current = cand.get("current") or {}
     if current.get("overall") is not None:
         out["current_check"] = {"overall": current.get("overall"), "bar": current.get("bar")}
@@ -1926,6 +1994,8 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
                 if saved["spec"].get("renderer"):              # the channel's renderer is written within the study
                     import cr_animated2d
                     extra = cr_animated2d.BUILD_MINUTES
+                elif saved.get("renderer_improve"):            # Studio's own drawing of the change and its check
+                    extra = IMPROVE_DRAW_MINUTES
                 with _creative_budget(saved["spec"]["budget_minutes"] + extra):
                     if saved.get("renderer_improve"):
                         improve_style(home, engine, folder, saved, progress)

@@ -370,6 +370,11 @@ def _style_busy(studio, home, style: str) -> str:
     for record in (studies.glob("op_*/operation.json") if studies.is_dir() else []):
         saved = _read(record)
         if (saved.get("spec") or {}).get("style_id") == style and saved.get("state") in ("prepared", "running"):
+            if saved.get("renderer_improve"):
+                import cr_style_clone
+                if not cr_style_clone.change_working(record.parent):
+                    continue                 # a change Studio stopped working on (it quit mid-change): not in the way
+                return "Claude is making a change to this style right now. Delete it once the change is ready."
             return "Its style study is still running. Delete the style once the study has finished."
     return ""
 

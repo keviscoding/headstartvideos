@@ -75,6 +75,11 @@ def install(studio, activity, setup_status, *, token, home=None):
 
     def safe_status(operation):
         with activity.lock:
+            if operation not in live_workers:
+                try:                       # a change Studio stopped working on (it quit mid-change) never stays stuck
+                    cr_style_clone.settle_improvement(home, operation, cr_bridge)
+                except Exception:          # noqa: BLE001 - status says what it can below
+                    pass
             result = cr_style_clone.status(home, operation, cr_bridge)
             working = operation in live_workers
             busy = activity.busy()

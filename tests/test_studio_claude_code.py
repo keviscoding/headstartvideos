@@ -519,6 +519,13 @@ def test_watcher_says_when_a_style_study_is_ready(tmp_path):
     record.write_text(json.dumps({"state": "complete", "spec": {"label": "My History Style"}}))
     watcher.tick()
     assert said == [("Your new style is ready", "My History Style")]
+    change = tmp_path / "output" / "cr-style-clone" / ("op_" + "d" * 24) / "operation.json"
+    change.parent.mkdir()
+    change.write_text(json.dumps({"state": "running", "renderer_improve": True, "spec": {"label": "My History Style"}}))
+    watcher.tick()
+    change.write_text(json.dumps({"state": "complete", "renderer_improve": True, "spec": {"label": "My History Style"}}))
+    watcher.tick()
+    assert said[-1] == ("Your style change is ready to compare", "My History Style"), "a change, not a new style"
 
 
 def test_mac_notification_quotes_its_text(monkeypatch):

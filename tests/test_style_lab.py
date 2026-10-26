@@ -292,7 +292,12 @@ def test_improve_this_style_shows_one_change_beside_the_current_version_and_save
     kept = lab.keep_candidate(home3d, "cr_clone_box", op, use_new=False)
     assert kept["state"] == "kept_old"
     (folder / "renderer.js").write_text(BOX + "\n// my own Lab work")
+    (folder / "scene.json").write_text(json.dumps({**scene, "mine": True}))
+    shrunk = json.loads((folder / "lab.json").read_text())
+    shrunk["history"] = []                                  # pushed out by 60 later entries, or another writer
+    (folder / "lab.json").write_text(json.dumps(shrunk))
     saved = _chromium(lambda: lab.keep_candidate(home3d, "cr_clone_box", op, use_new=True))
+    assert json.loads((folder / f"scene.before-{op}.json").read_text())["mine"] is True, "the workspace scene is kept"
     assert saved["state"] == "saved" and saved["version"] == 2
     record = json.loads((home3d / "styles/cr_clone_box.json").read_text())["look"]["animated2d"]["renderer"]
     assert record["sha256"] == got["sha256"] and record["state"] == "passed" and record["version"] == 2
@@ -304,7 +309,35 @@ def test_improve_this_style_shows_one_change_beside_the_current_version_and_save
     with pytest.raises(cr_style_clone.StudyStopped, match="no sky"):
         _chromium(lambda: lab.run_improvement(home3d, "cr_clone_box", "op_" + "b" * 24, "no sky",
                                               lambda p, i: _answer(broken, scene), judge=judge, log=lambda m: None))
-    assert lab.candidate(home3d, "cr_clone_box", "op_" + "b" * 24)["state"] == "failed"
+    failed = lab.candidate(home3d, "cr_clone_box", "op_" + "b" * 24)
+    assert failed["state"] == "failed" and failed["code_kept"]
+    assert "no sky" in (lab.improvement_folder(home3d, "cr_clone_box", "op_" + "b" * 24) / "renderer.js").read_text()
+    # no time left for a fix call: none is started (its usage would be wasted), and Claude's code is kept
+    calls = []
+    with pytest.raises(cr_style_clone.StudyStopped, match="wasn't time"):
+        _chromium(lambda: lab.run_improvement(home3d, "cr_clone_box", "op_" + "c" * 24, "no sky",
+                                              lambda p, i: calls.append(p) or _answer(broken, scene), judge=judge,
+                                              log=lambda m: None, left=lambda: 10.0))
+    assert len(calls) == 1 and lab.candidate(home3d, "cr_clone_box", "op_" + "c" * 24)["code_kept"]
+    # a fix call shows Claude's own version as the code to fix, the change already in it (never "it works")
+    assert "it works" in calls[0] and "THE CREATOR ASKS: no sky" in calls[0]
+    fixing = lab._improve_prompt(folder, "no sky", broken, scene, "", fix="\nPROBLEMS\n")
+    assert "it works" not in fixing and "already makes this change" in fixing and "Fix only these problems" in fixing
     assert json.loads((home3d / "styles/cr_clone_box.json").read_text())["look"]["animated2d"]["renderer"]["version"] == 2
     with pytest.raises(lab.LabError):
         lab.improvement_folder(home3d, "cr_clone_box", "../op")
+
+
+def test_lab_history_keeps_every_writers_entries(tmp_path):
+    """The 108 review: Style Lab (in Claude Code) and a change (in its worker) both write lab.json; each wrote back the
+    copy it had read, so one erased the other's previews."""
+    box = tmp_path / "style-lab" / "cr_clone_box"
+    box.mkdir(parents=True)
+    lab._write(box / "lab.json", {"dims": 3, "history": [{"kind": "preview", "sha256": "a"}]})
+    stale = json.loads((box / "lab.json").read_text())         # one writer's copy
+    lab._record(box, json.loads((box / "lab.json").read_text()), {"kind": "preview", "sha256": "b"})
+    stale["bar"] = 5.5
+    lab._record(box, stale, {"kind": "check", "sha256": "b"})
+    now = json.loads((box / "lab.json").read_text())
+    assert [h["sha256"] for h in now["history"]] == ["a", "b", "b"] and now["bar"] == 5.5
+    assert stale["history"] == now["history"], "the caller sees the history as written"
