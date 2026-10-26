@@ -644,7 +644,10 @@ def test_an_animation_under_the_channels_bar_is_said_and_pictures_are_used_only_
     assert "offer_pictures" not in passed and "7.1/10" in passed["say"]
     assert clone.renderer_verdict({"look": {}}) == {}, "a pictures style has no animation to report"
     shown = clone.status(home, op, bridge)
-    assert shown["renderer"]["state"] == "below_bar" and shown["message"] == told["say"]
+    # the verdict is said once, in the renderer panel (and the tools' what_to_tell_them); the headline is short
+    assert shown["renderer"]["state"] == "below_bar" and shown["message"] == "Your style is saved."
+    assert shown["renderer"]["say"] == told["say"] and shown["renderer"]["score"] == 5.2
+    assert told["say"].count("/10") == 1, "one score"
     clone.use_pictures(home, op, bridge)
     after = json.loads(target.read_text())
     assert after["look"].get("visuals") != "cr_animated2d" and "animated2d" not in after["look"] and "cost" not in after
@@ -673,3 +676,117 @@ def test_a_suggestion_that_breaks_never_stops_the_look(home, monkeypatch):
     monkeypatch.setattr(cr_style_map, "similar", lambda *a, **k: 1 / 0)
     again = look.status(home, done["look_id"])
     assert again["state"] == "done" and again["similar"] == []
+
+
+def test_a_look_says_which_video_it_is_on_moves_only_forward_and_downloads_the_next_one_while_measuring(home,
+                                                                                                         monkeypatch):
+    """The owner's Windows test: 9 minutes for 3 references, the bar back to 10% for every video, no "video 2 of 3" and
+    no time left; each section was re-encoded (--force-keyframes-at-cuts) and downloaded only after the last was
+    measured."""
+    import threading
+    started = look.start(home, "pv_" + "a" * 64, [VIDEO, OTHER], spawn=lambda h, i: None)
+    writes, events = [], []
+    real_write = look._write
+
+    def write(path, value):
+        if Path(path).name == "look.json":
+            writes.append(dict(value))
+        return real_write(path, value)
+    monkeypatch.setattr(look, "_write", write)
+    clock = {"t": 1000.0}
+
+    def now():
+        clock["t"] += 10                                         # every step "takes" ten seconds
+        return clock["t"]
+    second_started = threading.Event()
+
+    def download(vid, a, b, dest):
+        events.append(("download", vid, a))
+        if vid == OTHER:
+            second_started.set()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"0" * 60_000)
+        return dest
+
+    def measure(path, start=0.0, keyframes=False):
+        if VIDEO in Path(path).name:
+            # the next video is downloaded while this one is measured (it waits here for at most 5 s otherwise)
+            assert second_started.wait(5), "the next video's download had not started while this one was measured"
+        events.append(("measure", Path(path).name))
+        return fake_measure(path, start, keyframes)
+    call = lambda path, payload=None: ({"job": "sw_1", "status": "done", "log": STICK_LOG} if payload is not None
+                                       else {})
+    done = look.run(home, started["look_id"], call=call, download=download, measure=measure, now=now,
+                    transcript=lambda v, w: [(1.0, "you wake up in a world of stick men")])
+    assert done["state"] == "done"
+    assert [e[1] for e in events if e[0] == "download"] == [VIDEO, VIDEO, OTHER, OTHER], "in the order measured"
+    running = [w for w in writes if w.get("state") == "running" and w.get("phase") in ("download", "measure")]
+    assert {w["video"] for w in running} == {1, 2} and all(w["videos"] == 2 for w in running)
+    assert any(w["message"].startswith("Video 2 of 2 · ") for w in running)
+    percents = [w["percent"] for w in writes if "percent" in w]
+    assert percents == sorted(percents) and percents[-1] == 100, "the bar only moves forward"
+    assert any(w.get("left_s") for w in running), "an honest time left, measured from the steps so far"
+    first = next(w for w in running if w.get("left_s"))
+    assert look.status(home, started["look_id"])["percent"] == 100
+    assert first["left_s"] > 0
+
+
+def test_a_section_is_copied_as_youtube_sends_it_never_re_encoded(home, monkeypatch):
+    import cr_style_clone
+    ran = []
+
+    class Done:
+        stderr = ""
+    monkeypatch.setattr(cr_style_clone, "_ytdlp_command", lambda: ["yt-dlp"])
+    monkeypatch.setattr(look.subprocess, "run", lambda command, **kw: ran.append(command) or Done())
+    dest = home / "media" / "x_0_180.mp4"
+    dest.parent.mkdir()
+    (home / "media" / "x_0_180.mp4").write_bytes(b"0" * 60_000)
+    assert look._download("abcdefghijk", 0, 180, dest) == dest
+    assert "--force-keyframes-at-cuts" not in ran[0] and "*0-180" in ran[0]
+
+
+def test_a_finished_look_offers_example_titles_built_from_the_channels_own_titles_without_claude(home):
+    """The owner's Windows test: "An example video you want to make" was required, with a generic placeholder and no
+    ideas; the owner left Studio for two minutes to ask Claude Code. A look now offers ideas from the channel's titles."""
+    ideas = look.title_ideas(["100 Strangers, 1 Bunker: Who Survives 30 Days #shorts",
+                              "The Kid Who Lived In A Mall For 7 Years | Nobody Gets In"])
+    assert 3 <= len(ideas) <= 5 and len(set(i.lower() for i in ideas)) == len(ideas)
+    assert ideas[0] != "100 Strangers, 1 Bunker: Who Survives 30 Days", "a new take first, the channel's own after"
+    assert all("#" not in i and "|" not in i for i in ideas)
+    assert any("In An Island" in i or "In A " in i for i in ideas) and not any("In A Island" in i for i in ideas)
+    assert look.title_ideas(["Born In 1945"]) == ["Born In 1945"], "a year is kept"
+    assert look.title_ideas([]) == []
+    _, done, calls = run_look(home)
+    assert done["title_ideas"] and calls and all(c.startswith("style/watch") for c in calls), "no model is asked"
+
+
+def test_a_style_written_in_code_is_never_offered_a_picture_every_picture_copies(home):
+    """The owner's test: "Choose the picture style every video keeps" (AI samples on the creator's image account) was
+    offered for a coded style, whose renderer draws every frame."""
+    import cr_style_anchor as anchor
+    _, done, _ = run_look(home)
+    op = saved_v2_style(home, done["look_id"])
+    assert anchor.status(home, op)["offered"] is True, "a style made with pictures keeps it"
+    path = home / "styles" / "cr_clone_toby.json"
+    style = json.loads(path.read_text())
+    style["look"]["visuals"] = "cr_animated2d"
+    path.write_text(json.dumps(style))
+    assert anchor.status(home, op)["offered"] is False
+    with pytest.raises(RuntimeError, match="written in code"):
+        anchor.start(home, op, generate=lambda *a, **k: pytest.fail("no picture is drawn"), upload=lambda p: "u",
+                     thread=False)
+
+
+def test_claude_code_is_given_the_looks_time_left_and_title_ideas(monkeypatch):
+    import cr_studio_tools as tools
+    answers = {"running": {"state": "running", "percent": 40, "message": "Video 2 of 3 · Measuring", "left_s": 200},
+               "done": {"state": "done", "mapping": {"questions": [], "route": {"engine": "animated2d", "why": "x"}},
+                        "title_ideas": ["50 Strangers, 1 Prison: Who Survives 24 Days"]}}
+    for state, answer in answers.items():
+        monkeypatch.setattr(tools, "call", lambda method, path, timeout=30, answer=answer: answer)
+        got = tools.look_progress("lk_" + "a" * 24)
+        if state == "running":
+            assert got["minutes_left"] == 3 and got["message"].startswith("Video 2 of 3")
+        else:
+            assert got["title_ideas"] == answer["title_ideas"] and "title_ideas" in got["next"]

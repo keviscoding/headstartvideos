@@ -883,3 +883,123 @@ def test_youtube_listing_marks_shorts_and_says_plainly_when_a_channel_lists_noth
         with pytest.raises(kind) as error:
             clone.list_videos("https://www.youtube.com/@x/videos", 8, run=run)
         assert "no long videos" not in str(error.value) and "No model request was made" in str(error.value)
+
+
+def _coded_study(approved, monkeypatch, *, frames=True):
+    """A study written in code (Studio 109): the design, a free look at the references' frames, the art director and
+    the renderer, with stand-ins for every Claude call; the motion-graphics learner fails the test if it runs."""
+    events = []
+    folder = approved.home / "output/cr-style-clone" / ("op_" + "c" * 24)
+    folder.mkdir(parents=True)
+    spec = clone._spec(approved.home, approved.spec)
+    spec.update(style_id="cr_clone_coded", renderer="2d", look_id="lk_" + "a" * 24, answers={})
+    sheet = folder / "frame.jpg"
+    sheet.write_bytes(b"synthetic frame fixture")
+    monkeypatch.setattr(clone, "_look_material", lambda folder, spec: {
+        "profile": {}, "media": {}, "sheets": [], "excerpts": {}, "channels": ["Reference creator"]})
+
+    def art(folder, spec, looked, see, log):
+        events.append("art")
+        assert not (folder / "validated-checkpoint.json").exists()
+
+    def renderer(folder, spec, looked, see, log):
+        events.append("renderer")
+        assert not (folder / "validated-checkpoint.json").exists(), "the checkpoint waits for the renderer"
+        (folder / "renderer").mkdir(exist_ok=True)
+        clone._write(folder / "renderer/build.json", {"state": "passed", "stills": ["round-1/shot_0.jpg"]})
+        (folder / "renderer/renderer.js").write_text("export function draw() {}")
+        return {"state": "passed"}
+    monkeypatch.setattr(clone, "_art_director", art)
+    monkeypatch.setattr(clone, "_renderer", renderer)
+
+    class Clock:
+        def __init__(self, budget, log): self.log = log
+        def left(self): return 1800
+        def step(self, name): pass
+        def end(self): pass
+        def report(self): return {"minutes": {}, "total_min": 0, "cost": {}, "total_usd": 0, "total_usd_api": 0}
+
+    def learn(*args, **kwargs):
+        pytest.fail("the motion-graphics learner ran for a style written in code")
+
+    def watch_impl(row, clock, work):
+        events.append(("watch", row["id"]))
+        return {"sheets": [str(sheet)] if frames else [], "frames": [], "measures": {}}
+    learner = SimpleNamespace(Clock=Clock, WORK="reflearn", _learn=learn, watch=watch_impl, _media=lambda *a, **k: {},
+                              _see=lambda *a, **k: pytest.fail("no Claude call outside the stand-ins"),
+                              around=lambda design, record, **kw: None, summary=lambda record: {"kit": record.get("kit")})
+    engine = SimpleNamespace(STYLE_INFO={"documentary": {"language": "English"}}, set_extra=lambda text: None)
+    designer = SimpleNamespace(
+        design=lambda *a, **kw: (events.append("design") or {"genome": {"analysis": {}}}),
+        build=lambda *a, **kw: {"name": "auto-look", "variant_of": "documentary", "look": {}},
+        save=lambda *a: None, genkit=lambda *a, **kw: pytest.fail("no graphics kit is attached to a coded style"))
+    phases = []
+    style = clone.study_original(engine, folder, spec, phases.append, learner=learner, designer=designer,
+                                 transcript=lambda *a, **kw: [(0, "Reference narration")])
+    return SimpleNamespace(folder=folder, spec=spec, style=style, events=events, phases=phases)
+
+
+def test_a_study_written_in_code_never_runs_the_graphics_learner(approved, monkeypatch):
+    """The owner's Windows test (2026-10-26): a coded study spent 12 to 20 minutes of the customer's Claude usage on
+    "Writing the graphics kit", a kit its renderer never uses. It now looks at the frames (free) and writes the
+    renderer; nothing else changes for the saved style."""
+    done = _coded_study(approved, monkeypatch)
+    assert done.events == ["design", ("watch", VIDEO), "art", "renderer"]
+    assert done.phases == ["design", "watch", "art", "renderer", "publish"]
+    validated = clone._read(done.folder / "validated-checkpoint.json")
+    assert validated["record"]["kit"] is None and validated["record"]["no_kit"] == clone.CODED_NO_KIT
+    assert validated["record"]["reference"]["id"] == VIDEO and validated["assets"] == {}
+    assert clone._metadata_checkpoint_ready(done.folder, {"spec": done.spec})
+    evidence = clone._read(done.folder / "reflearn/reference-evidence.json")
+    assert evidence["actual_frames"] and evidence["captions_available"], "the references' frames were still looked at"
+    assert clone._read(done.folder / "study-result.json")["reference_used"] == VIDEO
+    assert done.style["name"] == "cr_clone_coded" and "genkit" not in done.style.get("look", {})
+
+
+def test_a_coded_study_whose_frames_cant_be_read_again_still_writes_its_renderer(approved, monkeypatch):
+    done = _coded_study(approved, monkeypatch, frames=False)
+    assert done.events[-2:] == ["art", "renderer"], "the renderer is built from the look's frames"
+    assert clone._read(done.folder / "validated-checkpoint.json")["record"]["reference"] == {}
+
+
+def test_a_coded_study_is_saved_without_repeating_work_only_once_its_renderer_was_written(approved, monkeypatch):
+    """A study saved by Studio 108 wrote its checkpoint before the renderer: one that stopped while its renderer was
+    being written is started again, never saved as a style without one; a recovery copies the renderer it saves."""
+    done = _coded_study(approved, monkeypatch)
+    saved = {"spec": done.spec}
+    assert clone._metadata_checkpoint_ready(done.folder, saved)
+    names = clone._renderer_files(done.folder)
+    assert "renderer/build.json" in names and "renderer/renderer.js" in names
+    (done.folder / "renderer/build.json").unlink()
+    assert not clone._metadata_checkpoint_ready(done.folder, saved)
+    assert not clone._metadata_checkpoint_ready(done.folder, {"spec": {**done.spec, "renderer": False}}), \
+        "the checkpoint belongs to the coded study it was written for"
+
+
+def test_a_coded_studys_progress_moves_through_its_drafts_and_shows_the_real_time_cap(approved):
+    operation = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)["operation_id"]
+    folder = clone._operation(approved.home, operation)
+    saved = clone._read(folder / "operation.json")
+    saved["spec"]["renderer"] = "2d"
+    saved.update(state="running", phase="renderer", started_at=0)
+    clone._write(folder / "operation.json", saved)
+    seen = []
+    for drafts in range(5):
+        if drafts:
+            (folder / "renderer").mkdir(exist_ok=True)
+            (folder / "renderer" / f"round-{drafts}.txt").write_text("draft")
+        seen.append(clone.status(approved.home, operation, approved.bridge))
+    assert [s["percent"] for s in seen] == sorted(s["percent"] for s in seen) and seen[0]["percent"] == 40
+    assert seen[-1]["percent"] == 90 and "4 of up to 4 drafts" in seen[-1]["message"]
+    import cr_animated2d
+    assert seen[0]["cap_minutes"] == 22 + cr_animated2d.BUILD_MINUTES and seen[0]["coded"] is True
+    saved.update(phase="publish")
+    clone._write(folder / "operation.json", saved)
+    assert clone.status(approved.home, operation, approved.bridge)["percent"] > seen[-1]["percent"]
+    plain = clone.status(approved.home, operation, approved.bridge)
+    saved["spec"].pop("renderer")
+    saved.update(phase="build")
+    clone._write(folder / "operation.json", saved)
+    picture = clone.status(approved.home, operation, approved.bridge)
+    assert picture["cap_minutes"] == 22 and picture["coded"] is False and plain["coded"] is True
+    assert picture["percent"] == clone.PHASES["build"][0], "a study in pictures keeps its steps"

@@ -1214,6 +1214,8 @@ def look_progress(look_id: str) -> dict:
     d = call("GET", "/cr-style-clone/look/" + look_id, timeout=30)
     out = {"id": look_id, "state": d.get("state"), "percent": d.get("percent"), "message": d.get("message"),
            "references": d.get("references")}
+    if d.get("state") == "running" and d.get("left_s"):
+        out["minutes_left"] = max(1, round(float(d["left_s"]) / 60))       # measured from the look's steps so far
     if d.get("state") == "done":
         m = d.get("mapping") or {}
         route = m.get("route") or {}
@@ -1224,12 +1226,16 @@ def look_progress(look_id: str) -> dict:
                    medium_gap=route.get("medium_gap") or "", cost_note=m.get("cost") if isinstance(m.get("cost"), str)
                    else "", not_watched=d.get("not_watched") or [], shorts=bool(d.get("shorts")),
                    similar_styles=similar_styles(d.get("similar")),
+                   # example titles built from the channel's own titles (no model call): offer them for example_title
+                   title_ideas=[str(t) for t in d.get("title_ideas") or []][:5],
                    **({"shorts_note": SHORTS_NOTE} if d.get("shorts") else {}),
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
-                        "with look_id, a style name, an example title and their answers. The 'made' question decides "
+                        "with look_id, a style name, an example title (title_ideas has a few from the channel's own "
+                        "titles to offer; they can change any) and their answers. The 'made' question decides "
                         "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
-                        "their Claude Code write the channel's own renderer during the study (usually 5 to 15 more "
-                        "minutes of their Claude usage, at most 25). Its videos then cost their voice, plus at most a "
+                        "their Claude Code write the channel's own renderer during the study (usually 10 to 25 "
+                        "minutes of their Claude usage for the whole study, at most 46). Its videos then cost their "
+                        "voice, plus at most a "
                         "few background pictures, and the renderer can be improved later with style_lab. Instead of "
                         "code gives Studio's ready-made pictures or 3D engine, which won't look or move exactly like the "
                         "channel. Say both before they choose. A medium_gap is something Studio can't make yet: read it "

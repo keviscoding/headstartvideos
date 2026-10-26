@@ -24,19 +24,21 @@ Link: $ARGUMENTS
 5. **Their answers.** When the look is done, ask each of its `questions` (a multiple-choice question works well;
    Studio's guess is the first option). Ask `made` first: it decides how the videos are made. Written in code
    (recommended) has their Claude Code write the channel's own renderer during the study, for any kind of channel
-   (usually 5 to 15 more minutes of their Claude usage, no money), and its videos cost their voice. Instead of code
+   (usually 10 to 25 minutes of their Claude usage for the whole study, at most 46, no money), and its videos cost
+   their voice. Instead of code
    gives Studio's ready-made pictures (AI pictures, some AI clips) or its fixed 3D engine: ready at once, but not
    exactly the channel's look. Say both, plainly. If `look_progress` shows a `medium_gap`, tell them now what their
    videos will be (`how_made`). A Shorts channel's videos come out vertical with its captions. Once the style is
    saved, they can keep improving it with you in Style Lab (see below). Also ask:
    - a name for the new style (for example "My History Style");
-   - an example video title in the channel's subject.
+   - an example video title in the channel's subject (`title_ideas` has a few built from the channel's own titles:
+     offer them, and they can change any of them).
    Mention `suggested_base` and `because` in one line: the recipe the new style builds on.
    Then mention `similar_styles` in a line each: styles they already have that come close. Suggestions only: they can
    use one now, try about 5 seconds of one on their topic first (`style_sample`, about $0.05 on their own accounts; ask
    first), or carry on with the study.
-6. **Confirm.** Explain: the study runs on their Claude Code for about 15 to 30 minutes and uses one of their plan's
-   style clones. Ask "Shall I start the study?".
+6. **Confirm.** Explain: the study runs on their Claude Code (written in code, usually 10 to 25 minutes in all; at
+   most the study budget plus 24 minutes for the channel's animation) and uses one of their plan's style clones. Ask "Shall I start the study?".
 7. **Start.** After a yes, call `clone_style` with look_id, style_name, example_title, answers (and the brief
    when combining). Claude Code asks
    them to approve the tool call. If it returns a `medium_gap`, read it to them; only with their OK call again with

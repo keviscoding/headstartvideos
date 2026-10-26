@@ -314,3 +314,29 @@ def test_a_ready_made_recipe_shows_a_picture_studio_drew(env):
     saved["frames"]["3d"] = {"file": "3d.jpg", "kind": "studio_sample", "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}
     manifest.write_text(json.dumps(saved))
     assert preview.recipe_source(env.studio, env.home, "3d", env.bridge).label == "Made with ChannelRecipe Studio"
+
+
+def test_a_style_written_in_code_shows_its_own_renderers_test_shot_never_the_kits_title_card(env):
+    """The owner's Windows test: the recipe card's "Animation preview" of a coded style was the graphics kit's photo
+    title card, which its videos never show. A coded style's card shows its renderer's own test shot."""
+    folder, kit_frame = completed_study(env)               # a 108 study also wrote a kit and its frames
+    coded = {"look": {"visuals": "cr_animated2d", "animated2d": {"renderer": {"file": "styles/learned/x/renderer-v1.js",
+                                                                              "state": "passed"}}},
+             "cr_style_clone": {"operation_id": OPERATION}}
+    env.styles[STYLE] = coded
+    style_path = env.home / "styles" / (STYLE + ".json")
+    style_path.write_text(json.dumps(coded))
+    saved = json.loads((folder / "operation.json").read_text())
+    saved["style_sha256"] = clone._file_hash(style_path)
+    (folder / "operation.json").write_text(json.dumps(saved))
+    assert preview.recipe_source(env.studio, env.home, STYLE, env.bridge) is None, "never the kit's frame"
+    shot = folder / "renderer/round-2/shot_0.jpg"
+    shot.parent.mkdir(parents=True)
+    shot.write_bytes(jpeg())
+    (folder / "renderer/build.json").write_text(json.dumps({"state": "passed", "stills": ["round-2/shot_0.jpg"]}))
+    source = preview.recipe_source(env.studio, env.home, STYLE, env.bridge)
+    assert source.path == shot.resolve() and source.path != kit_frame and source.label == "Animation preview"
+    row = env.get("/cr-workspace/catalog").json["channels"][1]
+    assert row["preview_label"] == "Animation preview" and env.get(row["preview_url"]).data == shot.read_bytes()
+    (env.home / "styles" / (STYLE + ".json")).write_text('{"private":"other style"}')
+    assert preview.recipe_source(env.studio, env.home, STYLE, env.bridge) is None, "only the study's own saved style"

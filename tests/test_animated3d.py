@@ -143,7 +143,8 @@ def _blocky(**over):
 def test_a_3d_channel_with_characters_is_rendered_by_its_own_renderer_not_drawn(kit3d):
     plan = cm.plan_style(_blocky(), tsm.STYLES)
     route = plan["route"]
-    assert route["engine"] == "animated3d" and "medium_gap" not in route and "three.js" in route["why"]
+    assert route["engine"] == "animated3d" and "medium_gap" not in route and "in real 3D" in route["why"]
+    assert "three.js" not in route["why"], "plain words for creators"
     assert plan["base"] == "stories", "a narrated story recipe carries the renderer, never the mannequin engine"
     look = plan["overrides"]["look"]
     assert look["visuals"] == a2d.VISUALS3D and look["animated2d"]["dims"] == 3
@@ -151,7 +152,7 @@ def test_a_3d_channel_with_characters_is_rendered_by_its_own_renderer_not_drawn(
     assert plan["overrides"]["pacing"]["clips_per_min"] == 0.0 and plan["cost"]["usd_per_min"] == 0.0
     assert "style_image" not in plan["needs"] and "threed" not in (look.get("threed") or {})
     question = next(q for q in plan["questions"] if q["id"] == "made")
-    assert question["options"] == [cm.MADE_CODE, cm.MADE_OTHER] and "writes this channel's own renderer" in question["ask"]
+    assert question["options"] == [cm.MADE_CODE, cm.MADE_OTHER] and "writes this channel's own animation" in question["ask"]
     assert "AI pictures drawn in their 3D look" in question["ask"], "what they'd get instead, said honestly"
     ifology = cm.plan_style(tsm.profile({"3d": 0.85, "graphic": 0.15}, {"3d_render": 0.85}, **tsm.IFOLOGY), tsm.STYLES)
     assert ifology["route"]["engine"] == "animated3d", "a designed cast too: the kit is the renderer's helper now"
@@ -200,7 +201,7 @@ def test_every_channel_is_written_in_code_unless_the_creator_chooses_otherwise(k
         other = cm.plan_style(prof, tsm.STYLES, answers={"made": cm.MADE_OTHER})
         assert other["route"]["engine"] == instead and other["overrides"]["look"].get("visuals") not in a2d.PLUGINS
     assert "real footage isn't part of a style written in code" in \
-        next(q for q in cm.plan_style(crime, tsm.STYLES)["questions"] if q["id"] == "made")["ask"]
+        next(q for q in cm.plan_style(crime, tsm.STYLES)["questions"] if q["id"] == "made")["ask"].lower()
     assert cm.plan_style(faceless, tsm.STYLES, base="3d")["route"]["engine"] == "threed", "the 3D recipe picked by hand"
     tall = cm.plan_style(tsm.profile({"generated": 0.9, "graphic": 0.1}, format__vertical=tsm.axis(1.0)), tsm.STYLES)
     spec = tall["overrides"]["look"]["animated2d"]
@@ -493,8 +494,9 @@ def test_a_quote_counts_the_channels_own_music_for_a_picture_style_too(monkeypat
     assert a2d.media_usd({"look": {"sound": {"music": False, "score": {}}}}) == {}, "music off: nothing to pay"
     assert a2d.media_usd({"look": {"sound": {"score": {"on": False}}}}) == {}
     monkeypatch.setattr(a2d, "available", lambda home=None: True)
-    said = cm.coded_route(tsm.profile({"generated": 0.9, "graphic": 0.1}))["why"]
-    assert "nothing else" not in said and "own music" in said and "up to 6" in said
+    # the costs are said once, in the look's cost line (the plan's cost note), not in the route's paragraph
+    said = cm.plan_style(tsm.profile({"generated": 0.9, "graphic": 0.1}), tsm.STYLES)["cost"]["note"]
+    assert "nothing else" not in said and "own music" in said and "up to 6" in said and "$0.12" in said
 
 
 def test_the_study_result_shows_the_renderers_test_shots_beside_the_channels_frames(tmp_path, monkeypatch):

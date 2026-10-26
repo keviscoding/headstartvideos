@@ -255,3 +255,24 @@ def test_a_reference_with_a_sliver_of_3d_weighs_that_little():
                                                    "missing": []})
     shares = sp.build([one, two])["pictures"]["people_3d"]["value"]
     assert shares["faceless"] > 0.9 and shares["designed"] < 0.1, "a close-up in one reference doesn't flip the cast"
+
+
+def test_a_drawn_channels_regular_character_is_asked_about_as_a_character_not_a_presenter():
+    """The owner's test of a stick-figure story channel asked "The channel has a recurring presenter (Worker)"."""
+    worker = {"name": "Worker", "look": "stick figure in a hard hat", "role": "presenter", "screen_share": 0.4}
+    drawn = {"pictures": {"characters": {"value": [worker]}, "sources": {"families": {"generated": 0.9}}},
+             "format": {"presenter": {"value": 0.0}}}
+    ask = next(q for q in sp.questions(drawn) if q["id"] == "host")
+    assert "presenter" not in ask["ask"] and "Worker" in ask["ask"] and "recurring character" in ask["ask"]
+    assert ask["options"][0].startswith("Yes") and ask["options"][2].startswith("No")
+    talking = {"pictures": {"characters": {"value": [{**worker, "name": "Ana"}]},
+                            "sources": {"families": {"footage": 0.8}}},
+               "format": {"presenter": {"value": 0.4}}}
+    assert "recurring presenter (Ana)" in next(q for q in sp.questions(talking) if q["id"] == "host")["ask"]
+
+
+def test_near_duplicate_recognisable_chips_are_one_chip_and_other_lists_stay_exact():
+    chips = sp._dedupe(["Simple stick figure characters", "Stick-figure characters", "Red cap mascot",
+                        "bold black outlines", "Bold outlines"], 8, near=True)
+    assert chips == ["Simple stick figure characters", "Red cap mascot", "bold black outlines"]
+    assert sp._dedupe(["thud", "stone thud", "Thud"], 6) == ["thud", "stone thud"], "sounds stay distinct"

@@ -94,7 +94,9 @@ def install(studio, activity, setup_status, *, token, home=None):
         result["busy"] = busy
         result["can_continue_prepared"] = (result["state"] == "prepared" and not result["busy"]
                                            and not result.get("metadata_only"))
-        result["can_refine_saved"] = result["state"] == "done" and result.get("style_ready") is True
+        # a style written in code has no graphics kit to review: it is improved with Improve this style instead
+        result["can_refine_saved"] = (result["state"] == "done" and result.get("style_ready") is True
+                                      and not result.get("renderer") and not result.get("coded"))
         return result
 
     def native_proof(*, check_allowance=True):
