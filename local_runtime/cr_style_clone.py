@@ -1552,6 +1552,11 @@ def _apply_learned(folder, spec, style, log):
         # the characters are animated in code: no writer's words change how the video is made
         look = learned.setdefault("look", {})
         look.update(visuals=mapping["overrides"]["look"]["visuals"], animated2d=mapping["overrides"]["look"]["animated2d"])
+        # and only sound design is a switch: no footage, generated pictures or presenter is drawn in its place (the
+        # owner's Windows test, 2026-10-26: a coded clone offered all twelve sources in Create)
+        planned = (mapping["overrides"].get("features") or {})
+        learned["features"] = {**(learned.get("features") or {}),
+                               **{k: list(planned[k]) for k in ("offered", "on", "channel_on") if k in planned}}
         if mapping["overrides"]["look"].get("aspect"):
             look["aspect"] = mapping["overrides"]["look"]["aspect"]
         import cr_animated2d

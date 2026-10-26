@@ -203,7 +203,9 @@
     const automatic = identity(recipe) === 'automatic'; hide('crw-adaptive-section', !recipe.auto_style);
     if (automatic) $('crw-adaptive').checked = true;
     const featureDefinitions = state.catalog?.features || [];
-    const offered = Array.isArray(recipe.features?.offered) ? recipe.features.offered : featureDefinitions.filter(f => !f.explicit).map(f => f.key);
+    // a style drawn by its own code: sound design is the only source that changes its video
+    const listed = Array.isArray(recipe.features?.offered) ? recipe.features.offered : featureDefinitions.filter(f => !f.explicit).map(f => f.key);
+    const offered = recipe.coded ? listed.filter(k => k === 'sound') : listed;
     const defaults = Array.isArray(recipe.features?.on) ? recipe.features.on : offered;
     const stored = state.featureDrafts[recipe.name] || {};
     const group = $('crw-features'); group.replaceChildren();
