@@ -406,6 +406,7 @@ def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
         shutil.rmtree(out, ignore_errors=True)
     entry = {"kind": "preview", "at": round(time.time()), "sha256": sha, "ok": False, "problems": []}
     problems = a2d.check_code(code, lab.get("names") or [])
+    warnings = []                       # said, never a reason it can't be saved: the creator and Claude decide
     if not scene:
         problems.append("scene.json is missing or not a JSON object")
     found, info = {}, {}
@@ -429,7 +430,7 @@ def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
                                 "its pixels changed): frame(t) must be a pure function of t, setting everything "
                                 "from t alone and keeping no state between frames (several pages draw frames in any order)")
             if info["frame_ms"] > FRAME_MS:
-                problems.append(f"a frame takes {info['frame_ms']} ms to draw: keep it under {FRAME_MS} ms (build meshes, "
+                warnings.append(f"a frame takes {info['frame_ms']} ms to draw: keep it under {FRAME_MS} ms (build meshes, "
                                 "materials and textures once in prepare, only move them in frame)")
             own, made = a2d.make_sounds(code, out / "sounds", home=home, dims=lab["dims"])
             problems += made
@@ -445,10 +446,10 @@ def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
             unknown = sorted({str(m[1]) for m in played} - set(own) - {str(m[1]) for m in played if a2d.sound_file(str(m[1]))})
             if unknown:
                 problems.append("it plays sounds that are neither its own (sounds: {...}) nor Studio's: " + ", ".join(unknown[:8]))
-            problems += a2d.generic_sounds({str(m[1]) for m in played} - set(own), {"sounds": lab.get("sounds")})
+            warnings += a2d.generic_sounds({str(m[1]) for m in played} - set(own), {"sounds": lab.get("sounds")})
             entry["smallest_text"] = words or None
             if a2d.small_text(words, stress):
-                problems.append(a2d.small_text(words, stress))
+                warnings.append(a2d.small_text(words, stress))
             for a, b in runs[:3]:
                 problems.append(f"in the stress scene the picture went blank from {a:g} s to {b:g} s (after "
                                 f"{a2d._before(stress, a)}): every effect must end with the picture back")
@@ -456,12 +457,14 @@ def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
             problems.append(str(error))
         except Exception as error:                          # noqa: BLE001 - the browser itself failed
             problems.append(f"the preview could not be drawn ({type(error).__name__}: {str(error)[:300]})")
-    entry.update(ok=not problems, problems=problems[:10], frame_ms=info.get("frame_ms"), pure=info.get("drift"),
+    entry.update(ok=not problems, problems=problems[:10], warnings=warnings[:10], frame_ms=info.get("frame_ms"),
+                 pure=info.get("drift"),
                  manifest={k: found.get(k) for k in ("name", "version", "shots") if found.get(k) is not None}
                  | {"actions": sorted((found.get("actions") or {}))[:40]} if found else {})
     _record(lab_dir, lab, entry)
     entry["next"] = ("Fix these problems and preview again." if problems else
-                     "Look at the shots (and the video) next to refs/shown_*.jpg; edit and preview again, or check.")
+                     "Look at the shots (and the video) next to refs/shown_*.jpg; edit and preview again, or check."
+                     + (" The warnings don't stop a save: fix them if the channel needs it." if warnings else ""))
     return entry
 
 

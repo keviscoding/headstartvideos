@@ -139,7 +139,8 @@ Studio through its own checks, so nothing needs the Studio web page.
   text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames: usually 5
   to 15 more minutes of Claude usage (at most 25), no money. Every video then reuses it: Claude directs it to the
   narration and Studio draws every frame on their computer, so a video costs its voice (plus about $0.02 for each
-  background picture a 2D renderer asks for), vertical with the channel's captions for a Shorts channel. Instead of
+  background picture its renderer asks for, up to 6, and its own music when the channel has music, about $0.12 a
+  piece: `quote` counts both), vertical with the channel's captions for a Shorts channel. Instead of
   code means Studio's ready-made pictures (AI pictures in their look, some AI-animated clips) or its fixed 3D engine:
   ready at once, but it won't look or move exactly like the channel; only when they choose it. When the study is
   done, `progress(op_…)` has `animation`: its score against the channel's own bar; read `what_to_tell_them` to the

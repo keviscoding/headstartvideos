@@ -820,8 +820,8 @@ def coded_route(profile) -> dict:
                    "(characters, graphics, maps, text, effects, camera), and checks its test shots against the "
                    "channel's own frames (usually 5 to 15 more minutes of Claude usage, at most 25). Every video then "
                    "reuses it: Claude directs it to the narration and Studio draws every frame on this computer, so a "
-                   "video costs its voice" + (" and nothing else" if three else ", plus about $0.02 for each background "
-                   "picture when its renderer asks for them")
+                   "video costs its voice, plus about $0.02 for each background picture its renderer asks for (up to 6 "
+                   "a video) and, when the channel has music, its own music (about $0.12 a piece)"
                    + (". Your videos are vertical Shorts with its captions, like the channel's" if vertical(profile) else "")
                    + "."}
 
@@ -1257,8 +1257,10 @@ def answer(profile: dict, answers: dict) -> dict:
 
 
 def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: float = 10.0,
-               answers: dict = None) -> dict:
-    """The mapping for one profile. `styles` is the engine's installed styles {name: style dict}."""
+               answers: dict = None, code: bool = True) -> dict:
+    """The mapping for one profile. `styles` is the engine's installed styles {name: style dict}. code=False: a study
+    that wrote no renderer (approved before Studio 107, or instead of code) is planned again the way it was approved,
+    with Studio's own engines: never a route that needs a renderer it doesn't have."""
     original = profile
     medium = str((answers or {}).get("medium") or "")
     told = medium in MEDIUMS and _families(profile).get("3d", 0) >= 0.2
@@ -1277,7 +1279,7 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     by_hand = bool(designed) and bool(base) and base not in ("3d", "nocturne") and not (renders and base == "stories")
     if by_hand:                                   # the creator picked a picture recipe: drawn, by their choice
         designed, looked = 0.0, designed
-    rendered = not by_hand and renders
+    rendered = not by_hand and renders and code
     pictures = medium == MEDIUM_PICTURES and _families(profile).get("3d", 0) >= 0.2
     if pictures:
         designed, looked = 0.0, _families(profile).get("3d", 0)
@@ -1295,7 +1297,9 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
                or animation == ANIMATED_PICTURES)
     coded = {} if base in ("3d", "nocturne") else coded_route(original)
     offered = bool(coded)
-    if coded and instead:
+    if not code:
+        coded = {}
+    if instead and (offered or not code):
         way, rendered = other, False
         if pictures or drawn_instead:
             designed, looked = 0.0, share
@@ -1363,7 +1367,7 @@ def cost(overrides: dict, base: str) -> dict:
     if ((overrides.get("look") or {}).get("visuals")) == "cr_animated2d":
         # the animation is drawn in code; a few background plates are drawn once per video
         return {"pictures_per_min": 0.0, "clips_per_min": 0.0, "presenter_s_per_min": 0.0, "usd_per_min": 0.02,
-                "plates_per_video": 4, "note": "about 4 background pictures a video on your Kie account (about $0.08); "
+                "plates_per_video": 6, "note": "up to 6 background pictures a video on your Kie account (about $0.12); "
                 "the characters are animated in code; voice and music are extra"}
     usd = stills * PICTURE_USD + clips * CLIP_USD + presenter * PRESENTER_USD_S
     return {"pictures_per_min": round(stills, 1), "clips_per_min": clips, "presenter_s_per_min": presenter,

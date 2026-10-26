@@ -193,6 +193,59 @@ def test_a_study_after_a_look_applies_the_learned_settings_and_the_art_directors
     assert built["pacing"]["photo_every_s"] == 5.5, "the built style is not changed in place"
 
 
+def test_a_saved_or_improved_study_keeps_how_it_was_approved_and_its_renderer(home, monkeypatch):
+    """The 107 review's blocker: Save completed style and Improve graphics run finish_original, which plans the study
+    again. A study with no renderer (approved before 107, or instead of code) was planned as code: a documentary drew
+    the kit's stick fights. A coded style's improved copy lost its renderer the same way."""
+    import hashlib
+    import cr_animated2d as a2d
+    import cr_style_map as cm
+    import cr_style_refine as refine
+    monkeypatch.setattr(a2d, "available", lambda home=None: True)
+    monkeypatch.setattr(a2d, "available3d", lambda home=None: True)
+    _, done, _ = run_look(home)
+    folder = clone._folder(home) / ("op_" + "d" * 24)
+    folder.mkdir(parents=True)
+    spec = {"look_id": done["look_id"], "base_style": "stories", "answers": {}, "references": [{"id": VIDEO}],
+            "title": "t", "brief": ""}
+    built = {"name": "cr_clone_x", "look": {}, "cr_style_clone": {"operation_id": folder.name}}
+    kept = clone._apply_learned(folder, spec, built, lambda m: None)
+    assert kept["look"].get("visuals") not in a2d.PLUGINS
+    assert not kept["cr_style_clone"]["learned_v2"]["route"].get("coded"), "the way it was approved: pictures"
+    coded = clone._apply_learned(folder, {**spec, "renderer": "2d"}, built, lambda m: None)
+    assert coded["look"]["visuals"] in a2d.PLUGINS and coded["cr_style_clone"]["learned_v2"]["route"]["coded"]
+    assert coded["look"]["animated2d"]["renderer"]["state"] == "missing"
+    with pytest.raises(a2d.AnimationStopped):
+        a2d.renderer_for(coded, home)                       # never the kit's stick fights in its place
+    # Improve graphics on a coded style: the copy carries the source's renderer as last saved (Style Lab's included)
+    code = "Kit.renderer({name: 'pip', frame() {}});"
+    source = home / "assets" / "styles" / "learned" / "cr_clone_src"
+    source.mkdir(parents=True)
+    (source / "renderer-v2.js").write_text(code)
+    record = {"file": "styles/learned/cr_clone_src/renderer-v2.js", "sha256": hashlib.sha256(code.encode()).hexdigest(),
+              "version": 2, "state": "passed", "from": "style_lab", "manifest": {"name": "pip"}}
+    (home / "styles").mkdir(exist_ok=True)
+    original = {"spec": {**spec, "style_id": "cr_clone_src", "renderer": "2d"}}
+    clone._write(home / "styles" / "cr_clone_src.json", {"look": {"visuals": a2d.VISUALS, "animated2d": {"renderer": record}}})
+    copy_spec = json.loads(json.dumps(original["spec"]))
+    carried = refine._renderer_source(home, original, copy_spec)
+    assert carried == record and copy_spec["renderer"] == "2d"
+    clone._write(folder / "renderer-carried.json", {"schema": 1, "record": carried})
+    improved = clone._apply_learned(folder, copy_spec, {**built, "name": "cr_clone_new"}, lambda m: None)
+    got = improved["look"]["animated2d"]["renderer"]
+    assert got["file"] == "styles/learned/cr_clone_new/renderer-v1.js" and got["sha256"] == record["sha256"]
+    assert a2d.renderer_for(improved, home)[0] == code
+    # pictures chosen instead of its renderer stay chosen in the improved copy
+    clone._write(home / "styles" / "cr_clone_src.json", {"look": {}, "cr_style_clone": {"pictures_instead": {
+        "answers": {"made": cm.MADE_OTHER, "animation": cm.ANIMATED_PICTURES}}}})
+    copy_spec = json.loads(json.dumps(original["spec"]))
+    assert refine._renderer_source(home, original, copy_spec) is None
+    assert "renderer" not in copy_spec and copy_spec["answers"]["made"] == cm.MADE_OTHER
+    (folder / "renderer-carried.json").unlink()
+    pictures = clone._apply_learned(folder, copy_spec, built, lambda m: None)
+    assert pictures["look"].get("visuals") not in a2d.PLUGINS
+
+
 def test_the_study_spec_checks_the_look_and_the_answers(home, monkeypatch):
     _, done, _ = run_look(home)
     payload = {"preview_id": "pv_" + "a" * 64, "reference_ids": [VIDEO], "base_style": "stories", "label": "Mine",

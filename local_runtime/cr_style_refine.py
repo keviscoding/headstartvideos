@@ -67,6 +67,26 @@ def _reference_files(home, source, saved, record, bridge):
     raise RuntimeError("The original downloaded reference frames and sheets are missing. Restore the saved study before refining; no new download or study was started.")
 
 
+def _renderer_source(home, original, spec):
+    """How the improved copy of a style is drawn, from the source style as it is saved now. Pictures chosen instead of
+    its renderer stay chosen (the spec loses its renderer and gains that answer); a coded style passes on its renderer
+    record, Style Lab's latest save included (returned, for renderer-carried.json); None for any other style."""
+    published = clone._read(Path(home) / "styles" / (original["spec"]["style_id"] + ".json"))
+    chose = (published.get("cr_style_clone") or {}).get("pictures_instead")
+    if isinstance(chose, dict):
+        import cr_style_map
+        answers = chose.get("answers") or {"made": cr_style_map.MADE_OTHER, "animation": cr_style_map.ANIMATED_PICTURES,
+                                           **({"medium": cr_style_map.MEDIUM_PICTURES} if spec.get("renderer") == "3d"
+                                              else {})}
+        spec.pop("renderer", None)
+        spec["answers"] = {**(spec.get("answers") or {}), **answers}
+        return None
+    if not spec.get("renderer"):
+        return None
+    record = ((published.get("look") or {}).get("animated2d") or {}).get("renderer")
+    return dict(record) if isinstance(record, dict) else {"state": "missing", "why": "the style has no renderer saved"}
+
+
 def prepare(home, source_operation, proof, bridge, *, acknowledge_costs=True):
     """Prepare one immutable refinement; actual creative work starts separately."""
     if acknowledge_costs is not True:
@@ -112,6 +132,7 @@ def prepare(home, source_operation, proof, bridge, *, acknowledge_costs=True):
         if (Path(home) / "styles" / (spec["style_id"] + ".json")).exists():
             raise RuntimeError("The refinement's unique style name already exists. Preserve the saved styles.")
         spec["max_calls"] = min(spec["max_calls"], 8)
+        carried = _renderer_source(home, original, spec)
         files = {name: (source / name, digest) for name, digest in assets.items()}
         files.update(reference_files)
         files.update(clone._carried(source))     # the art director's words and the paid likeness check, kept
@@ -147,6 +168,8 @@ def prepare(home, source_operation, proof, bridge, *, acknowledge_costs=True):
         clone._write(folder / "design-checkpoint.json", {"schema": 1, "design": design, "spec_sha256": clone._hash(spec)})
         clone._write(folder / "validated-checkpoint.json", {"schema": 1, "record": record,
             "spec_sha256": clone._hash(spec), "assets": clone._validated_assets(folder, record)})
+        if carried is not None:
+            clone._write(folder / "renderer-carried.json", {"schema": 1, "record": carried})
         clone._write(folder / "refinement-source.json", {"schema": 1, "source_operation": source_operation,
             "source_style_sha256": original["style_sha256"], "source_kit": source_kit,
             "source_assets": assets, "files": copied})

@@ -472,13 +472,29 @@ def test_a_quote_counts_a_coded_styles_backdrops_and_its_own_music():
     lucas = {"look": {"visuals": a2d.VISUALS3D, "animated2d": {"dims": 3, "renderer": {"manifest": {"plates": {"draw": True}}}},
                       "sound": {"music": True, "score": {"genres": ["orchestral"]}}}}
     assert a2d.media_usd(gneef) == {"plates_usd": 0.0, "music_usd_per_piece": 0.12, "piece_seconds": 35}
-    assert a2d.media_usd(lucas)["plates_usd"] == 0.08 and a2d.media_usd({"look": {}}) == {}
+    assert a2d.media_usd(lucas)["plates_usd"] == 0.12, "up to 6 places a video, quoted in full"
+    assert a2d.media_usd({"look": {}}) == {}
     cat = {"prices": {"voice": {"per_min": 0.0}, "features": {}}}
     rows = {"gneef": {"name": "g", "coded_media": a2d.media_usd(gneef)}, "lucas": {"name": "l", "coded_media": a2d.media_usd(lucas)}}
     assert tools.media_estimate(cat, rows["gneef"], 1, {})["per_video_usd"] == 0.24, "two pieces of music for a minute"
-    assert tools.media_estimate(cat, rows["lucas"], 1, {})["per_video_usd"] == 0.32
+    assert tools.media_estimate(cat, rows["lucas"], 1, {})["per_video_usd"] == 0.36
     assert tools.coded_usd(rows["gneef"], 1.5) == 0.36, "a 90 s video: three pieces, as the real one paid"
     assert tools.media_estimate(cat, {"name": "plain"}, 1, {})["per_video_usd"] == 0.0
+
+
+def test_a_quote_counts_the_channels_own_music_for_a_picture_style_too(monkeypatch):
+    """The 107 review: every clone that heard music gets its own score (Suno on the creator's Kie account), picture
+    styles included, but only coded styles quoted it. Any style with a score now quotes it; none, no backdrops."""
+    import cr_studio_tools as tools
+    pictures = {"look": {"sound": {"music": True, "score": {"genres": ["lofi"]}}}}
+    assert a2d.media_usd(pictures) == {"plates_usd": 0.0, "music_usd_per_piece": 0.12, "piece_seconds": 35}
+    cat = {"prices": {"voice": {"per_min": 0.0}, "features": {}}}
+    assert tools.media_estimate(cat, {"name": "p", "coded_media": a2d.media_usd(pictures)}, 1, {})["per_video_usd"] == 0.24
+    assert a2d.media_usd({"look": {"sound": {"music": False, "score": {}}}}) == {}, "music off: nothing to pay"
+    assert a2d.media_usd({"look": {"sound": {"score": {"on": False}}}}) == {}
+    monkeypatch.setattr(a2d, "available", lambda home=None: True)
+    said = cm.coded_route(tsm.profile({"generated": 0.9, "graphic": 0.1}))["why"]
+    assert "nothing else" not in said and "own music" in said and "up to 6" in said
 
 
 def test_the_study_result_shows_the_renderers_test_shots_beside_the_channels_frames(tmp_path, monkeypatch):
@@ -492,8 +508,8 @@ def test_the_study_result_shows_the_renderers_test_shots_beside_the_channels_fra
     for k in range(3):
         Image.new("RGB", (54, 96), (10 * k, 80, 40)).save(folder / "renderer" / "round-2" / f"shot_{k}.jpg")
     (folder / "renderer" / "build.json").write_text(json.dumps({"stills": [f"round-2/shot_{k}.jpg" for k in range(3)]}))
-    frames = tsm_frames(home / "looks" / "frames", 9)
-    saved = {"spec": {"style_id": "cr_clone_x", "look_id": "lk_x"}}
+    frames = tsm_frames(home / "output" / "cr-style-clone" / "looks" / ("lk_" + "b" * 24) / "frames", 9)
+    saved = {"spec": {"style_id": "cr_clone_x", "look_id": "lk_" + "b" * 24}}
     monkeypatch.setattr(clone, "_saved", lambda h, op, bridge: (folder, saved))
     monkeypatch.setattr(clone, "renderer_frames", lambda folder, spec: frames + [tmp_path / "elsewhere.jpg"])
     got = clone.renderer_pictures(home, "op_" + "a" * 24, None, style={"look": {"animated2d": {"renderer": {"sha256": "s1"}}}})
@@ -508,6 +524,15 @@ def test_the_study_result_shows_the_renderers_test_shots_beside_the_channels_fra
     labbed = {"look": {"animated2d": {"renderer": {"sha256": "s2", "from": "style_lab"}}}}
     got = clone.renderer_pictures(home, "op_" + "a" * 24, None, style=labbed)
     assert [str(p) for p in got["shots"]] == [str(lab / "preview" / "abc" / "shot_0.jpg")], "Style Lab's version, inside the Studio only"
+    # only pictures, and only from the study, the style's Lab workspace or the look: never another file lab.json names
+    (home / "styles").mkdir()
+    (home / "styles" / "cr_clone_y.json").write_text("{}")
+    (lab / "preview" / "abc" / "notes.txt").write_text("x")
+    (lab / "lab.json").write_text(json.dumps({"history": [{"kind": "preview", "ok": True, "sha256": "s2", "stills": [
+        str(lab / "preview" / "abc" / "notes.txt"), str(home / "styles" / "cr_clone_y.json"),
+        str(lab / "preview" / "abc" / "shot_0.jpg")]}]}))
+    got = clone.renderer_pictures(home, "op_" + "a" * 24, None, style=labbed)
+    assert [p.name for p in got["shots"]] == ["shot_0.jpg"]
 
 
 def test_round_files_belong_to_their_build(tmp_path):
