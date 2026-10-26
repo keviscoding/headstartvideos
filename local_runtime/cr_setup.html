@@ -189,10 +189,12 @@ async function fixBrowser(button,note){
 const fixing={},fixStage={},fixFailed={},autoFixed={},FIX_BUSY=['starting','downloading','checking','installing'];
 const FIX_BADGE={starting:'Downloading…',downloading:'Downloading…',checking:'Checking…',installing:'Installing…'};
 const toolBadge=(kind,ok)=>ok?'Ready':fixing[kind]?(FIX_BADGE[fixStage[kind]]||'Downloading…'):'Needs attention';
-// Missing or too old, FFmpeg and Node.js start downloading by themselves while this page is open, as the speech-timing
-// model does (owner's Windows test, 2026-10-26: two Fix it presses nobody should need). Once per page; a fix already
+// Missing or too old, FFmpeg and Node.js can start downloading by themselves while this page is open, as the speech-timing
+// model does (owner's Windows test, 2026-10-26: two Fix it presses nobody should need), when the Studio allows it
+// (auto_fix_tools, off until the owner decides). Once per page; a fix already
 // running is followed; one that failed shows why and waits for Fix it.
 function autoFix(data,ok){
+ if(data.auto_fix_tools!==true)return;                  // off until the owner decides (cr_installs.AUTO_FIX_TOOLS)
  for(const kind of ['ffmpeg','node']){
   if(ok(kind)||fixing[kind]||fixFailed[kind]||autoFixed[kind]||data.can_fix?.[kind]===false)continue;
   autoFixed[kind]=true;fixTool(kind,null);
