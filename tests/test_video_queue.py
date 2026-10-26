@@ -454,3 +454,23 @@ def test_an_older_studios_pending_begin_is_still_honoured(tmp_path):
     cr_bridge._save_begins(path, {f"id{i}": f"b_{i}" for i in range(40)})
     kept = cr_bridge._pending_begins(path)
     assert len(kept) == cr_bridge.PENDING_BEGINS and "id39" in kept and "id0" not in kept
+
+
+def test_a_video_is_known_as_being_made_from_the_moment_the_queue_hands_it_over(env, monkeypatch):
+    """The dispatcher takes a video off the waiting line, then it may wait for editor or study work: a second Resume of
+    the same project in that time is refused, and a video that fails to start is let go."""
+    activity = env.studio._cr_activity
+    token = activity.reserve()                                 # a style study holds Studio
+    video = {"slug": "rome", "title": "Rome falls", "style": "history", "minutes": 5, "steps": ["script"],
+             "cr_project_id": PROJECT, "cr_attempt_slug": "not/a valid slug"}
+    env.studio.JOBS["rome"] = {"state": "queued"}
+    thread = threading.Thread(target=env.studio._run_spec, args=(video,), daemon=True)
+    thread.start()
+    deadline = time.time() + 3
+    while not env.keeper.has_project(PROJECT) and time.time() < deadline:
+        time.sleep(0.02)
+    assert env.keeper.has_project(PROJECT), "waiting for the study, it's already the one being made"
+    activity.release(token)
+    thread.join(3)
+    assert env.studio.JOBS["rome"]["state"] == "error"         # its attempt folder was refused before it began
+    assert not env.keeper.has_project(PROJECT) and env.keeper.running is None

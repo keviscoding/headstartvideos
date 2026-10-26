@@ -1635,21 +1635,28 @@ def create_app():
             else:
                 activity.release(render_token)
     def run_spec(spec):
-        activity.wait_for_editor()
-        import cr_attempts
-        queue_keeper.started(spec)
+        queue_keeper.started(spec)              # taken off the waiting line: known as the one being made from now
+        ended = []
+
+        def finished(job_of):                   # once, however it ends
+            if not ended:
+                ended.append(True)
+                queue_keeper.finished(spec, job_of)
         try:
+            activity.wait_for_editor()
+            import cr_attempts
             with cr_attempts.bind(studio.mv, spec):
                 try:
                     return run_owned_spec(spec)
                 finally:
                     # Inside the attempt's binding, so job_dir names this attempt's folder (its short/error.json).
-                    queue_keeper.finished(spec, lambda: studio.mv.job_dir(str(spec.get("title") or "Your video"),
-                                                                          str(spec.get("style") or "jung")))
+                    finished(lambda: studio.mv.job_dir(str(spec.get("title") or "Your video"),
+                                                       str(spec.get("style") or "jung")))
         except Exception as error:
             with studio.LOCK:
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=True)
                 studio.RUNNING["slug"] = None
+            finished(lambda: None)
     studio._run_spec = run_spec
 
     def queue_check(specs):
