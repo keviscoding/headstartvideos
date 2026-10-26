@@ -771,10 +771,16 @@ def test_voice_picker_lists_previews_once_and_saves_the_choice(runtime, timeline
     def unreachable(*a, **k):                                  # channelrecipe.com's free sample can't be reached
         raise requests.ConnectionError("offline")
     monkeypatch.setattr(requests, "get", unreachable)
-    first = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"})
+    # no free sample: nothing is paid until the creator says yes to the cost, voice by voice
+    asked = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"})
+    assert asked.status_code == 200 and asked.json["needs_paid"] is True and asked.json["cost_usd"] == 0.01
+    assert asked.json["message"] == "Free sample unavailable: make one with your Kie.ai balance (about $0.01)?"
+    assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Kore"}).json["needs_paid"] is True
+    assert made == [], "a click without a yes never pays, for any voice"
+    first = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon", "confirm_paid": True})
     assert first.status_code == 200 and first.json["url"] == "/cr-voices/sample/Charon" and first.json["paid"] is True
-    assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"}).status_code == 200
-    assert made == [("narration", "Charon")], "each voice's sample is paid for once"
+    assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"}).json["paid"] is False
+    assert made == [("narration", "Charon")], "each voice's sample is paid for once, after a yes"
     sample = r.client.get("/cr-voices/sample/Charon", headers=r.headers)
     assert sample.status_code == 200 and sample.data == b"ID3 sample"
     assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "NotAVoice"}).status_code == 400

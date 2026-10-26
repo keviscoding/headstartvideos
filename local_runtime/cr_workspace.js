@@ -1056,23 +1056,34 @@
     text('crw-voices-sub', `${voices.data.model_label} on ${voices.data.provider_label}` + (listed ? ` · ${listed} voices` : ''));
     const shared = Object.keys(state.setup?.account?.voice_samples?.[voices.data.model] || {}).length;
     const hear = !listed ? `This voice model has no list to browse: paste a voice ID from your ${voices.data.provider_label} account.`
-      : shared || gemini ? 'Press ▶ to hear a voice (free: ChannelRecipe\'s own sample of each voice).'
+      : shared ? 'Press ▶ to hear a voice (free: ChannelRecipe\'s own sample of each voice).'
+      : gemini ? `Press ▶ to hear a voice (free: ChannelRecipe's own sample of each voice; if it can't be fetched, Studio asks before making one with your ${voices.data.provider_label} balance).`
       : `Press ▶ to hear a voice. The first play of each voice makes a short sample with your ${voices.data.provider_label} account (a tiny amount of your balance); after that it replays free.`;
     text('crw-voices-note', [voices.data.note, hear].filter(Boolean).join(' '));
     renderVoices(); $('crw-voices').showModal(); (listed ? $('crw-voices-search') : $('crw-voices-id'))?.focus();
   }
-  async function previewVoice(name, button) {
+  // A free sample first (ChannelRecipe's own); when none can be fetched, a sample on the creator's balance is made only
+  // after they press the button that names its cost, and only for that voice.
+  async function previewVoice(name, button, confirmPaid = false) {
     const audio = $('crw-voices-audio');
     if (voices.playing === name && !audio.paused) {audio.pause(); return;}
     let url = sharedSample(name) || (voices.previews.has(name) ? '/cr-voices/sample/' + encodeURIComponent(name) : '');
     if (!url) {
       button.classList.add('is-loading'); button.disabled = true; text('crw-voices-status', `Getting a short ${name} sample…`);
-      try {const made = await api('/cr-voices/preview', {method: 'POST', body: {voice: name}}); url = made.url; voices.previews.add(name);
-        text('crw-voices-status', made.paid ? `Made a short ${name} sample with your ${voices.data.provider_label} balance (a tiny amount); it replays free from now on.` : '');}
+      try {const made = await api('/cr-voices/preview', {method: 'POST', body: confirmPaid ? {voice: name, confirm_paid: true} : {voice: name}});
+        if (made.needs_paid) {askPaidSample(name, button, made); return;}
+        url = made.url; voices.previews.add(name);
+        text('crw-voices-status', made.paid ? `Made a short ${name} sample with your ${voices.data.provider_label} balance; it replays free from now on.` : '');}
       catch (e) {text('crw-voices-status', e.message); return;}
       finally {button.classList.remove('is-loading'); button.disabled = false;}
     }
     voices.playing = name; audio.src = url; audio.play().catch(() => text('crw-voices-status', 'Press ▶ again to play.'));
+  }
+  function askPaidSample(name, button, made) {
+    const status = $('crw-voices-status'), yes = el('button', 'crw-secondary-button', `Make the ${name} sample`);
+    yes.type = 'button'; yes.dataset.paidSample = name;
+    yes.addEventListener('click', () => {status.replaceChildren(); previewVoice(name, button, true);});
+    status.replaceChildren(el('span', '', (made.message || 'Free sample unavailable: make one with your balance?') + ' '), yes);
   }
   async function chooseVoice(name, button) {
     button.disabled = true;

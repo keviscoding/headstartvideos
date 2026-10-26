@@ -132,7 +132,11 @@ def workspace(browser):
 
     @app.post("/cr-voices/preview")
     def voice_preview():
-        return jsonify(url="/cr-voices/sample/" + request.json["voice"])
+        if env.mode == "no_free_samples" and request.json.get("confirm_paid") is not True:
+            return jsonify(needs_paid=True, voice=request.json["voice"], cost_usd=0.01,
+                           message="Free sample unavailable: make one with your Kie.ai balance (about $0.01)?")
+        return jsonify(url="/cr-voices/sample/" + request.json["voice"],
+                       paid=env.mode == "no_free_samples")
 
     @app.get("/cr-voices/sample/<name>")
     def voice_sample(name):
@@ -636,6 +640,26 @@ def test_choose_a_narration_voice_after_hearing_it(workspace):
     page.wait_for_function("document.getElementById('crw-narration-name').textContent === 'Charon'")
     assert workspace.voice == "Charon"
     assert "Charon" in page.inner_text("#crw-voices-status")
+
+
+def test_a_paid_voice_sample_is_made_only_after_the_creator_says_yes_to_its_cost(workspace):
+    """channelrecipe.com's free samples couldn't be fetched: the dialog names the cost and waits for a yes, voice by
+    voice; another voice clicked meanwhile pays nothing (review of 1f91260, blocker 1)."""
+    env, page = workspace, workspace.page
+    env.mode = "no_free_samples"
+    env.open()
+    page.click("#crw-voice-open")
+    page.wait_for_selector("#crw-voices[open] .crw-voice-row")
+    page.click("button[aria-label='Preview Charon']")
+    page.wait_for_selector("[data-paid-sample='Charon']")
+    assert "Free sample unavailable: make one with your Kie.ai balance (about $0.01)?" in page.inner_text("#crw-voices-status")
+    page.click("button[aria-label='Preview Sulafat']")
+    page.wait_for_selector("[data-paid-sample='Sulafat']")
+    previews = [p["body"] for p in env.posts if p["path"] == "/cr-voices/preview"]
+    assert previews == [{"voice": "Charon"}, {"voice": "Sulafat"}], "no yes, no paid sample"
+    page.click("[data-paid-sample='Sulafat']")
+    page.wait_for_function("document.getElementById('crw-voices-audio').src.endsWith('/cr-voices/sample/Sulafat')")
+    assert [p["body"] for p in env.posts if p["path"] == "/cr-voices/preview"][-1] == {"voice": "Sulafat", "confirm_paid": True}
 
 
 def test_choose_voice_never_sends_a_connected_creator_to_setup(workspace):

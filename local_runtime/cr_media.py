@@ -281,13 +281,14 @@ def kie_narration(cfg: dict) -> dict:
     except AccountStop:
         return cfg                                   # an unknown model: the checks that read it say so, as before
     names = model.get("voice_names") or []
-    voice = str(cfg.get("voice") or "")
+    voice = str(cfg.get("voice") or "").strip()
     retired = retired_kie_model(old_model)
-    if not retired and (not voice or not names or voice in names):
-        return cfg
-    same = next((n for n in names if n.casefold() == voice.casefold()), "") if voice else ""   # "kore": Kore
-    if same and not retired:
-        return {**cfg, "voice": same}                # a Gemini name in another case: nothing moved, no note
+    same = next((n for n in names if n.casefold() == voice.casefold()), "") if voice else ""   # " kore": Kore
+    if not retired:
+        if not voice or not names:
+            return cfg
+        if same:                                     # a Gemini name (padded or in another case): nothing moved, no note
+            return cfg if same == cfg.get("voice") else {**cfg, "voice": same}
     new_voice = same or (gemini_stand_in(voice) if voice or retired else model["default_voice"])
     out = {**cfg, "voice": new_voice}
     if "model" in cfg or retired:
@@ -319,6 +320,8 @@ def _replace_settings(data: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())                  # on disk before the rename: a power cut never leaves it empty
         try:
             temporary.chmod(0o600)
         except OSError:
@@ -606,8 +609,14 @@ def _run_once(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     model = model or PROVIDERS[provider]["models"][task]
     if provider == "kie" and task == "narration" and retired_kie_model(model):
         # never a new task on Kie's ElevenLabs (kie_narration): the same words, read by the Gemini voice of its kind
+        inputs = inputs if isinstance(inputs, dict) else {}
+        words = str(inputs.get("text") or " ".join(str((t or {}).get("text") or "")
+                                                   for t in inputs.get("dialogue_turns") or [])).strip()
+        if not words:
+            raise AccountStop("There is no narration text to record.")
         gemini = narration_model("kie")
-        inputs = narration_input(str((inputs or {}).get("text") or ""), gemini_stand_in((inputs or {}).get("voice")),
+        voice = inputs.get("voice") or next((s.get("voice_name") for s in inputs.get("speakers") or []), "")
+        inputs = narration_input(words, voice if voice in (gemini.get("voice_names") or []) else gemini_stand_in(voice),
                                  gemini["id"])
         model = gemini["id"]
     payload = {"model": model, "input": inputs} if provider == "kie" else {"model": model, **inputs}
@@ -971,6 +980,12 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
         engine.log(kie_move_note(cfg))               # a saved Kie ElevenLabs voice, read by its Gemini voice
     folder = Path(mp3).parent / (Path(mp3).stem + "-hub-voice")
     folder.mkdir(parents=True, exist_ok=True)
+    if any(p.suffix != "." + model["format"] for p in folder.glob("part-*.*") if p.suffix in (".mp3", ".wav")):
+        # a Resume after the voice model changed (Kie's ElevenLabs became Gemini): every part is made again in this
+        # voice, so a video never mixes two voices; the old parts stay unused (each part is a short paid task)
+        engine.log(f"Narration: its earlier voice parts were made with another voice model; all of it is read again by "
+                   f"{voice} so the video keeps one voice (each part is a small charge on your "
+                   f"{PROVIDERS[provider]['label']} balance).")
     parts = []
     _routing.narration = chosen                      # run() pays with the chosen account, not Setup's narration one
     try:

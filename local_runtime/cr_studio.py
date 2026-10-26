@@ -1274,6 +1274,9 @@ def create_app():
     # play a short preview (made once with the creator's own account, then
     # kept), and choose one without touching keys or accounts.
     VOICE_SAMPLE = "Every great story starts with a single question. Here is what really happened."
+    # one short line on Kie's Gemini TTS (billed by the token, from $0.35 a million; a credit is about $0.005): an upper
+    # bound the creator is shown before a paid sample is made
+    PREVIEW_COST_USD = 0.01
     VOICE_NAME = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
 
     def narration_in_use():
@@ -1361,7 +1364,8 @@ def create_app():
 
     @studio.app.post("/cr-voices/preview")
     def voices_preview():
-        voice = str((request.get_json(silent=True) or {}).get("voice", "")).strip()
+        data = request.get_json(silent=True) or {}
+        voice = str(data.get("voice", "")).strip()
         try:
             current = narration_in_use()
             if not current:
@@ -1372,7 +1376,13 @@ def create_app():
                 return jsonify(error="Choose a voice from the list."), 400
             target, paid = preview_file(model, voice), False
             if not target.is_file() and hosted_sample(model, voice, target) is None:
-                # no free sample of this voice (or channelrecipe.com unreachable): one short line, made once, then kept
+                # No free sample of this voice could be fetched (channelrecipe.com unreachable or slow): a short line
+                # with the creator's own balance, only after they say yes to its cost, then kept and replayed free.
+                label = cr_media.PROVIDERS[current["provider"]]["label"]
+                if data.get("confirm_paid") is not True:
+                    return jsonify(needs_paid=True, voice=voice, cost_usd=PREVIEW_COST_USD,
+                                   message=f"Free sample unavailable: make one with your {label} balance (about "
+                                           f"${PREVIEW_COST_USD:.2f})?")
                 target.parent.mkdir(parents=True, exist_ok=True)
                 cr_media.run("narration", cr_media.narration_input(VOICE_SAMPLE, voice, model["id"]), target,
                              model=model["id"], log=studio.app.logger.info, timeout_s=180)

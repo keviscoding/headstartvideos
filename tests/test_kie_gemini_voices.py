@@ -182,8 +182,12 @@ def test_a_video_stopped_halfway_through_its_voice_is_voiced_wholly_by_gemini(hu
     folder.mkdir()
     (folder / "part-000.mp3").write_bytes(b"james, before the stop")
     script = ("A sentence of the story. " * 120).strip()            # about 3,000 characters: two parts
-    media.narrate(voice_engine([]), script, hub / "audio.mp3", hub / "subs.srt")
+    lines = []
+    media.narrate(voice_engine(lines), script, hub / "audio.mp3", hub / "subs.srt")
     assert [c["model"] for c in creates] == [GEMINI, GEMINI]
+    assert [line for line in lines if line.startswith("Narration: its earlier voice parts")] == [
+        "Narration: its earlier voice parts were made with another voice model; all of it is read again by Charon so "
+        "the video keeps one voice (each part is a small charge on your Kie.ai balance)."]
     assert {c["input"]["speakers"][0]["voice_name"] for c in creates} == {"Charon"}
     assert joined == ["file 'part-000.wav'\nfile 'part-001.wav'\n"]
 
@@ -277,3 +281,39 @@ def test_setup_and_create_say_kie_narrates_with_gemini():
     page = (ROOT / "local_runtime/cr_workspace.js").read_text(encoding="utf-8")
     assert "location.href = '/cr-setup'" not in page, "Choose voice never sends a connected creator back to setup"
     assert 'id="crw-narration-note"' in (ROOT / "local_runtime/cr_workspace.html").read_text(encoding="utf-8")
+
+
+def test_the_settings_file_is_on_disk_before_it_replaces_the_old_one(hub, monkeypatch):
+    """A power cut right after the rename must not leave an empty .cr-connection.json (Studio would start from
+    defaults): the new file is flushed and fsynced first."""
+    save(narration={"provider": "kie", "model": TURBO})
+    order = []
+    real_fsync, real_replace = media.os.fsync, media.os.replace
+    monkeypatch.setattr(media.os, "fsync", lambda fd: order.append("fsync") or real_fsync(fd))
+    monkeypatch.setattr(media.os, "replace", lambda a, b: order.append("replace") or real_replace(a, b))
+    assert media.migrate_saved_voice()
+    assert order == ["fsync", "replace"]
+
+
+@pytest.mark.parametrize("voice", [" Kore", "Kore ", "kore", " KORE "])
+def test_a_padded_or_differently_cased_gemini_name_is_that_voice(hub, voice):
+    save(narration={"provider": "kie", "model": GEMINI, "voice": voice})
+    got = media.profile("narration")
+    assert got["voice"] == "Kore" and "moved_from" not in got
+    assert media.migrate_saved_voice() == ""
+
+
+def test_the_guard_never_sends_empty_narration(hub, monkeypatch):
+    save(narration={"provider": "kie", "model": GEMINI})
+    monkeypatch.setattr(media.requests, "post", lambda *a, **k: pytest.fail("nothing is sent"))
+    for empty in ({"text": "  ", "voice": LAURA}, {"speakers": [{"voice_name": "Kore"}], "dialogue_turns": [{"text": ""}]},
+                  None):
+        with pytest.raises(media.AccountStop, match="no narration text"):
+            media.run("narration", empty, hub / "voice.mp3", model=TURBO)
+
+
+def test_the_guard_keeps_a_gemini_voice_it_is_given(hub, monkeypatch):
+    save(narration={"provider": "kie", "model": GEMINI})
+    creates = kie_tasks(monkeypatch)
+    media.run("narration", media.narration_input("Hello there.", "Puck", GEMINI), hub / "voice.wav", model=TURBO)
+    assert creates[0]["model"] == GEMINI and creates[0]["input"]["speakers"][0]["voice_name"] == "Puck"
