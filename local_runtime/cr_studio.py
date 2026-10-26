@@ -65,6 +65,15 @@ def chat_line() -> str:
     return "yes, its settings were left out" + (" (%s)" % effort[0] if effort else "")
 
 
+def start_page(cfg=None) -> str:
+    """The page Studio opens when it starts: setup until this Studio is connected with a voice account, then the
+    workspace, which links back to setup when a check fails. Before 109 every start opened setup again ("Three quick
+    steps"), even after a finished video (the owner's Windows test, 2026-10-26)."""
+    cfg = cr_bridge.load_settings() if cfg is None else cfg
+    voiced = (cfg.get("narration") or {}).get("provider") or (cfg.get("media_hub") or {}).get("provider")
+    return "/" if cfg.get("key") and voiced else "/cr-setup"
+
+
 def forget_claude_chat(environ=None) -> list:
     """Drop the variables a Claude Code chat hands its child processes; -> what was dropped (names, plus the effort
     level the chat asked for, never a value that could be personal)."""
@@ -2032,7 +2041,7 @@ def main():
                                 on_idle=lambda job: studio._enqueue_tl_render(Path(job), Path(job).name))
     def open_page():
         time.sleep(1)
-        webbrowser.open("http://127.0.0.1:7860/cr-setup")
+        webbrowser.open("http://127.0.0.1:7860" + start_page())
     if not os.environ.pop("CR_RESTARTED_FOR_UPDATE", ""):
         threading.Thread(target=open_page, daemon=True).start()
     from werkzeug.serving import make_server

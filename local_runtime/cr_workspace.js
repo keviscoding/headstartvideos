@@ -74,7 +74,10 @@
   function el(tag, cls, text) {const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n;}
   function text(id, value) {if ($(id)) $(id).textContent = value == null ? '' : String(value);}
   function hide(id, value) {if ($(id)) $(id).hidden = !!value;}
-  function error(message) {text('crw-error', message || ''); hide('crw-error', !message);}
+  // Create's problems, one line each (the owner's Windows test, 2026-10-26: two stops ran together in one paragraph, and
+  // stayed on screen after the title or recipe they were about had changed: any change in the form clears them)
+  function error(message) {const lines=(Array.isArray(message)?message:[message]).map(m=>String(m||'').trim()).filter(Boolean);
+    $('crw-error').replaceChildren(...lines.map(m=>el('span','crw-error-line',m))); hide('crw-error', !lines.length);}
   function toast(message) {text('crw-toast', message); hide('crw-toast', false); clearTimeout(toast.timer); toast.timer = setTimeout(() => hide('crw-toast', true), 5500);}
   function encoded(value) {return encodeURIComponent(String(value));}
   function providerName(id) {return ({kie:'Kie.ai',atlas:'Atlas Cloud',original:''})[id] || '';}
@@ -188,6 +191,7 @@
   function selectRecipe(recipe, persist = true) {
     if (state.selected) state.featureDrafts[state.selected.name] = featureValues();
     const fresh = !state.selected || state.selected.name !== recipe?.name;
+    if (fresh && state.selected) error('');                       // another recipe: the last one's problems don't apply
     state.selected = recipe;
     if (fresh && isShort(recipe) && recipe.short_seconds) { $('crw-seconds').value = recipe.short_seconds; chooseGroup('[data-seconds]', 'seconds', String(recipe.short_seconds)); }   // its own length
     text('crw-selected-name', recipe.label); text('crw-selected-description', recipe.description || recipe.tagline);
@@ -994,8 +998,8 @@
       if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
     } catch(e){
       // a title that already stopped with its work saved (cr_recover): carry that one on first
-      if(e.details?.resume_first){try{await resumeFirst(e,p);}catch(err){error((err.details?.blockers||[]).join(' ')||err.message);showPage('create');}}
-      else{error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}
+      if(e.details?.resume_first){try{await resumeFirst(e,p);}catch(err){error(err.details?.blockers?.length?err.details.blockers:err.message);showPage('create');}}
+      else{error(e.details?.blockers?.length?e.details.blockers:e.message);showPage('create');}
     }finally{state.submitting=false;gate();}
   }
   async function optionalAccounts() {
@@ -1043,7 +1047,7 @@
   for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();summary();captionsNote();});
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
-  $('crw-form').addEventListener('input',()=>{updateOptional();summary();save();cloudChoice();});
+  $('crw-form').addEventListener('input',()=>{error('');updateOptional();summary();save();cloudChoice();});
   $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
   $('crw-form').addEventListener('change',()=>{updateOptional();summary();save();cloudChoice();});
   $('crw-recipe-open').addEventListener('click',openGallery);$('crw-styles-browse').addEventListener('click',openGallery);

@@ -991,3 +991,11 @@ def test_setup_fix_routes_start_studios_own_installs_behind_the_local_token(runt
     assert refused.status_code == 409 and "Install Claude Code first" in refused.json["error"]
     status = runtime.client.get("/cr-status", headers=runtime.headers).json
     assert status["ffmpeg"] is True and status["node"] is True and set(status["can_fix"]) == {"ffmpeg", "node", "claude"}
+
+
+def test_studio_opens_setup_until_it_is_connected_then_the_workspace():
+    """The owner's Windows test (2026-10-26): every start opened the setup page again, even after a finished video."""
+    assert cr_studio.start_page({}) == "/cr-setup"
+    assert cr_studio.start_page({"key": "k"}) == "/cr-setup", "connected, but no voice account yet"
+    assert cr_studio.start_page({"key": "k", "narration": {"provider": "kie"}}) == "/"
+    assert cr_studio.start_page({"key": "k", "media_hub": {"provider": "atlas"}}) == "/"
