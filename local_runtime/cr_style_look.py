@@ -222,7 +222,12 @@ _SWAPS = (
     ("lion", "shark", "bear", "wolf", "tiger", "gorilla", "crocodile", "eagle", "snake", "elephant", "whale", "dragon"),
 )
 _LADDER = (2, 3, 5, 7, 10, 20, 24, 30, 50, 100, 1000, 10000, 1000000)
-_WORD = re.compile(r"[A-Za-z]+|\d[\d,]*")
+_WORD = re.compile(r"[A-Za-z]+")
+# a number on its own ("100 Strangers"), never inside a word ("3D", "4K", "2nd", "MP4")
+_NUMBER = re.compile(r"(?<![\w#.,$\u00a3\u20ac])\d[\d,]*(?![\w.%])")
+# a number that names something rather than counts it: kept ("World War 2", "Part 3", "Episode 12")
+_NAMED_BY = re.compile(r"\b(?:war|part|episode|ep|season|chapter|vol|volume|no|number|book|act|phase|gen|"
+                       r"generation|level|round|stage|game|v)\s*$", re.I)
 
 
 def _clean_title(title: str) -> str:
@@ -264,9 +269,9 @@ def title_ideas(titles, *, shorts=False, limit=5) -> list:
     ideas = []
     for title in cleaned[:6]:
         salt = int(hashlib.sha256(title.encode("utf-8")).hexdigest()[:6], 16)
-        parts = list(_WORD.finditer(title))
-        swappable = [m for m in parts if not m.group().replace(",", "").isdigit() and _swap(m.group(), 0)]
-        numbered = [m for m in parts if m.group().replace(",", "").isdigit()]
+        swappable = [m for m in _WORD.finditer(title) if _swap(m.group(), 0)]
+        numbered = [m for m in _NUMBER.finditer(title.rstrip(","))
+                    if m.group().rstrip(",").replace(",", "").isdigit() and not _NAMED_BY.search(title[:m.start()])]
         for take in range(2):
             if not swappable and not numbered:
                 break
@@ -428,9 +433,14 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
         watched[ref["id"]] = cr_style_watch.watch(ref["id"], ref.get("duration_seconds") or ref.get("duration") or 0,
                                                  call=call, log=log, transcript=captions)
 
+    stopped = threading.Event()                    # the look stopped: its background downloads start nothing new
+
     def fetch(vid, a, b):
-        """One section, tried twice (once when YouTube asks to sign in): its file, or what went wrong."""
+        """One section, tried twice (once when YouTube asks to sign in): its file, or what went wrong. Nothing is
+        tried once the look has stopped (a stopped look's "Try again" reuses its folder: no second writer)."""
         for attempt in (1, 2):
+            if stopped.is_set():
+                return RuntimeError("the look stopped before this part was downloaded")
             try:
                 return download(vid, a, b, work / "media" / f"{vid}_{a}_{b}.mp4")
             except Exception as exc:                                   # noqa: BLE001
@@ -513,6 +523,7 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
                      + str(exc)[:200] + "). Nothing was charged; try again or choose other videos.")
         _write(path / "look.json", saved)
     finally:
+        stopped.set()
         downloads.shutdown(wait=False, cancel_futures=True)
     return status(home, look_id)
 

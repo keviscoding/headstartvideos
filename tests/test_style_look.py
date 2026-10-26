@@ -790,3 +790,156 @@ def test_claude_code_is_given_the_looks_time_left_and_title_ideas(monkeypatch):
             assert got["minutes_left"] == 3 and got["message"].startswith("Video 2 of 3")
         else:
             assert got["title_ideas"] == answer["title_ideas"] and "title_ideas" in got["next"]
+
+
+def _coded_pictures_source(home, monkeypatch):
+    """A study written in code (Studio 109: no graphics kit), saved, with its design and art words checkpointed."""
+    import cr_claude
+    _, done, _ = run_look(home)
+    cfg = {"key": "cr_mcp_test", "url": "https://channelrecipe.com", "brain_mode": "claudecode", "costs_accepted": True,
+           "general_model": cr_claude.GENERAL_MODEL, "visual_model": cr_claude.VISUAL_MODEL}
+    bridge = SimpleNamespace(load_settings=lambda: dict(cfg), prepare_runtime=lambda proof: None)
+    proof = {"brain_mode": "claudecode", "purpose": "creative", "api_provider": "firstParty",
+             "general_model": cfg["general_model"], "visual_model": cfg["visual_model"],
+             **dict.fromkeys(("claude_installed", "claude_authenticated", "ffmpeg_ready", "browser_ready", "node_ready",
+                              "models_verified", "costs_accepted"), True)}
+    monkeypatch.setattr(clone, "_room", lambda: "")
+    op = "op_" + "f" * 24
+    folder = clone._folder(home) / op
+    folder.mkdir(parents=True)
+    spec = {"style_id": "cr_clone_bunker", "look_id": done["look_id"], "base_style": "stories", "answers": {},
+            "reference_url": "https://www.youtube.com/@pip/videos", "references": [{"id": VIDEO, "title": "A video"}],
+            "budget_minutes": 22, "max_calls": 40, "label": "2d Survival Stories", "title": "100 Strangers, 1 Bunker",
+            "brief": "", "minutes": 1, "visual_mode": "mixed", "preview_id": "pv_" + "a" * 64, "name": "",
+            "renderer": "2d", "base_sha256": clone._file_hash(home / "styles" / "stories.json")}
+    style = {"name": "cr_clone_bunker", "label": "2d Survival Stories", "look": {"visuals": "cr_animated2d",
+             "animated2d": {"renderer": {"state": "below_bar", "overall": 5.2, "bar": 6.5, "version": 1}}},
+             "cr_style_clone": {"operation_id": op, "base_style": "stories",
+                                "learned_v2": {"look_id": done["look_id"], "base": "stories",
+                                               "route": {"engine": "animated2d"}}}}
+    target = home / "styles" / "cr_clone_bunker.json"
+    target.write_text(json.dumps(style))
+    clone._write(folder / "design-checkpoint.json", {"schema": 1, "design": {"genome": {"analysis": {}}},
+                                                     "spec_sha256": clone._hash(spec)})
+    clone._write(folder / "art-checkpoint.json", {"schema": 1, "art": {"overrides": {}}, "spec_sha256": clone._hash(spec)})
+    clone._write(folder / "operation.json", {"operation_id": op, "owner": clone._owner(bridge), "state": "complete",
+                                             "phase": "complete", "spec": spec, "proof": proof,
+                                             "style_sha256": clone._file_hash(target)})
+    return SimpleNamespace(op=op, folder=folder, spec=spec, target=target, bridge=bridge, proof=proof)
+
+
+def test_pictures_instead_of_code_say_whose_graphics_they_use_and_the_channels_are_studied_only_on_request(home,
+                                                                                                         monkeypatch):
+    """The 109 review: a coded study saves no motion-graphics kit, so "Use pictures instead" gave the base recipe's
+    graphics and title cards while the page promised "pictures in the channel's look". It is now said where it is
+    offered and after, and the channel's own graphics are studied only when the creator asks: a copy of the style
+    gets them; the style they have keeps its own."""
+    import cr_style_likeness
+    src = _coded_pictures_source(home, monkeypatch)
+    told = clone.renderer_verdict(json.loads(src.target.read_text()), home)
+    assert "2D Life Stories recipe's motion graphics and title cards" in told["say"] and "only if you ask" in told["say"]
+
+    # without the opt-in study: pictures in the channel's look, the recipe's graphics, said plainly
+    clone.use_pictures(home, src.op, src.bridge)
+    pictures = json.loads(src.target.read_text())
+    assert not clone.has_kit(pictures) and "genkit" not in pictures["look"], "no learned kit: the recipe's graphics"
+    shown = clone.status(home, src.op, src.bridge)["renderer"]
+    assert shown["state"] == "pictures" and shown["graphics_offered"] and "graphics_id" not in shown
+    assert "come from the 2D Life Stories recipe, not the channel's own" in shown["say"]
+    assert "7 to 20 minutes" in shown["say"]
+
+    # with it: the learner the coded study skipped, run as a study runs it, into a copy with the channel's graphics
+    started = clone.prepare_graphics(home, src.op, src.proof, src.bridge)
+    assert started["state"] == "prepared", "nothing runs before the creator's worker starts it"
+    again = clone.prepare_graphics(home, src.op, src.proof, src.bridge)
+    assert again["operation_id"] == started["operation_id"], "one at a time per style"
+    folder = clone._operation(home, started["operation_id"])
+    saved = clone._read(folder / "operation.json")
+    assert saved["graphics_of"] == src.op and "renderer" not in saved["spec"] and saved["spec"]["likeness"] is False
+    calls = []
+
+    class Clock:
+        def __init__(self, budget, log): self.log = log
+        def left(self): return 1800
+        def step(self, name): calls.append(("step", name))
+        def end(self): pass
+        def report(self): return {"minutes": {}, "total_min": 0, "cost": {}, "total_usd": 0, "total_usd_api": 0}
+
+    def learn(engine, title, job, genome, an, clock, work, channel, minutes):
+        calls.append("learner")
+        gk = Path(job) / "genkit"
+        gk.mkdir(parents=True, exist_ok=True)
+        (gk / "kit.json").write_text(json.dumps({"name": "gen_bunker_kit", "types": {"a": 4, "b": 4, "c": 4}}))
+        (gk / "kit.js").write_text("the channel's own graphics")
+        return {"ref": "x", "from": "research", "kit": "gen_bunker_kit", "types": ["a", "b", "c"], "browser": True,
+                "critique": {"score": 7}, "reference": {"id": VIDEO}, "wants": {}}
+
+    def genkit(style, job, log, invalidate):
+        style.setdefault("look", {}).update(graphics="kit", kit="gen_bunker_kit",
+                                            genkit={"manifest": str(Path(job) / "genkit/kit.json")})
+        return "gen_bunker_kit"
+    learner = SimpleNamespace(Clock=Clock, WORK="reflearn", _learn=learn, watch=lambda *a: {}, _media=lambda *a, **k: {},
+                              _see=lambda *a, **k: pytest.fail("the saved art words are reused, never asked again"),
+                              around=lambda design, record, **kw: None, summary=lambda record: {"kit": record["kit"]})
+    designer = SimpleNamespace(design=lambda *a, **k: pytest.fail("the saved design is reused"),
+                               build=lambda *a, **k: {"name": "auto-look", "variant_of": "stories", "look": {}},
+                               save=lambda *a: None, genkit=genkit)
+    engine = SimpleNamespace(STYLE_INFO={"stories": {"language": "English"}}, set_extra=lambda text: None)
+    monkeypatch.setattr(cr_style_likeness, "run", lambda *a, **k: pytest.fail("no paid test pictures"))
+    saved.update(state="running", project_id="crv_" + "2" * 24)
+    clone.study_graphics(engine, folder, saved, lambda phase: calls.append(("phase", phase)), learner=learner,
+                         designer=designer, transcript=lambda *a, **k: [])
+    clone._publish(home, folder, saved)
+    clone._likeness(home, folder, saved)
+    assert "learner" in calls
+    copy_style = json.loads((home / "styles" / (saved["spec"]["style_id"] + ".json")).read_text())
+    assert clone.has_kit(copy_style) and copy_style["look"]["kit"] == "gen_bunker_kit", "the channel's own graphics"
+    assert copy_style["look"].get("visuals") not in ("cr_animated2d", "cr_animated3d"), "pictures, as chosen"
+    assert copy_style["label"] == "2d Survival Stories with its graphics"
+    said = clone.renderer_verdict(copy_style, home)
+    assert said["state"] == "pictures" and "channel's own motion graphics" in said["say"]
+    assert "graphics_offered" not in said
+    assert clone._file_hash(src.target) == clone._read(src.folder / "operation.json")["style_sha256"], \
+        "the style they have stays as it is"
+    assert clone.status(home, src.op, src.bridge)["renderer"]["graphics_id"] == started["operation_id"]
+    with pytest.raises(RuntimeError, match="Only a style written in code"):
+        clone.prepare_graphics(home, started["operation_id"], src.proof, src.bridge)
+
+
+def test_title_ideas_change_only_numbers_that_count_something():
+    """The 109 review: "3D" became "5D", "4K" "5K", "2nd" "3nd" and "World War 2" "World War 3"."""
+    ideas = look.title_ideas(["Top 10 3D Games Of The 2nd Era In 4K", "World War 2 Survivors, 30 Days Later",
+                              "$100 vs $1,000,000 Bunker"])
+    assert ideas and all("3D" in i and "2nd" in i and "4K" in i for i in ideas if i.startswith("Top "))
+    assert any(i.startswith("Top 20 ") for i in ideas), "a count still changes"
+    assert all("World War 2 " in i for i in ideas if i.startswith("World War"))
+    assert all("$100" in i and "$1,000,000" in i for i in ideas if i.startswith("$"))
+
+
+def test_a_stopped_look_starts_no_more_downloads(home):
+    """The 109 review: a failed look kept downloading (and retrying) in the background, and Try again reuses its
+    folder. Once the look stops, its downloads try nothing new: no retry of the one in flight, no next one."""
+    import threading
+    import time as _time
+    started = look.start(home, "pv_" + "a" * 64, [VIDEO, OTHER], spawn=lambda h, i: None)
+    tried, release = [], threading.Event()
+
+    def download(vid, a, b, dest):
+        tried.append((vid, a))
+        if vid == VIDEO:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"0" * 60_000)
+            return dest
+        release.wait(5)                                       # the second video's download is in flight at the stop
+        raise RuntimeError("network hiccup")
+
+    def transcript(vid, work):
+        if vid == OTHER:
+            raise RuntimeError("captions broke")              # the look stops here
+        return []
+    done = look.run(home, started["look_id"], call=lambda path, payload=None: {"status": "done", "log": STICK_LOG},
+                    download=download, measure=fake_measure, transcript=transcript)
+    assert done["state"] == "failed"
+    release.set()
+    _time.sleep(0.5)
+    assert [t for t in tried if t[0] == OTHER] == [(OTHER, 0)], "the part in flight is never retried; no next part"
