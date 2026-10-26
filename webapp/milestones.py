@@ -32,6 +32,7 @@ def initialize() -> None:
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "milestones")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS user_milestones (
                 user_id INTEGER NOT NULL, name TEXT NOT NULL,
                 first_at DOUBLE PRECISION NOT NULL, last_at DOUBLE PRECISION NOT NULL,
@@ -150,7 +151,7 @@ def activation(days: int = 30, now: float | None = None) -> dict:
         by.setdefault(int(r["user_id"]), []).append(r)
     counts = {"subscribed": len(subscribed), "downloaded": 0, "connected": 0, "setup_ready": 0,
               "first_video_started": 0, "first_video_finished": 0, "only_failed_videos": 0}
-    hours = []
+    hours, unfinished = [], []
     for uid, at in subscribed.items():
         mine, got = by.get(uid, []), marks.get(uid, set())
         videos = [r for r in mine if r["purpose"] == "video"]
@@ -163,7 +164,14 @@ def activation(days: int = 30, now: float | None = None) -> dict:
         counts["only_failed_videos"] += bool(videos) and not done and all(r["status"] == "failed" for r in videos)
         if done:
             hours.append(max(0.0, (done[0] - at) / 3600))
-    return {"days": days, "since": since, **counts,
+        else:
+            unfinished.append(uid)
+    try:                                     # what the setup of those without a finished video still lacks
+        from webapp import studio_setup
+        setup_stuck = studio_setup.stuck(unfinished)
+    except Exception:                                               # noqa: BLE001 - counts must not fail the report
+        setup_stuck = None
+    return {"days": days, "since": since, **counts, "setup_stuck": setup_stuck,
             "hours_to_first_video": {"median": round(statistics.median(hours), 1) if hours else None,
                                      "p90": round(sorted(hours)[int(0.9 * (len(hours) - 1))], 1) if hours else None},
             "note": "Customers who subscribed in the window; counts only."}

@@ -428,7 +428,7 @@ def studio_env(tmp_path, monkeypatch):
         if env.refuse_submit:
             return jsonify(error=env.refuse_submit), 409
         submitted.append(request.get_json()["project_id"])
-        return jsonify(queued=[{"slug": "the-vault--abcd1234"}], project_id=request.get_json()["project_id"])
+        return jsonify(queued=[{"slug": "the-vault--abcd1234", **env.place}], project_id=request.get_json()["project_id"])
 
     job = make_job(tmp_path)
     bridge = Bridge([stage(S1, "failed", "timeout"), stage(S2)])
@@ -438,7 +438,7 @@ def studio_env(tmp_path, monkeypatch):
                              LOCK=threading.Lock())
     watcher = recover.install(studio, activity, token=TOKEN, home=tmp_path, bridge=bridge, start_watcher=False)
     env = SimpleNamespace(app=app, client=app.test_client(), job=job, bridge=bridge, busy=busy, submitted=submitted,
-                          studio=studio, watcher=watcher, home=tmp_path, refuse_submit="")
+                          studio=studio, watcher=watcher, home=tmp_path, refuse_submit="", place={})
     return env
 
 
@@ -468,16 +468,36 @@ def test_a_stale_key_or_a_video_being_made_approves_nothing(studio_env):
     assert env.bridge.calls == [] and env.submitted == []
 
 
-def test_a_yes_while_studio_is_busy_carries_on_when_it_is_free(studio_env):
+def test_a_yes_while_studio_is_busy_joins_the_queue_and_waits_its_turn(studio_env):
+    """Another video is being made: the approved video joins Studio's queue (cr_queue) like any Resume."""
     env = studio_env
     env.busy["on"] = True
+    env.place = {"position": 2, "ahead": 1}
     answer = post(env, env.job.name, {"acknowledge_costs": True}).get_json()
-    assert answer["waiting"] and not answer["resumed"] and env.submitted == []
-    assert (env.job / recover.PENDING).is_file()
-    assert env.watcher.tick() is None, "still busy"
-    env.busy["on"] = False
-    assert env.watcher.tick() == (env.job.name, "you approved it while Studio was busy")
-    assert env.submitted == [PROJECT] and not (env.job / recover.PENDING).exists()
+    assert answer["resumed"] and answer["waiting"] and env.submitted == [PROJECT]
+    assert answer["queued"][0]["ahead"] == 1 and "joins the queue" in answer["message"]
+    assert [c[1]["stage_id"] for c in env.bridge.calls] == [S1]
+    env.place = {"held": "Your Kie.ai balance ran out."}
+    held = post(env, env.job.name, {"acknowledge_costs": True}).get_json()
+    assert "on hold" in held["message"] and "Carry on" in held["message"]
+
+
+def test_a_video_waiting_or_held_in_the_queue_is_never_a_stopped_one(studio_env):
+    env = studio_env
+
+    class Keeper:
+        def __init__(self, ids):
+            self.ids = ids
+
+        def has_project(self, project_id):
+            return project_id in self.ids
+    env.studio._cr_queue = Keeper({PROJECT})
+    assert list(recover.stopped_jobs(env.studio)) == []
+    assert post(env, env.job.name, {"acknowledge_costs": True}).status_code == 409, "already waiting: never twice"
+    env.studio._cr_queue = Keeper(set())
+    env.studio.JOBS[env.job.name] = {"state": "held"}
+    assert list(recover.stopped_jobs(env.studio)) == []
+    assert env.bridge.calls == [] and env.submitted == []
 
 
 def test_a_usage_limit_stop_can_wait_for_the_reset_by_the_creators_choice(studio_env, monkeypatch):

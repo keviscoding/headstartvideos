@@ -134,6 +134,8 @@ def install(studio, activity, *, token, home=None):
             info = styles.get(row.get("name")) if isinstance(styles, dict) else None
             # a recipe that shows the creator's own comic panels instead of drawing pictures (cr_panels)
             row["panels"] = bool(isinstance(info, dict) and isinstance(info.get("look"), dict) and info["look"].get("panels"))
+            import cr_captions
+            row["captions"] = cr_captions.style_default(info)       # Create's captions switch starts at this
             # a story recipe's pictures a minute, with its quality floor (create page slider)
             import cr_media
             span = None if row["panels"] else cr_media.picture_range(info if isinstance(info, dict) else {})
@@ -142,6 +144,13 @@ def install(studio, activity, *, token, home=None):
             shorts = info.get("shorts") if isinstance(info, dict) and info.get("format") == "short" else None
             row["short_seconds"] = int(shorts.get("seconds") or 25) if isinstance(shorts, dict) else None
             row["ranking"] = bool(isinstance(shorts, dict) and shorts.get("pipeline") == "ranking")
+            # what one Short of this recipe costs on the creator's accounts (voice, music, effects), for quotes
+            cost = shorts.get("cost_usd") if isinstance(shorts, dict) else None
+            row["short_cost_usd"] = (float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool)
+                                     and 0 <= cost < 100 else None)
+            # a style drawn by its own renderer: its background pictures and its own music score, for quotes
+            import cr_animated2d
+            row["coded_media"] = cr_animated2d.media_usd(info) if isinstance(info, dict) else {}
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,
@@ -151,6 +160,8 @@ def install(studio, activity, *, token, home=None):
         # what Research footage may watch for each length, 1 to 60 minutes (Create says it before a video starts)
         import cr_watch
         data["footage_watch"] = [cr_watch.budget(minutes) for minutes in range(1, 61)]
+        # the last video's footage watching when Kie's watcher failed in it (moved to ChannelRecipe's, or stopped)
+        data["footage_watcher"] = cr_watch.last_outcome(home)
         return cr_presentation.plain_copy(data)
 
     def selected_preset():
@@ -504,7 +515,7 @@ def install(studio, activity, *, token, home=None):
                     # a saved "running" with no live job is stale: that video's Studio closed mid-run (cr_recover)
                     if (not isinstance(project_id, str) or not _PROJECT.fullmatch(project_id)
                             or saved.get("brain_mode") != "claudecode" or saved.get("purpose", "video") != "video"
-                            or cr_recover.effective_state(studio, slug, saved) in {"done", "queued", "running"}):
+                            or cr_recover.effective_state(studio, slug, saved) in {"done", "queued", "running", "held"}):
                         continue
                     spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
                     title_file = job / "title.txt"
@@ -557,8 +568,8 @@ def install(studio, activity, *, token, home=None):
             for key, (voice, words) in GEMINI_VOICES.items():
                 rows.append({"id": key, "label": f"Gemini voice through Kie ({words})", "ready": kie and not kie_empty,
                              "note": ("Your Kie balance ran out: top it up first." if kie_empty else
-                                      "The same Kie account, a different voice service: it often works while Kie's "
-                                      "ElevenLabs voices are down." if kie else "Needs a Kie.ai key in Setup & accounts.")})
+                                      f"The same Kie account, read by the Gemini voice {voice}." if kie
+                                      else "Needs a Kie.ai key in Setup & accounts.")})
         rows.append({"id": "elevenlabs", "label": "Your own ElevenLabs account", "ready": eleven,
                      "note": "Skips Kie: ElevenLabs reads it directly, charged to your ElevenLabs plan." if eleven
                      else "Add your ElevenLabs key in Setup & accounts first (paste it there, never in a chat).",
@@ -776,7 +787,7 @@ def install(studio, activity, *, token, home=None):
             spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
             available = (valid and saved.get("brain_mode") == "claudecode"
                          and saved.get("purpose", "video") == "video"
-                         and state not in {"done", "queued", "running"})
+                         and state not in {"done", "queued", "running", "held"})
             qc = _read(job / "sound_qc.json") if (job / "sound_qc.json").is_file() else {}
             sound = [{"state": _text(r.get("state"), 8), "text": _text(r.get("text"), 200)}
                      for r in (qc.get("lines") or []) if isinstance(r, dict)][:4]

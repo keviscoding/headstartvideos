@@ -80,3 +80,14 @@ def test_silences_and_swells_shape_the_music_bed(tmp_path):
     assert level(out, 5.7) < level(out, 3.0) - 15, "the music drops out just before the line"
     assert abs(level(out, 9.5) - level(out, 3.0)) < 1, "and comes back"
     assert sb.shape(bed, {"events": []}) == bed
+
+
+def test_a_style_with_its_own_renderer_gets_no_stock_effects_from_the_storyboard():
+    """The owner (2026-10-26): no "generic slop sound effects... the one that goes braam". A cloned style drawn by its
+    own renderer makes the channel's own sounds in code; the storyboard still shapes its music (silences, swells) but
+    never adds Studio's stock riser, hit, sub-drop or whoosh over it."""
+    board = {"events": [{"t": 4.7, "kind": "hit"}, {"t": 41.4, "kind": "sub_drop"}, {"t": 66.9, "kind": "swell"},
+                        {"t": 82.1, "kind": "silence"}]}
+    assert [c[1] for c in sb.cues(board)] == ["hit", "sub_drop"]
+    assert sb.cues(board, {"visuals": "cr_animated3d"}) == [] and sb.cues(board, {"visuals": "cr_animated2d"}) == []
+    assert [c[1] for c in sb.cues(board, {"visuals": "cr_style_delivery"})] == ["hit", "sub_drop"]

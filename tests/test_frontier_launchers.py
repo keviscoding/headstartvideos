@@ -62,8 +62,12 @@ def mac_launch(tmp_path):
     tools.mkdir()
     # Override all candidate names so the test never launches an installed
     # interpreter or installs packages from this computer.
-    for name in ("python3.12", "python3", "python3.11", "python3.10"):
+    for name in ("python3.13", "python3.12", "python3", "python3.11", "python3.10"):
         fake_python(tools / name, "3.9.9")
+    # the no-Python message opens python.org in the browser: a stand-in records it instead
+    opened = tmp_path / "opened.txt"
+    (tools / "open").write_text(f'#!/bin/sh\necho "$@" >> "{opened}"\n')
+    (tools / "open").chmod(0o755)
     log = tmp_path / "calls.jsonl"
     environment = {**os.environ, "PATH":str(tools)+os.pathsep+os.environ["PATH"],
                    "LAUNCH_TEST_LOG":str(log)}
@@ -96,6 +100,10 @@ def test_mac_rejects_all_old_interpreters_before_creating_environment(mac_launch
     assert result.returncode == 1 and "Python 3.10 or newer" in result.stdout
     assert not (folder / ".venv").exists()
     assert not any(call["args"][:2] == ["-m","venv"] for call in calls)
+    # plain steps, the download page opened for them, and only Python asked for (setup installs the rest)
+    assert "python.org" in result.stdout and "Start on Mac.command" in result.stdout
+    assert "Studio's setup page installs them" in result.stdout
+    assert (folder.parent / "opened.txt").read_text().strip() == "https://www.python.org/downloads/macos/"
 
 
 def test_mac_rejects_existing_old_environment_without_installing_or_deleting(mac_launch):
@@ -152,10 +160,18 @@ def test_windows_launcher_keeps_double_click_diagnostics_and_has_no_compound_blo
     # containing parentheses, ampersands or exclamation marks.
     assert not any(line.endswith("(") or line == ")" for line in lines)
     assert 'cd /d "%~dp0"' in lines
+    # no Python: the plain steps, python.org opened for them, and only Python asked for
+    no_python = [line for line in lines[lines.index(':no_python'):lines.index(':python_failed')] if line]
+    assert 'start "" "https://www.python.org/downloads/windows/"' in no_python and no_python[-1] == 'goto failed'
+    assert any("Add python.exe to PATH" in line for line in no_python)
+    assert lines.count('goto no_python') == 1
     assert 'if not exist "cr_studio.py" goto incomplete_download' in lines
     assert 'if not exist "requirements.txt" goto incomplete_download' in lines
     assert lines.index('set "CR_PYTHON_ARGS=-3.13"') < lines.index('set "CR_PYTHON_ARGS=-3"')
     assert ':failed' in lines and lines[lines.index(':failed') + 3] == 'pause'
+    # Studio itself runs in Python's UTF-8 mode, as its video workers do (review, 2026-10-26)
+    start = lines.index(':start_studio')
+    assert lines.index('set "PYTHONUTF8=1"', start) < lines.index('".venv\\Scripts\\python.exe" cr_studio.py', start)
 
 
 @pytest.fixture

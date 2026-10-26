@@ -75,6 +75,12 @@ jobs:
           $claude = Join-Path "$env:RUNNER_TEMP\real claude" "node_modules\.bin\claude.cmd"
           & $claude --version
           .venv\Scripts\python tests\studio_smoke\claude_prompt_file.py $claude "$env:RUNNER_TEMP\prompt file" --report studio-smoke\prompt-file.md
+      - name: Setup's Fix its for real (tests/studio_smoke/fixits_check.py)
+        # the pinned Windows FFmpeg and Node.js downloaded, SHA-256 checked, run, and captions burned with them by
+        # bare name; then Anthropic's own Claude Code installer as setup's Install Claude Code runs it (no sign-in).
+        # Last, so the native claude it installs can't change the steps above.
+        if: ${{ !cancelled() }}
+        run: .venv\Scripts\python tests\studio_smoke\fixits_check.py --claude --report studio-smoke\fixits.md
       - name: Keep the reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

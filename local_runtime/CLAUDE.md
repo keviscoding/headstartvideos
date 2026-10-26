@@ -11,25 +11,26 @@ Work through these steps in order. Check before installing; skip anything that
 already passes.
 
 1. **Find their computer.** Use `uname -s` (Mac/Linux) or check for Windows.
-2. **Check the tools Studio needs:**
-   - Python 3.10 or newer (3.13 recommended, and required for optional Fast mode):
-     `python3 --version` on Mac, `py -3 --version` or `python --version` on Windows.
-   - Node.js LTS: `node --version`.
-   - FFmpeg and ffprobe with subtitle support: `ffmpeg -hide_banner -filters`
-     must list `subtitles` and `ass`; `ffprobe -version` must run.
-3. **Install what's missing.**
-   - **Mac:** if Homebrew exists (`brew --version`), use
-     `brew install python@3.13 node ffmpeg-full`. If Homebrew is missing, its
-     installer needs the customer's Mac password, so ask them to run the
-     command from https://brew.sh themselves in Terminal, then continue.
-     A python.org installer also works for Python.
-   - **Windows:** use winget, one package at a time:
-     `winget install -e --id Python.Python.3.13`,
-     `winget install -e --id OpenJS.NodeJS.LTS`,
-     `winget install -e --id Gyan.FFmpeg`.
-     New tools appear on PATH only in a new terminal; tell the customer that,
-     and re-check in a new shell before moving on.
+2. **Check Python, the one tool Studio can't install itself** (its launcher
+   needs it first): Python 3.10 or newer (3.13 recommended, and required for
+   optional Fast mode): `python3 --version` on Mac, `py -3 --version` or
+   `python --version` on Windows.
+3. **Install Python if it's missing.**
+   - **Mac:** the python.org installer (https://www.python.org/downloads/macos/):
+     the customer opens it and clicks through; it asks for their Mac password
+     (that is Apple's installer). With Homebrew (`brew --version`),
+     `brew install python@3.13` works too.
+   - **Windows:** the python.org installer (https://www.python.org/downloads/windows/,
+     tick "Add python.exe to PATH"), or `winget install -e --id Python.Python.3.13`.
+     A new Python appears on PATH only in a new terminal.
    - Never use sudo or change system security settings without asking first.
+   - **FFmpeg, Node.js and Claude Code: never install these from your own
+     shell; Studio installs them itself** (next steps). No brew, winget, npm or
+     curl installs for them: Claude Code's shell can be sandboxed so an install
+     lands where Studio can't see it, Homebrew and winget can ask for the
+     customer's password, and Studio's own installs are pinned, checksum-checked
+     and go into its own folder. Copies the customer already has are used when
+     they work (setup shows them as ready).
 4. **Start Studio.** Mac: `open "Start on Mac.command"`. Windows:
    `start "" "Start on Windows.cmd"`. The launcher window must stay open; its
    first run installs libraries and a graphics browser, which takes a few
@@ -38,15 +39,22 @@ already passes.
    when that command ends or times out, Studio closes, and any video it is
    making stops with it. Only the launcher's own window keeps it running.
 5. **Open setup.** When the launcher says it's ready, open
-   http://127.0.0.1:7860/cr-setup and tell the customer, in plain words, it's
-   three buttons, top to bottom:
+   http://127.0.0.1:7860/cr-setup. If "Make sure the tools are ready" shows
+   Video tools (FFmpeg) or YouTube helper (Node) needing attention, they press
+   **Fix it** next to it (or call `fix_ffmpeg` / `fix_node`, below): Studio
+   downloads it into its own folder, no password. Then tell the customer, in
+   plain words, it's three buttons, top to bottom:
    1. **Connect my ChannelRecipe account**: it opens channelrecipe.com; they
       sign in if asked and press Approve, then land back on setup. No key to
       copy. (If that fails, "Paste a key instead" takes the key from the
       Studio page on channelrecipe.com.)
    2. **Set up Claude for videos**: connects Claude Code, picks the models and
-      runs a tiny check. Claude Code must be signed in first (`claude`, then
-      the browser login).
+      runs a tiny check. Studio needs Claude Code's command-line tool (the
+      Claude desktop app alone isn't enough) and signed in: if it isn't
+      installed, step 2 shows **Install Claude Code** (Studio runs Anthropic's
+      official installer; or call `fix_claude_cli`), then **Open the sign-in
+      window** for the one-time browser login with their Claude Pro or Max
+      account.
    3. **Paste a Kie.ai key** in step 3 (get one at https://kie.ai/api-key) and
       press the connect button.
    Keys go into the setup page only, never into this chat.
@@ -61,7 +69,7 @@ where the team answers setup questions.
 Never download a new ZIP into a second folder: that hides their projects and
 settings. Update in place instead:
 
-1. Make sure no video is running, then ask the customer to close the Studio
+1. Make sure no video is running or waiting in Studio's queue, then ask the customer to close the Studio
    launcher window (or confirm it's closed: nothing should answer on
    http://127.0.0.1:7860).
 2. From this folder run the studio's own Python: Mac
@@ -83,6 +91,16 @@ Studio through its own checks, so nothing needs the Studio web page.
 - If `setup_check` says the graphics browser isn't ready, call `fix_graphics_browser` (Studio installs it itself) and
   check again after a couple of minutes. Never install it with pip/playwright from your own shell: Claude Code's shell
   can be sandboxed, so the install lands where Studio can't see it. Setup's page has the same Fix it button.
+- `setup_check`'s `video_tools` or `node` not ready (FFmpeg missing or unable to burn captions; Node.js missing, or
+  older than 22, which the YouTube downloader needs: an older Node stops only videos that download from YouTube,
+  such as Research footage and Ranking Shorts, never the others): call `fix_ffmpeg` or `fix_node`. Studio downloads a pinned,
+  checksum-checked build into its own folder (no password, the customer's own copies untouched) and uses it first;
+  call `setup_check` again after a minute or two. Never install these from your own shell; call the fix tool (same
+  rule as the graphics browser). If the fix says `failed`, read its message to the customer.
+- `setup_check`'s `claude_code.installed` false: Studio runs the `claude` command-line tool, even for customers who use
+  the Claude desktop app. Call `fix_claude_cli`: Studio runs Anthropic's official installer itself. Never install
+  Claude Code from your own shell; call the fix tool. Then they sign in once: setup page, step 2, **Open the sign-in
+  window**, and the browser login with their Claude Pro or Max account. Never ask for or handle their password.
 - `setup_check`'s `speech_model` not ready: while it says downloading or checking, Studio is fetching it by itself;
   otherwise call `fix_speech_model` (same rule: never install it from your shell).
 - `setup_check`'s `network` lists services this computer can't reach. Tell them in plain words: `blocked` ones stop
@@ -90,7 +108,10 @@ Studio through its own checks, so nothing needs the Studio web page.
   `goes_around` ones need nothing (Studio reaches them through channelrecipe.com); `youtube_only` ones stop only
   recipes that use YouTube. When `network.on_this_computer.suspected`, an antivirus or firewall on the computer is
   blocking Studio itself (their browser still works): help them allow `allow_programs` and 127.0.0.1:7860 in the
-  antivirus it names, step by step. Never suggest switching the antivirus off.
+  antivirus it names, step by step. Never suggest switching the antivirus off. Studio trusts the certificates the
+  computer trusts, as the browser does, so an antivirus or company firewall that scans secure connections needs no
+  change; a host that still reads "inspects its secure connections" means the computer itself doesn't trust that
+  inspection.
 - `setup_check`'s `computer` says what this computer has (memory, processor cores, free space on the disk its videos
   go on) and, in `notes`, where it's short of what Studio uses. Tell them before a long video. `make_videos` refuses a
   video the disk can't hold and says how much to free; `quote`'s `disk.warning` says when it fits with little to spare
@@ -114,6 +135,16 @@ Studio through its own checks, so nothing needs the Studio web page.
   $0.02). Shorts keep their own host, and 3D scenes follow the words as closely as the 3D figures allow.
 - `make_videos` returns ids at once. Check `progress` now and then, never in a tight loop; Studio shows a desktop
   notification when a video is done. `list_videos` has each finished video's file and watch link.
+- The queue: this computer makes one video at a time, and every video joins Studio's queue, even while another is
+  being made (any style, any options; the Create page says Add to queue). `make_videos` and `resume_video` return
+  each one's place in line (`position`, `videos_before_it`); they start by themselves, so the creator can walk away.
+  `queue` shows the line. When something every video needs stops (Claude's usage limit, Claude Code signed out, a
+  key refused, a Kie.ai or ElevenLabs balance run out, the disk full, out of memory), the videos waiting go on hold
+  with nothing of theirs spent, instead of each failing the same way: `on_hold_because` says why and what to do,
+  and a video added then joins the hold. Tell the creator; once they've fixed it and ask, `carry_on_queue` carries on
+  (Studio checks each one's setup again; one still blocked stays on hold, saying why) or `remove=true` takes them out.
+  Claude Code asks them to approve it. Never carry on for them. A stop of one video's own (a title, a picture
+  refused, a timeout) never holds the rest. Account and setup changes wait until Studio has finished.
 - A video that stopped (a provider hiccup, a closed Studio): `progress()` lists it under `stopped`; tell them what
   stopped it (`progress(id)`), then `resume_video(id)` carries it on and reuses everything already made. A video
   Studio closed or a crash on this computer stopped, with nothing uncertain, carries on by itself (at most twice;
@@ -132,6 +163,17 @@ Studio through its own checks, so nothing needs the Studio web page.
   days, then Studio empties it for good. Say first which video or style goes and what stays (their voice library,
   styles and other videos; for a style, the videos made with it), and that Claude Code asks them to approve. A video
   being made is refused: don't cancel it to delete it unless they ask for that too.
+- Voices: Kie narrates with Gemini voices only (70 of them, in Create → Choose voice, each with a free sample). For
+  ElevenLabs voices the customer adds their own ElevenLabs key in Setup & accounts (its whole voice library then shows
+  in Choose voice). Studio moved any saved Kie ElevenLabs voice to the Gemini voice of its kind and says so once.
+- Research footage (YouTube): Studio's video watcher is Kie when that's their only video-model key. If Kie's
+  watcher isn't answering, ChannelRecipe's own watcher takes over that video's footage watching, from the plan's
+  monthly clip watches (the same ones Ranking Shorts use), never their credits; if those are used up or
+  ChannelRecipe can't be reached, footage watching stops and the video goes on with the clips it found.
+  `progress(id)`'s `footage_note` says which happened: tell them.
+- Captions: a style card's `captions: false` means the style has none by design, like its channel; `make_videos`
+  options.captions=true burns them in anyway (Create's switch does the same). `progress(id)`'s `captions_note` says
+  why a video that should have had captions has none (for example its narration had no timed words): tell them.
 - A video that stopped on its voice (`progress(id)` shows `voice_choices`, for example Kie answering "Internal Error"):
   tell them what failed and whether anything was charged (`voice_failed`), then ask which way to carry on: the same
   voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs account, or their own recording.
@@ -143,24 +185,29 @@ Studio through its own checks, so nothing needs the Studio web page.
   how to carry on: finish without the presenter (`resume_video(id, presenter="skip")`, nothing more is paid) or try the
   presenter again after a few minutes (`presenter="again"`; read them its note, which says when that could pay twice).
   Never pick for them.
-- Cloning a style (/clone-style): the look's questions come first, and two of them decide how the videos are MADE, so
-  ask them before anything else, in plain words, with Studio's guess as the first option: `medium` (a 3D channel: how
-  its 3D is made) and `animation` (a channel that animates its drawn characters, like stick-figure fights or animated
-  shorts: animated in code, or pictures in their look with some AI-animated clips). Animated in code means the study
-  has their Claude Code write this channel's own animation renderer (its characters, moves, effects and camera) and
-  check its test shots against the channel's frames: usually 3 to 10 more minutes of Claude usage (at most 25), no
-  money. Every video then reuses it: Claude directs the characters to the narration and Studio draws them on this
-  computer, so a video costs its voice, plus a background picture for each place (about $0.02) only when its animation
-  asks for them. Say this before they choose. When the study is done, `progress(op_…)` has `animation`: its score
-  against the channel's own bar; read `what_to_tell_them` to the creator, and if they would rather have pictures, they
-  press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style` returns
-  a `medium_gap`, Studio can't make that medium yet: read it to the creator and call `clone_style` with
+- Cloning a style (/clone-style): any channel is cloned in code by default. The look's `made` question comes first:
+  ask it before anything else, in plain words. Written in code (Studio's recommendation, first) means the study has
+  their Claude Code write this channel's own renderer from its frames, whatever they show (characters, graphics, maps,
+  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames: usually 5
+  to 15 more minutes of Claude usage (at most 25), no money. Every video then reuses it: Claude directs it to the
+  narration and Studio draws every frame on their computer, so a video costs its voice (plus about $0.02 for each
+  background picture a 2D renderer asks for), vertical with the channel's captions for a Shorts channel. Instead of
+  code means Studio's ready-made pictures (AI pictures in their look, some AI-animated clips) or its fixed 3D engine:
+  ready at once, but it won't look or move exactly like the channel; only when they choose it. When the study is
+  done, `progress(op_…)` has `animation`: its score against the channel's own bar; read `what_to_tell_them` to the
+  creator. If they want it closer, improve it with them in Style Lab (below); if they would rather have pictures,
+  they press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style`
+  returns a `medium_gap`, Studio can't make that yet: read it to the creator and call `clone_style` with
   `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
+- Improving a style after it's saved (any style written in code): the `style_lab` tool and the /clone-style
+  skill's Style Lab section. They can prompt it like any code: edit its workspace files, preview, check against the
+  channel, save. Free.
 - Before the paid study, the finished look's `similar_styles` are the styles they already have that come closest. Mention
   them in a line each, as suggestions only, never as a reason not to study: they can use one now, or try a few seconds
   of one on their topic first with `style_sample` (about $0.05 on their own accounts: say so and ask first). A channel
-  that posts only Shorts is read from its Shorts tab and studied like any other; for now the style it saves makes
-  regular landscape (16:9) videos, not vertical Shorts, so say so before the study.
+  that posts only Shorts is read from its Shorts tab and studied like any other. Written in code, its videos are
+  vertical Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9)
+  videos for now, so say so before the study.
 - A learned style can be changed after it is saved, without studying again: `edit_style` shows or changes its name,
   description, creative direction (script_notes, director_notes), character and the options Create starts from. On the
   Studio page it is Style library → Edit or study again. To study it again with other videos, run the clone again
@@ -169,7 +216,8 @@ Studio through its own checks, so nothing needs the Studio web page.
 ## Making videos through ChannelRecipe tools
 
 Use ChannelRecipe's MCP production workflow and the installed studio engine. Do
-not build a substitute renderer or hardcode stock/image percentages. Keep the
+not build a substitute renderer outside Studio (a style's own renderer is changed
+in Style Lab, which plugs it back in) or hardcode stock/image percentages. Keep the
 recipe's preset, director, scene modules and visual review loops.
 
 For customization, samples, creative direction and specialist features, read
@@ -244,11 +292,12 @@ most-viewed ranking Shorts on it (one clip watch each) and leads its search with
 so a topic like robot fails finds this year's humanoid robots rather than clips from a decade ago. To remake a
 particular Short, paste its YouTube link in Ranking's "Make it like this Short".
 
-To make several at once, put up to 15 topics in Create's "Create several videos" box (each topic once): they are
-made one at a time. If something would stop every one of them the same way (the month's clip watches used up, YouTube
-or Claude limits), the Shorts still waiting go on hold with nothing spent, and the Create and Projects pages offer
-Carry on or Remove. A Studio closed in the middle of a batch keeps the waiting Shorts on hold too; it never starts them
-again on its own.
+To make several at once, put up to 15 topics in Create's "Create several videos" box (each topic once), or press
+Create again while one is made (Add to queue): they are made one at a time. If something would stop every one of them
+the same way (the month's clip watches used up, YouTube limits), the Shorts still waiting go on hold with nothing
+spent, and the Create and Projects pages offer Carry on or Remove; Claude's limits hold every video waiting, not only
+the Shorts. A Studio closed in the middle of a queue keeps the waiting videos on hold too; it never starts them again
+on its own.
 
 A finished Ranking Short can be edited: open it from Projects and press Edit countdown. Change any narrator line
 (or pick one of the writer's other takes), swap any clip for the next best one the search already found (one clip

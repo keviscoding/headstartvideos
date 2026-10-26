@@ -31,6 +31,35 @@ def chosen(job) -> str:
     return look if look in LOOKS else ""
 
 
+# A short video gets at most two 3D review rounds. Each round is a long Opus call over contact sheets of every scene
+# (10-24 min on a customer's 2-minute 3D video, 2026-10-25), the engine's default is three, and its own reviews rarely
+# pass every shot, so the third round always ran. A recipe or style that sets look.threed.review_rounds keeps its own.
+SHORT_VIDEO_MINUTES = 3
+SHORT_REVIEW_ROUNDS = 2
+
+
+def minutes(job) -> float:
+    """The video's length from Create (run_spec minutes), or 0 when unknown."""
+    try:
+        spec = json.loads((Path(job) / "run_spec.json").read_text(encoding="utf-8"))
+        return max(0.0, float((spec or {}).get("minutes") or 0))
+    except (OSError, ValueError, TypeError):
+        return 0.0
+
+
+def quick(job) -> bool:
+    """Quicker 3D review, chosen in Create: one review round."""
+    try:
+        return (json.loads((Path(job) / "run_spec.json").read_text(encoding="utf-8")) or {}).get("cr_threed_quick") is True
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
+def _own_threed(engine, style) -> dict:
+    look = ((getattr(engine, "STYLE_INFO", None) or {}).get(style) or {}).get("look") or {}
+    return look.get("threed") if isinstance(look.get("threed"), dict) else {}
+
+
 def clean(value) -> str:
     """The choice from Create: "" (the recipe's own) or one of LOOKS."""
     value = str(value or "").strip()
@@ -115,6 +144,11 @@ def install(engine=None):
         look = chosen(job) if job else ""
         if look and look in (getattr(threed.SB, "PRESETS", None) or LOOKS):
             c["preset"] = look
+        length = minutes(job) if job else 0.0
+        if 0 < length <= SHORT_VIDEO_MINUTES and "review_rounds" not in _own_threed(engine_, style):
+            c["review_rounds"] = min(int(c.get("review_rounds", SHORT_REVIEW_ROUNDS)), SHORT_REVIEW_ROUNDS)
+        if job and quick(job):                               # the creator's choice wins over the recipe's own
+            c["review_rounds"] = min(int(c.get("review_rounds", 1)), 1)
         return c
     _cfg._cr_look = True
     threed._cfg = _cfg

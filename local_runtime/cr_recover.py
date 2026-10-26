@@ -18,10 +18,11 @@ place that decides, for a stopped video:
   no uncertain media receipt and fewer than AUTO_LIMIT automatic resumes. A usage-limit stop only with the creator's
   up-front choice (CARRY_ON), once Claude's reported reset has passed.
 - twins(): a stopped video of the same title, style and minutes as a new Create: Studio offers Resume first.
-- Watcher: when Studio is idle, carries on a video the creator approved while it was busy, or one safe_to_resume
-  allows.
+- Watcher: when Studio is idle, carries on a video safe_to_resume allows.
 
-The queue (cr_queue, branch queue-106) can call safe_to_resume(job) for its own decisions.
+A yes while another video is made joins the queue (cr_queue) like any Resume and carries on in its turn; a video
+waiting or held in the queue is never treated as stopped. The queue can call safe_to_resume(job) for its own
+decisions.
 """
 from __future__ import annotations
 
@@ -45,7 +46,6 @@ RETRY_BACKOFF = 600                    # an automatic resume Studio refused is t
 RUN_FILE = "cr-run.json"               # {"started", "studio_pid", "run_id", "ended"?, "state"?, "category"?, ...}
 AUTO_FILE = "cr-auto-resume.json"      # {"count", "runs": [{"at", "why"}], "last_try"?, "refused"?}
 CARRY_ON = "cr-carry-on.json"          # {"after_usage_reset": true, "at"}: the creator's up-front choice
-PENDING = "cr-recover-pending.json"    # the creator approved while Studio was busy: resume when it's free
 # a stop on this computer that a second run can get past (cr_failure categories)
 LOCAL_CATEGORIES = ("crash", "out_of_memory", "tool_error", "studio_closed")
 
@@ -130,12 +130,19 @@ def job_title(job, saved=None) -> str:
     return str((lines[0] if lines else "") or spec.get("title") or saved.get("title") or "").strip()
 
 
-def live_state(studio, slug) -> str:
-    """'running' or 'queued' when Studio is making (or about to make) this video now, else ''."""
+def live_state(studio, slug, project_id=None) -> str:
+    """'running', 'queued' or 'held' when Studio is making this video now, or it waits in the queue (cr_queue, held
+    there too), else ''."""
     jobs = getattr(studio, "JOBS", None) or {}
     state = str((jobs.get(slug) or {}).get("state") or "")
-    if state in ("running", "queued"):
+    if state in ("running", "queued", "held"):
         return state
+    keeper = getattr(studio, "_cr_queue", None)
+    try:
+        if project_id and keeper is not None and keeper.has_project(project_id):
+            return "queued"
+    except Exception:                                          # noqa: BLE001 - only a view of the queue
+        pass
     if (getattr(studio, "RUNNING", None) or {}).get("slug") == slug:
         return "running"
     lock = getattr(studio, "LOCK", None)
@@ -156,7 +163,7 @@ def live_state(studio, slug) -> str:
 def effective_state(studio, slug, saved) -> str:
     """The video's state: the live job's, else its saved project's. A saved "running" or "queued" with no live job is
     stale (the project was running when it began, and its Studio has since closed): that video has stopped."""
-    live = live_state(studio, slug)
+    live = live_state(studio, slug, (saved or {}).get("id"))
     if live:
         return live
     state = str(((getattr(studio, "JOBS", None) or {}).get(slug) or {}).get("state") or "")
@@ -182,7 +189,7 @@ def stopped_jobs(studio):
             saved = saved_project(job)
             if not saved:
                 continue
-            if effective_state(studio, job.name, saved) in ("done", "queued", "running"):
+            if effective_state(studio, job.name, saved) in ("done", "queued", "running", "held"):
                 continue
             yield job, saved
         except (OSError, ValueError, TypeError, AttributeError):
@@ -769,14 +776,13 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
             allowance, ready = allowance_now()
             diag = diagnose(home, job, server_stages=stages, allowance=allowance, claude_ready=ready, message=message)
         diag["server_checked"] = stages is not None
-        diag["live"] = live_state(studio, job.name)
+        diag["live"] = live_state(studio, job.name, saved["id"])
         try:
             import cr_media
             diag["finished"] = (studio.mv.final_video(job).is_file()
                                 and not (job / cr_media.PRESENTER_FAILED).is_file())
         except Exception:                                      # noqa: BLE001
             diag["finished"] = False
-        diag["pending_resume"] = (job / PENDING).is_file()
         plan = _auto_plan(job, home=home, server_stages=stages, allowance=allowance, live=diag["live"])
         diag["auto"] = {"safe": plan["safe"], "why": plan["why"], "count": diag["auto_resumes"], "limit": AUTO_LIMIT}
         return diag
@@ -840,15 +846,22 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
                                      "uses up an attempt. Wait for it, or say you added usage.", recovery=diag), 409
             done = approve(bridge, job, diag, key=data.get("key")) if diag["needs_approval"] or diag["fix_first"] \
                 else {"approved_stages": [], "set_aside": []}
-            if activity.busy():
-                _write(job / PENDING, {"at": time.time(), "approved": done})
-                return jsonify(approved=done, resumed=False, waiting=True,
-                               message="Approved. Studio is making another video: this one carries on as soon as "
-                                       "that finishes, reusing everything already made.")
+            # while another video is made it joins the queue (cr_queue) and carries on in its turn
+            busy = activity.busy()
             queued = resume(diag["project_id"])
-            (job / PENDING).unlink(missing_ok=True)
-            return jsonify(approved=done, resumed=True, queued=queued.get("queued") or [],
-                           message="Carrying on from where it stopped. Everything already made is reused.")
+            rows = queued.get("queued") or []
+            place = rows[0] if rows and isinstance(rows[0], dict) else {}
+            if place.get("held"):
+                said = ("Approved. It waits on hold with the other videos (" + str(place["held"]).rstrip(".")
+                        + "): Carry on in Projects starts them again. Everything already made is reused.")
+            elif busy or place.get("ahead"):
+                said = ("Approved. It joins the queue and carries on in its turn, reusing everything already made."
+                        if done["approved_stages"] or done["set_aside"] else
+                        "It joins the queue and carries on in its turn, reusing everything already made.")
+            else:
+                said = "Carrying on from where it stopped. Everything already made is reused."
+            return jsonify(approved=done, resumed=True, waiting=bool(busy or place.get("ahead") or place.get("held")),
+                           queued=rows, message=said)
         except Refused as error:
             return jsonify(error=str(error), **error.data), 409
         except Exception:                                      # noqa: BLE001
@@ -875,8 +888,8 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
 
 
 class Watcher:
-    """Carries stopped videos on when Studio is idle: first one the creator approved while Studio was busy, then one
-    safe_to_resume allows. One a minute at most; a resume Studio refused waits RETRY_BACKOFF."""
+    """Carries a stopped video on when Studio is idle and safe_to_resume allows it. One a minute at most; a resume
+    Studio refused waits RETRY_BACKOFF."""
 
     def __init__(self, studio, activity, home, bridge, resume, *, interval=60, first=20):
         self.studio, self.activity, self.home, self.bridge, self.resume = studio, activity, Path(home), bridge, resume
@@ -910,21 +923,9 @@ class Watcher:
         now = time.time() if now is None else now
         jobs = sorted(stopped_jobs(self.studio), key=lambda pair: -_mtime(pair[0] / "cr-project.json"))
         for job, saved in jobs:
-            if (job / PENDING).is_file():
-                pending = _read(job / PENDING)
-                if now - float(pending.get("last_try") or 0) < RETRY_BACKOFF:
-                    continue
-                try:
-                    self.resume(saved["id"])
-                    (job / PENDING).unlink(missing_ok=True)
-                    return job.name, "you approved it while Studio was busy"
-                except Exception as error:                     # noqa: BLE001
-                    pending.update(last_try=now, refused=str(error)[:300])
-                    _write(job / PENDING, pending)
-                    return None
-        for job, saved in jobs:
             # this computer's own records first; ChannelRecipe is asked only about a video that passes them
-            if _auto_plan(job, home=self.home, live=live_state(self.studio, job.name), now=now)["why"] != UNCHECKED:
+            live = live_state(self.studio, job.name, saved["id"])
+            if _auto_plan(job, home=self.home, live=live, now=now)["why"] != UNCHECKED:
                 continue
             try:
                 stages = self.bridge.project_progress(saved["id"]).get("stages") or []
@@ -938,7 +939,7 @@ class Watcher:
                 except Exception:                              # noqa: BLE001
                     allowance = {}
             plan = _auto_plan(job, home=self.home, server_stages=stages, allowance=allowance,
-                              live=live_state(self.studio, job.name), now=now)
+                              live=live, now=now)
             if not plan["safe"]:
                 continue
             try:

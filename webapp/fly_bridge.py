@@ -132,9 +132,15 @@ def _latest_app_image(app: str) -> str:
         return ""
 
 
+# A Fly machine's share of the database's ~22 connections (webapp/database.py's pool). Not copied from the web
+# container, whose own DB_POOL_MAX is larger: each running cook or niche scrape counts against the same total.
+MACHINE_DB_POOL_MAX = "2"
+
+
 def _machine_env() -> dict[str, str]:
     env: dict[str, str] = {
         "COOK_ON_WEB": "0",
+        "DB_POOL_MAX": MACHINE_DB_POOL_MAX,
         # Groq often 403s datacenter IPs ("check your network settings").
         # Local whisper on an ephemeral Fly box is fine — it won't freeze the web dyno.
         "ALLOW_LOCAL_WHISPER": "1",
@@ -350,6 +356,7 @@ def spawn_niche_scrape_machine(job_id: str) -> str:
                if (value := (os.getenv(key) or getattr(config,key,"") or ""))}
         env["APP_ENV"] = "fly-niche"
         env["COOK_ON_WEB"] = "0"
+        env["DB_POOL_MAX"] = MACHINE_DB_POOL_MAX
         # No model, caption, image-generation, or cook credentials are needed.
         yt = (os.getenv("YOUTUBE_API_KEY") or "").strip()
         if not yt and hasattr(config, "YOUTUBE_API_KEY"):

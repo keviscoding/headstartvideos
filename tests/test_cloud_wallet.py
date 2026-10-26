@@ -46,8 +46,8 @@ def test_a_short_balance_stops_a_job_before_it_starts(wallet):
 
 
 def test_a_topup_page_is_one_of_the_chunks_and_carries_the_cents(wallet, monkeypatch):
-    made = {}
-    stripe = SimpleNamespace(Customer=SimpleNamespace(create=lambda email: SimpleNamespace(id="cus_1")),
+    made, customers = {}, []
+    stripe = SimpleNamespace(Customer=SimpleNamespace(create=lambda **kw: customers.append(kw) or SimpleNamespace(id="cus_1")),
                              checkout=SimpleNamespace(Session=SimpleNamespace(
                                  create=lambda **kw: made.update(kw) or SimpleNamespace(url="https://pay/x"))))
     monkeypatch.setattr(db, "update_user", lambda *a, **k: None)
@@ -55,5 +55,6 @@ def test_a_topup_page_is_one_of_the_chunks_and_carries_the_cents(wallet, monkeyp
     assert wallet.checkout_session(user, 10, "https://cr", stripe=stripe) == {"url": "https://pay/x"}
     assert made["metadata"] == {"user_id": "7", "cloud_topup_cents": "1000"} and made["mode"] == "payment"
     assert made["line_items"][0]["price_data"]["unit_amount"] == 1000
+    assert customers == [{"email": "a@b.c", "idempotency_key": "cr-customer-7"}], "one Stripe customer per account"
     with pytest.raises(Exception):
         wallet.checkout_session(user, 7, "https://cr", stripe=stripe)

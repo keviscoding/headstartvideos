@@ -223,3 +223,21 @@ def test_studio_never_carries_on_by_itself_past_a_receipt_only_the_creator_may_s
                                               "rejected": True, "failure_code": "429", "failure_category": "rate_limit",
                                               "credits": 0}))
     assert ok()[0], "a rate limit is Studio's own to wait out"
+
+
+def test_a_page_waiting_on_a_voice_gets_one_try_and_no_free_retries(hub, monkeypatch):
+    """Setup's voice preview passes retry=False (cr_studio): it answers at once, so none of these retries wait."""
+    creates = creating(monkeypatch, answer=refused("429", "Too many requests"))
+    with pytest.raises(media.TaskFailed):
+        media.run("narration", {"text": "Hi", "voice": "Kore"}, hub.path / "a.wav", timeout_s=180, retry=False)
+    assert len(creates) == 1 and hub.pauses == [], "a rate limit isn't waited out"
+    creates = creating(monkeypatch)
+    polls = polling(monkeypatch, [response({"code": 500, "msg": "server error"})])
+    with pytest.raises(media.AccountStop):
+        media.run("narration", {"text": "Hi", "voice": "Kore"}, hub.path / "b.wav", timeout_s=180, retry=False)
+    assert len(polls) == 1 and hub.pauses == [], "an unreadable answer isn't asked again"
+    polling(monkeypatch, [response(DONE)])
+    monkeypatch.setattr(media, "download", lambda url, dest: (_ for _ in ()).throw(media.TransferFailed("stopped")))
+    with pytest.raises(media.TransferFailed):
+        media.run("narration", {"text": "Hi", "voice": "Kore"}, hub.path / "c.wav", timeout_s=180, retry=False)
+    assert hub.pauses == [], "a download isn't fetched again"

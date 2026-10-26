@@ -254,9 +254,12 @@ def test_engine_machine_checks_are_patched_for_customer_computers():
     patched = package.patch_engine("reflearn.py", reflearn).decode()
     assert '_envf("REFLEARN_MIN_DISK_GB", 3)' in patched and '"REFLEARN_MIN_MEM_LEVEL", 20' in patched
     quest = (b"def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:\n"
-             b"    pass\n    lvl = 45 if light else 40\n")
+             b"    pass\n    lvl = 45 if light else 40\n"
+             b"    fonts = [{\"family\": fam, \"b64\": (FONTS / f).read_bytes(), \"desc\": d}\n"
+             b"             for fam, f, d in FONT_FACES]\n")
     patched = package.patch_engine("quest_hud.py", quest).decode()
     assert "min_free_gb: float = 3.0" in patched and "lvl = 25 if light else 20" in patched
+    assert "for fam, f, d in FONT_FACES if (FONTS / f).is_file()]" in patched, "QUEST's HUD without Montserrat-Book"
     assert package.patch_engine("other.py", b"unchanged") == b"unchanged"
     with pytest.raises(ValueError, match="no longer matches"):
         package.patch_engine("reflearn.py", b"a different engine")
@@ -283,7 +286,10 @@ def _youtube_engine() -> bytes:
             '                          data={"uploadPath": "frontier", "fileName": path.name},\n'
             '                          files={"file": (path.name, fh, "video/mp4")}, timeout=900)\n'
             '    r.raise_for_status()\n'
-            'def ytdlp():\n    cmd = ["yt-dlp"]\n    if _num_env("YT_SLEEP") > 0:\n        cmd += ["--sleep-requests", "1"]\n'
+            'def ytdlp():\n    b = _env("YTDLP_BIN") or shutil.which("yt-dlp")\n    if b:\n        cmd = [b]\n    else:\n'
+            '        try:\n            import yt_dlp  # noqa: F401\n            cmd = [sys.executable, "-m", "yt_dlp"]\n'
+            '        except ImportError:\n            return []\n    if not shutil.which("deno"):\n        pass\n'
+            '    if _num_env("YT_SLEEP") > 0:\n        cmd += ["--sleep-requests", "1"]\n'
             '    return cmd\n'
             'def search(q):\n    if True:\n        try:\n            p = run()\n'
             '        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n'
@@ -590,6 +596,32 @@ def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
     assert 'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"' in patched and "requests" in patched
     # one RapidOCR for every Python: 1.3+ caps Python below 3.13 and renamed the detector the Studio calls
     assert 'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"' in patched
+    # Studio's Python trusts the certificates this computer trusts (an antivirus that scans secure connections)
+    assert 'truststore>=0.10.4; python_version >= "3.10"' in patched
+
+
+def test_the_engines_ytdlp_runs_studios_copy_trusting_this_computers_certificates(monkeypatch, tmp_path):
+    import os
+    import shutil
+    import sys
+    import types
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    start = patched.index("def ytdlp():")
+    space = {"_env": lambda name: os.environ.get(name, ""), "shutil": shutil, "sys": sys,
+             "_num_env": lambda name: 0.0}
+    exec(compile(patched[start:patched.index("def search(", start)], "youtube.py", "exec"), space)
+    own = str(Path(sys.executable).with_name("yt-dlp"))
+    monkeypatch.setenv("YTDLP_BIN", own)
+    trust = types.ModuleType("cr_trust")
+    trust.ytdlp_command = lambda cmd: ["python", "cr_ytdlp.py", *cmd[1:]] if cmd[0] == own else cmd
+    monkeypatch.setitem(sys.modules, "cr_trust", trust)
+    assert space["ytdlp"]() == ["python", "cr_ytdlp.py"]
+    monkeypatch.setenv("YTDLP_BIN", "/opt/homebrew/bin/yt-dlp")
+    assert space["ytdlp"]() == ["/opt/homebrew/bin/yt-dlp"], "a yt-dlp the creator chose is theirs"
+    monkeypatch.delitem(sys.modules, "cr_trust")
+    monkeypatch.setattr(sys, "path", [str(tmp_path)])          # an engine run where cr_trust can't be imported
+    monkeypatch.setenv("YTDLP_BIN", own)
+    assert space["ytdlp"]() == [own]
 
 
 def test_the_designed_cast_kit_reaches_the_engine_and_the_director():
@@ -634,3 +666,21 @@ def test_the_designed_cast_kit_ships_only_from_the_private_folder(tmp_path, monk
         package.private_threed_resources(root)
     monkeypatch.setattr(package, "ROOT", tmp_path / "nothing")
     assert package.patch_engine("threed/catalog.json", b'{"kinds": {}}') == b'{"kinds": {}}', "no kit: unchanged"
+
+
+def test_quests_hud_is_laid_although_the_release_lacks_one_font_face(tmp_path):
+    """The real engine source, patched as the release builds it: every face it registers either ships or is left out
+    (Montserrat-Book.ttf never shipped, so every QUEST video lost its whole game HUD; sweep 2026-10-26)."""
+    import zipfile
+    source = Path.home() / "Downloads" / "Frontier" / "files" / "v5" / "Frontier-5.3-FULL.zip"
+    if not source.is_file():
+        pytest.skip("the private engine source is not on this computer")
+    with zipfile.ZipFile(source) as engine:
+        names = set(engine.namelist())
+        patched = package.patch_engine("quest_hud.py", engine.read("Frontier/quest_hud.py")).decode()
+    faces = __import__("re").findall(r'\("QMont", "([^"]+)"|\("QCinzel", "([^"]+)"', patched)
+    files = [a or b for a, b in faces]
+    assert "Montserrat-Book.ttf" in files and "Frontier/assets/fonts/Montserrat-Book.ttf" not in names
+    assert "if (FONTS / f).is_file()" in patched
+    shipped = [f for f in files if "Frontier/assets/fonts/" + f in names]
+    assert shipped and set(files) - set(shipped) == {"Montserrat-Book.ttf"}, "only that one face is missing"

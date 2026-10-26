@@ -19,6 +19,9 @@ import cr_network
 _accounts = {}
 
 
+YOUTUBE_NODE = "This video downloads from YouTube, which needs Node.js 22 or newer: press Fix it in Setup."
+
+
 def item(key, label, ready, why=""):
     return {"key": key, "label": label, "ready": bool(ready), "message": "" if ready else why}
 
@@ -36,9 +39,14 @@ def basic(checks, *, verify_mcp=True):
         item("release", "Current workflow installed", not account or checks.get("local_version") in (
             account.get("supported_versions") or [account.get("version")]),
              "A new Studio is out. Press Update now at the top of the studio page: it keeps your projects."),
-        item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), "Install FFmpeg with subtitles, H.264, AAC and MP3 support, then reopen the launcher."),
+        item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), checks.get("ffmpeg_reason") or
+             "Open Setup and press Fix it next to Video tools: Studio installs a full FFmpeg in its own folder."),
         item("browser", "Graphics browser", checks.get("browser"), checks.get("browser_reason") or "Open Setup and press Fix it next to Graphics browser."),
-        item("node", "JavaScript runtime", checks.get("node"), "Install Node.js LTS, then reopen the launcher.")]
+        item("node", "JavaScript runtime", checks.get("node"), checks.get("node_reason") or
+             "Open Setup and press Fix it next to YouTube helper: Studio installs Node.js in its own folder.")]
+    if checks.get("node") and checks.get("node_youtube") is False:
+        # a Node.js too old for YouTube downloads: a note here; preset() stops only the videos that use YouTube
+        results[-1]["message"] = checks.get("node_reason") or YOUTUBE_NODE
     results += setup_rows(checks)
     cli = cr_claude.status()
     cli.update(models=[{"id":m,"label":"Claude Opus 5.5" if "opus" in m else "Claude Sonnet 5.5"} for m in cr_claude.MODELS],
@@ -115,12 +123,12 @@ def _check_hub(provider, key):
 def own_narration(studio, style, info, why):
     """(ok, why) for narration the engine's own check does not know. That check counts only Algrow, WaveSpeed and AI33
     keys, so with ElevenLabs connected on Setup (narration on the creator's own key) every Create stopped on "The
-    voiceover needs ALGROW_API_KEY, WAVESPEED_API_KEY or AI33_API_KEY" (the owner, 2026-10-21). A Ranking Short
-    narrates itself (shorts/ranking/voice.py: ElevenLabs on the creator's key, else ElevenLabs or Gemini through
-    Kie.ai, checked again before anything is paid); any other recipe narrates with ElevenLabs once a voice is chosen
-    for it (Create, Choose voice: the engine's voice pick)."""
+    voiceover needs ALGROW_API_KEY, WAVESPEED_API_KEY or AI33_API_KEY" (the owner, 2026-10-21). A Ranking or Roblox
+    Story Short narrates itself (shorts/ranking/voice.py, shorts/roblox/make_roblox.py: ElevenLabs on the creator's
+    key, else ElevenLabs or Gemini through Kie.ai, checked again before anything is paid); any other recipe narrates
+    with ElevenLabs once a voice is chosen for it (Create, Choose voice: the engine's voice pick)."""
     eleven = bool(os.getenv("ELEVENLABS_API_KEY", "").strip())
-    if ((info or {}).get("shorts") or {}).get("pipeline") == "ranking":
+    if ((info or {}).get("shorts") or {}).get("pipeline") in ("ranking", "roblox"):
         if eleven or os.getenv("KIE_API_KEY", "").strip():
             return True, ""
         return False, "Connect ElevenLabs or Kie.ai in Setup & accounts for the narrator."
@@ -154,7 +162,9 @@ def saved_gb(studio, spec, titles) -> list:
     return out
 
 
-def preset(studio, checks, spec):
+def preset(studio, checks, spec, ahead=0.0):
+    """ahead: GB the videos already in the queue (being made, waiting, on hold) still need on the disk, before this
+    one's turn comes (cr_queue.Keeper.ahead_gb)."""
     ready = basic(checks)
     results = list(ready["checks"])
     style = spec.get("style") or ""
@@ -171,7 +181,7 @@ def preset(studio, checks, spec):
             results.append(item("reference_workflow", "Full reference animation workflow", True))
         except RuntimeError as error:
             results.append(item("reference_workflow", "Full reference animation workflow", False, str(error)))
-    if ((info or {}).get("look") or {}).get("visuals") == "cr_animated2d":
+    if ((info or {}).get("look") or {}).get("visuals") in ("cr_animated2d", "cr_animated3d"):
         import cr_animated2d
         problem = cr_animated2d.renderer_problem(info)
         results.append(item("animated2d", "The channel's animation", not problem, problem))
@@ -225,13 +235,15 @@ def preset(studio, checks, spec):
     # A disk that fills up stops a video halfway, with nothing anyone can read: it stops here instead (cr_machine),
     # only when even the measured need can't fit; under the comfortable margin it goes ahead with a warning. A saved
     # project carrying on (Resume, a presenter choice, a 3D reassembly) needs only what its folder doesn't hold yet.
+    # Videos already in the queue fill the disk before this one starts: a warning, never a stop (one that runs out
+    # of room puts the queue on hold, cr_queue).
     warnings = []
     free = (checks.get("computer") or {}).get("free_disk_gb")
     if free is not None and "video" in steps:
         titles = [line for line in str(spec.get("title") or "").splitlines() if line.strip()]
         room, warning = cr_machine.disk_check(free, spec.get("minutes") or 1, len(titles) or 1,
                                               threed=bool(wanted.get("threed")) or backend == "manimgx",
-                                              saved=saved_gb(studio, spec, titles))
+                                              saved=saved_gb(studio, spec, titles), ahead=ahead)
         if room:
             results.append(item("disk_space", "Room for this video on the disk", False, room))
         elif warning:
@@ -239,8 +251,13 @@ def preset(studio, checks, spec):
     # YouTube has no way around it: a recipe that uses it stops here on a network that can't reach it, not mid-video
     youtube = cr_network.youtube_problem(checks.get("network") or {})
     ranking = ((info or {}).get("shorts") or {}).get("pipeline") == "ranking"
-    if youtube and (ranking or wanted.get("youtube") and "video" in steps):
+    uses_youtube = ranking or wanted.get("youtube") and "video" in steps
+    if youtube and uses_youtube:
         results.append(item("youtube_network", "YouTube reachable", False, youtube))
+    # yt-dlp solves YouTube's challenge with Node.js 22 or newer (or Deno): an older Node stops only these videos,
+    # here, before anything is paid (cr_studio.tool_checks' node_youtube; absent: an older Studio check, never refused)
+    if uses_youtube and checks.get("node_youtube") is False:
+        results.append(item("youtube_node", "YouTube downloader ready", False, YOUTUBE_NODE))
     # Validate selected replacement accounts before the first voice/image job.
     checked = set()
     for task in ("narration","images","motion","avatars"):

@@ -40,6 +40,8 @@ def test_the_engine_passes_ipv4_to_every_youtube_request():
     sys.path.insert(0, str(Path(__file__).parent))
     from test_frontier_package import _youtube_engine
     patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
-    scope = {"_env": lambda k: {"YT_FORCE_IPV4": "1"}.get(k, ""), "_num_env": lambda k: 0}
+    from types import SimpleNamespace
+    scope = {"_env": lambda k: {"YT_FORCE_IPV4": "1"}.get(k, ""), "_num_env": lambda k: 0, "sys": sys,
+             "shutil": SimpleNamespace(which=lambda name: "yt-dlp" if name == "yt-dlp" else None)}
     exec(patched[patched.index("def ytdlp"):patched.index("def search")], scope)
     assert scope["ytdlp"]() == ["yt-dlp", "--force-ipv4"]

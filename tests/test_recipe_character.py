@@ -327,6 +327,8 @@ def studio(monkeypatch, tmp_path, env):
         if path == "/api/run":
             staged.append(body)
             return {"queued": [{"slug": "mia-video", "title": body["title"]}]}
+        if path == "/api/queue":                               # the quote says what's already in Studio's queue
+            return {"jobs": [], "busy": False}
         raise AssertionError("unexpected route " + path)
     monkeypatch.setattr(tools, "call", call)
     return SimpleNamespace(staged=staged, calls=calls, env=env)

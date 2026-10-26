@@ -13,7 +13,9 @@ it to Kie for that one request and never keeps or logs it.
 
 install() wraps requests' transport once per process (Studio, its video workers and the Shorts pipelines), so every
 downloader and uploader in the engine is covered without changing it. Only these hosts are touched: GETs of Kie's
-files, and POSTs to Kie's two upload addresses. Kie's key is never sent with a relayed download.
+files, and POSTs to Kie's two upload addresses. Kie's key is never sent with a relayed download. It first has the
+process trust this computer's own certificates (cr_trust), so an antivirus that scans secure connections doesn't fail
+them.
 """
 from __future__ import annotations
 
@@ -118,6 +120,11 @@ def relayed_upload(request):
 
 
 def install() -> None:
+    try:
+        import cr_trust
+        cr_trust.install()
+    except Exception:                                          # noqa: BLE001 - certifi's list, as before
+        pass
     try:
         import requests
         from requests.adapters import HTTPAdapter

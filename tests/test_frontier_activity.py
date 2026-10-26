@@ -146,8 +146,12 @@ def test_chat_reserves_context_before_the_original_thread_starts(runtime, timeli
     assert response.status_code == 200
     assert len(timeline.spawned) == 1 and timeline.calls == []
     assert r.studio._cr_activity.busy()
-    for path in ("/api/run", "/cr-connect", "/cr-recover", "/cr-submit-project"):
+    for path in ("/cr-connect", "/cr-recover"):
         assert r.client.post(path, headers=r.headers, json={}).status_code == 409
+    # a video joins the queue instead (the dispatcher starts it once the editor's reply is done: wait_for_editor);
+    # a saved project is checked, never refused as busy
+    assert r.client.post("/api/run", headers=r.headers, json={}).status_code == 200
+    assert r.client.post("/cr-submit-project", headers=r.headers, json={}).status_code == 400
     original = timeline.spawned.pop()
     original.target(*original.args)
     assert timeline.calls == [("reply", (r.job, "example", "Keep the original edit", {"kind": "range"}, "reply"))]
@@ -321,8 +325,11 @@ def test_native_async_work_blocks_context_and_account_changes(runtime, timeline,
         r.studio.PRODUCT_BUILD["proc"] = SimpleNamespace(poll=lambda: None)
     else:
         r.studio.FARM["thread"] = SimpleNamespace(is_alive=lambda: True)
-    for path in ("/api/run", "/cr-connect", "/cr-recover", "/cr-submit-project"):
+    for path in ("/cr-connect", "/cr-recover"):
         assert r.client.post(path, headers=r.headers, json={}).status_code == 409
+    # videos queue behind it: the dispatcher waits for this work before starting them (wait_for_editor)
+    assert r.client.post("/api/run", headers=r.headers, json={}).status_code == 200
+    assert r.client.post("/cr-submit-project", headers=r.headers, json={}).status_code == 400
     assert r.client.get("/f/video/cached", headers=r.headers).data == b"already saved"
     assert r.client.post("/api/products/example/reveal", headers=r.headers).status_code == 200
     assert r.client.get("/cr-status", headers=r.headers).status_code == 200
@@ -763,13 +770,25 @@ def test_voice_picker_lists_previews_once_and_saves_the_choice(runtime, timeline
 
     def run(task, inputs, dest, **kwargs):
         made.append((task, inputs["speakers"][0]["voice_name"]))
+        assert kwargs.get("retry") is False, "a page waits on the preview: one try, no patient retries"
         Path(dest).write_bytes(b"ID3 sample")
 
     monkeypatch.setattr(cr_studio.cr_media, "run", run)
-    first = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"})
-    assert first.status_code == 200 and first.json["url"] == "/cr-voices/sample/Charon"
-    assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"}).status_code == 200
-    assert made == [("narration", "Charon")], "each voice's sample is paid for once"
+    import requests
+
+    def unreachable(*a, **k):                                  # channelrecipe.com's free sample can't be reached
+        raise requests.ConnectionError("offline")
+    monkeypatch.setattr(requests, "get", unreachable)
+    # no free sample: nothing is paid until the creator says yes to the cost, voice by voice
+    asked = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"})
+    assert asked.status_code == 200 and asked.json["needs_paid"] is True and asked.json["cost_usd"] == 0.01
+    assert asked.json["message"] == "Free sample unavailable: make one with your Kie.ai balance (about $0.01)?"
+    assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Kore"}).json["needs_paid"] is True
+    assert made == [], "a click without a yes never pays, for any voice"
+    first = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon", "confirm_paid": True})
+    assert first.status_code == 200 and first.json["url"] == "/cr-voices/sample/Charon" and first.json["paid"] is True
+    assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"}).json["paid"] is False
+    assert made == [("narration", "Charon")], "each voice's sample is paid for once, after a yes"
     sample = r.client.get("/cr-voices/sample/Charon", headers=r.headers)
     assert sample.status_code == 200 and sample.data == b"ID3 sample"
     assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "NotAVoice"}).status_code == 400
@@ -782,6 +801,70 @@ def test_voice_picker_lists_previews_once_and_saves_the_choice(runtime, timeline
     assert r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Kore"}).status_code == 409
     original = timeline.spawned.pop()
     original.target(*original.args)
+
+
+def test_voice_previews_use_channelrecipes_free_sample_first(runtime, monkeypatch):
+    """Kie narrates with Gemini voices (owner, 2026-10-26). Each of its 70 voices has a free sample on
+    channelrecipe.com: a preview fetches it once and keeps it, and the creator's Kie balance is never used for it."""
+    r = runtime
+    r.cfg["media_hub"] = {"provider": "kie", "tasks": ["narration"], "voice": "Kore"}
+    monkeypatch.setattr(cr_studio.cr_media, "profile", lambda task=None: dict(r.cfg["media_hub"]) if task == "narration" else {})
+    monkeypatch.setattr(cr_studio.cr_media, "active", lambda task: task == "narration")
+    monkeypatch.setattr(cr_studio.cr_media, "run", lambda *a, **k: pytest.fail("a free sample is never paid for"))
+    import requests
+    fetched = []
+
+    def get(url, **kwargs):
+        fetched.append(url)
+        return SimpleNamespace(status_code=200, content=b"ID3" + b"x" * 4000, headers={"content-type": "audio/mpeg"})
+    monkeypatch.setattr(requests, "get", get)
+    listed = r.client.get("/cr-voices", headers=r.headers).json
+    assert len(listed["voices"]) == 70 and listed["groups"]["Charon"] == "Call center"
+    assert listed["note"].startswith("Kie narrates with Gemini voices.") and "your own ElevenLabs key" in listed["note"]
+    first = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Puck"})
+    assert first.status_code == 200 and first.json == {"url": "/cr-voices/sample/Puck", "paid": False}
+    assert fetched == ["https://channelrecipe.com/static/voices/gemini-3-8-flash-tts/Puck.mp3"]
+    r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Puck"})
+    assert len(fetched) == 1, "kept after the first play"
+    sample = r.client.get("/cr-voices/sample/Puck", headers=r.headers)
+    assert sample.status_code == 200 and sample.data.startswith(b"ID3") and sample.mimetype == "audio/mpeg"
+    assert "Puck" in r.client.get("/cr-voices", headers=r.headers).json["previews"]
+
+
+def test_kie_narration_is_gemini_in_setup_and_choose_voice(runtime, monkeypatch):
+    """Kie narrates with Gemini voices only (owner, 2026-10-26). Setup says so; a moved ElevenLabs voice says so once,
+    until the creator picks a voice; saves never keep a Kie ElevenLabs model or voice."""
+    import cr_media
+    r = runtime
+    monkeypatch.setenv("KIE_API_KEY", "k" * 30)
+    r.cfg.update(narration={"provider": "kie", "model": "elevenlabs/text-to-speech-turbo-2-5", "voice": "EkK5I93UQWFDigLMpZcX"})
+    real = cr_media.kie_narration
+    monkeypatch.setattr(cr_studio.cr_media, "profile",
+                        lambda task=None: real({**r.cfg["narration"], "tasks": ["narration"]}) if task == "narration" else {})
+    monkeypatch.setattr(cr_studio.cr_media, "active", lambda task: task == "narration")
+    monkeypatch.setattr(cr_studio.cr_network, "status", lambda *a, **k: {})
+    monkeypatch.setattr(cr_studio, "channelrecipe_answers", lambda *a: True)
+    status = r.client.get("/cr-status", headers=r.headers).json["narration"]
+    assert status["voice"] == "Charon" and status["model"] == "google/gemini-3-8-flash-tts"
+    assert status["note"].startswith("Kie now narrates with Gemini voices only") and "James" in status["note"]
+    listed = r.client.get("/cr-voices", headers=r.headers).json
+    assert listed["voice"] == "Charon" and len(listed["voices"]) == 70 and "James" in listed["note"]
+    chosen = r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Puck"})
+    assert chosen.status_code == 200 and "voice_notice" not in r.cfg
+    assert r.cfg["narration"] == {"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "Puck"}
+    assert r.client.get("/cr-status", headers=r.headers).json["narration"]["note"] == cr_media.KIE_NOTE
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: SimpleNamespace(status_code=200, json=lambda: {"code": 200, "data": 10}))
+    # an old setup page (or Claude Code) asking for the Turbo model gets Gemini; an ElevenLabs id is refused plainly
+    saved = r.client.post("/cr-voice", headers=r.headers, json={"provider": "kie", "model": "elevenlabs/text-to-speech-turbo-2-5"})
+    assert saved.status_code == 200 and "Gemini voices" in saved.json["message"]
+    assert r.cfg["narration"] == {"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "Kore"}
+    refused = r.client.post("/cr-hub", headers=r.headers, json={"provider": "kie", "key": "k" * 30, "tasks": ["narration"],
+                                                                "voice": "EkK5I93UQWFDigLMpZcX"})
+    assert refused.status_code == 400 and "Kie narrates with Gemini voices" in refused.json["error"]
+    assert r.client.post("/cr-hub", headers=r.headers, json={"provider": "kie", "key": "k" * 30, "tasks": ["narration"],
+                                                             "voice": "charon"}).status_code == 200
+    assert r.cfg["media_hub"]["voice"] == "Charon"
 
 
 def test_copy_diagnostics_explains_setup_without_secrets(runtime):
@@ -871,3 +954,35 @@ def test_a_studio_started_from_a_claude_code_chat_drops_the_chats_settings(monke
     assert cr_studio.chat_line() == "yes, its settings were left out (CLAUDE_EFFORT=xhigh)"
     monkeypatch.setattr(cr_studio, "CHAT_SETTINGS_DROPPED", [])
     assert cr_studio.chat_line() == "no"
+
+
+def test_setup_fix_routes_start_studios_own_installs_behind_the_local_token(runtime, monkeypatch):
+    """Setup's Fix it for FFmpeg, Node.js and Claude Code (cr_installs): a POST starts it (local token only), a GET
+    reads its progress; the sign-in window says why it can't open."""
+    import cr_installs
+    started = []
+    for name in ("fix_ffmpeg", "fix_node"):
+        monkeypatch.setattr(cr_installs, name, lambda name=name, **kw: started.append((name, kw)) or {"state": "starting"})
+    monkeypatch.setattr(cr_installs, "fix_claude", lambda **kw: started.append(("fix_claude", kw)) or {"state": "starting"})
+    for path in ("/cr-setup/fix-ffmpeg", "/cr-setup/fix-node", "/cr-setup/fix-claude"):
+        assert runtime.client.post(path, headers={"Host": "127.0.0.1:7860"}).status_code == 403, "never without the token"
+        response = runtime.client.post(path, headers=runtime.headers)
+        assert response.status_code == 202 and response.json == {"state": "starting"}
+    assert [name for name, _ in started] == ["fix_ffmpeg", "fix_node", "fix_claude"]
+    assert started[0][1] == {"home": runtime.job} and started[1][1] == {"home": runtime.job}
+    monkeypatch.setitem(cr_installs.FIXES, "ffmpeg", {"state": "downloading", "done": 10 << 20, "total": 57 << 20,
+                                                      "what": "FFmpeg 9.0.2", "message": "", "tail": ""})
+    assert "10 of 57 MB" in runtime.client.get("/cr-setup/fix-ffmpeg", headers=runtime.headers).json["message"]
+    monkeypatch.setattr(cr_studio.cr_claude, "find_executable", lambda: "/Users/zoe/.local/bin/claude")
+    monkeypatch.setattr(cr_studio.cr_claude, "status", lambda *a, **k: {"authenticated": True})
+    answer = runtime.client.get("/cr-setup/fix-claude?signin=1", headers=runtime.headers).json
+    assert answer["installed"] is True and answer["signed_in"] is True
+    assert "signed_in" not in runtime.client.get("/cr-setup/fix-claude", headers=runtime.headers).json
+
+    def cant(**kw):
+        raise cr_installs.Stop("Install Claude Code first: press Install Claude Code.")
+    monkeypatch.setattr(cr_installs, "open_sign_in", cant)
+    refused = runtime.client.post("/cr-setup/claude-sign-in", headers=runtime.headers)
+    assert refused.status_code == 409 and "Install Claude Code first" in refused.json["error"]
+    status = runtime.client.get("/cr-status", headers=runtime.headers).json
+    assert status["ffmpeg"] is True and status["node"] is True and set(status["can_fix"]) == {"ffmpeg", "node", "claude"}

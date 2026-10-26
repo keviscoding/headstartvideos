@@ -109,6 +109,11 @@ CREATE TABLE IF NOT EXISTS ops_credit_grants (
     amount      INTEGER NOT NULL,
     applied_at  REAL NOT NULL DEFAULT (strftime('%s','now'))
 );
+CREATE TABLE IF NOT EXISTS stripe_events (
+    event_id     TEXT PRIMARY KEY,
+    event_type   TEXT NOT NULL DEFAULT '',
+    processed_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS voice_clones (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL,
@@ -256,6 +261,11 @@ CREATE TABLE IF NOT EXISTS ops_credit_grants (
     amount      INTEGER NOT NULL,
     applied_at  DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
 );
+CREATE TABLE IF NOT EXISTS stripe_events (
+    event_id     TEXT PRIMARY KEY,
+    event_type   TEXT NOT NULL DEFAULT '',
+    processed_at DOUBLE PRECISION NOT NULL
+);
 CREATE TABLE IF NOT EXISTS voice_clones (
     id              BIGSERIAL PRIMARY KEY,
     user_id         BIGINT NOT NULL,
@@ -332,11 +342,29 @@ CREATE TABLE IF NOT EXISTS niche_hunt_runs (
 
 
 # Postgres connections come from a small pool: opening one costs a TLS handshake and a login (100+ ms to the managed
-# database), and the database allows about 22 at once while the web process serves 32 requests in parallel. Pooled,
+# database), and the database allows about 22 at once while the web process serves many requests in parallel. Pooled,
 # a request reuses a warm connection, and a burst waits briefly for one instead of failing with "too many clients".
 # DB_POOL_MAX leaves room for the cloud workers; without psycopg_pool installed, each query connects as before.
+# Every process counts against the same ~22: each web container (DB_POOL_MAX about 6 with two of them) and each Fly
+# cook or niche machine (fly_bridge gives them DB_POOL_MAX=2). A connection idle for a minute is closed, so a quiet
+# container hands its share back. prepare_threshold=None: no server-side prepared statements, which a connection
+# pooler in front of the database (DigitalOcean's PgBouncer, transaction mode) can't carry between clients.
+DB_POOL_MAX_DEFAULT = 12
+POOL_MAX_IDLE_SECONDS = 60
 _POOL = None
 _POOL_LOCK = threading.Lock()
+
+
+DB_POOL_MAX_FLOOR = 2
+
+
+def _pool_max() -> int:
+    """DB_POOL_MAX from the environment, at least 2; a missing or unreadable value keeps the default. One connection
+    could deadlock the site: the Stripe webhook holds one for its lock while applying the event needs another."""
+    try:
+        return max(DB_POOL_MAX_FLOOR, int(os.getenv("DB_POOL_MAX", "") or DB_POOL_MAX_DEFAULT))
+    except ValueError:
+        return DB_POOL_MAX_DEFAULT
 
 
 def _pool():
@@ -349,12 +377,13 @@ def _pool():
                 except ImportError:
                     _POOL = False
                     return _POOL
+                max_size = _pool_max()
                 _POOL = ConnectionPool(
                     DATABASE_URL, name="cr-web",
-                    min_size=int(os.getenv("DB_POOL_MIN", "1")), max_size=int(os.getenv("DB_POOL_MAX", "12")),
-                    kwargs={"row_factory": dict_row, "connect_timeout": 10},
+                    min_size=min(max_size, int(os.getenv("DB_POOL_MIN", "1"))), max_size=max_size,
+                    kwargs={"row_factory": dict_row, "connect_timeout": 10, "prepare_threshold": None},
                     check=ConnectionPool.check_connection,      # a connection the server dropped is replaced, not used
-                    max_idle=300, max_lifetime=1800, timeout=30, open=True)
+                    max_idle=POOL_MAX_IDLE_SECONDS, max_lifetime=1800, timeout=30, open=True)
                 atexit.register(_POOL.close)
     return _POOL
 
@@ -370,6 +399,7 @@ def _conn():
             DATABASE_URL,
             row_factory=dict_row,
             connect_timeout=10,
+            prepare_threshold=None,
         )
     else:
         conn = sqlite3.connect(str(DB_PATH), timeout=10)
@@ -378,6 +408,73 @@ def _conn():
     try:
         yield conn
         conn.commit()
+    finally:
+        conn.close()
+
+
+# Table creation and migrations take this transaction-level advisory lock first (two web containers boot together on
+# every deploy, and DDL racing on the same tables can fail or deadlock). One key per module (`name`), so one module's
+# initialize() running while another's transaction is open never waits on itself. 726346119-726346122 are taken.
+SCHEMA_LOCK = 726346118
+
+
+def schema_lock(conn, name: str = "core") -> None:
+    """Hold the schema lock for `name` until `conn`'s transaction ends. Nothing on SQLite (one process)."""
+    if IS_PG:
+        import zlib
+        # (int, int) form: the key is cast, because a Python int may be sent as bigint and there is no (bigint, bigint)
+        conn.execute(f"SELECT pg_advisory_xact_lock({SCHEMA_LOCK}, %s::int)", (zlib.crc32(name.encode()) & 0x7FFFFFFF,))
+
+
+# Stripe webhooks apply one at a time across every web container, under this transaction-level advisory lock.
+STRIPE_EVENT_LOCK = 726346117
+
+
+class StripeEventBusy(Exception):
+    """Another Stripe event held the lock longer than this one may wait: answer 503 and Stripe retries it."""
+
+
+@contextmanager
+def stripe_event_once(event_id: str, event_type: str = "", lock_timeout_s: float = 20.0):
+    """`with stripe_event_once(id, type) as fresh:` fresh is False when this event already applied. When it is True,
+    the block applies the event and, once it finishes without an error, the id is recorded (an error records nothing,
+    so Stripe's retry applies it). The advisory lock is held on one connection for the whole block, so events apply
+    one after another across containers, in the order they took the lock. Without an id nothing is recorded.
+
+    The lock is waited for at most `lock_timeout_s` (StripeEventBusy after that): one stalled event must never queue
+    every later delivery and retry on both containers, each holding a worker thread, for ever."""
+    with _conn() as conn:
+        if IS_PG:
+            conn.execute(f"SET LOCAL lock_timeout = '{max(1, int(lock_timeout_s * 1000))}ms'")
+            try:
+                conn.execute(f"SELECT pg_advisory_xact_lock({STRIPE_EVENT_LOCK})")
+            except Exception as error:
+                if getattr(error, "sqlstate", "") == "55P03":               # lock_not_available: the wait ran out
+                    raise StripeEventBusy("another Stripe event holds the lock") from None
+                raise
+        seen = event_id and conn.execute(_q("SELECT 1 FROM stripe_events WHERE event_id = ?"),
+                                         (event_id,)).fetchall()
+        if seen:
+            yield False
+            return
+        yield True
+        if event_id:
+            conn.execute(_q("INSERT INTO stripe_events (event_id, event_type, processed_at) VALUES (?, ?, ?) "
+                            "ON CONFLICT (event_id) DO NOTHING"), (event_id, event_type[:120], time.time()))
+
+
+def ping(timeout: float = 2.0) -> None:
+    """SELECT 1 on a connection obtained within `timeout` seconds (the readiness check). Raises when there is none."""
+    if IS_PG and _pool():
+        with _pool().connection(timeout=timeout) as conn:
+            conn.execute("SELECT 1").fetchone()
+        return
+    if IS_PG:
+        conn = psycopg.connect(DATABASE_URL, connect_timeout=max(1, int(round(timeout))), prepare_threshold=None)
+    else:
+        conn = sqlite3.connect(str(DB_PATH), timeout=timeout)
+    try:
+        conn.execute("SELECT 1").fetchone()
     finally:
         conn.close()
 
@@ -407,10 +504,24 @@ UPDATE users SET trial_used = 1 WHERE plan = 'free' AND COALESCE(stripe_customer
 """
 
 
+def _pg_column(cur, table: str, column: str) -> dict | None:
+    """The catalog's row for a Postgres column (data_type, column_default), None when it doesn't exist."""
+    # `cur` may be a cursor or a connection (both execute; the result is read from what execute returns), and the
+    # catalog's own types come back as bytes unless cast to text
+    row = cur.execute("SELECT data_type::text AS data_type, column_default::text AS column_default "
+                      "FROM information_schema.columns WHERE table_schema = current_schema() "
+                      "AND table_name = %s AND column_name = %s", (table, column)).fetchone()
+    return dict(row) if row else None
+
+
 def _ensure_column(cur, table: str, column: str, col_def: str):
-    """Add a column if missing (Postgres + SQLite)."""
+    """Add a column if missing (Postgres + SQLite). On Postgres the catalog is asked first: ALTER TABLE takes an ACCESS
+    EXCLUSIVE lock even when the column exists, held until the transaction ends, and every boot (and every niche job)
+    ran these, stalling each query on users or niche_channels on the other web container meanwhile."""
     try:
         if IS_PG:
+            if _pg_column(cur, table, column):
+                return
             cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_def}")
         else:
             cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
@@ -421,6 +532,7 @@ def _ensure_column(cur, table: str, column: str, col_def: str):
 def _init_db():
     schema = _SCHEMA_PG if IS_PG else _SCHEMA_SQLITE
     with _conn() as conn:
+        schema_lock(conn, "core")       # two containers boot together on every deploy: their DDL runs one at a time
         if IS_PG:
             with conn.cursor() as cur:
                 cur.execute(schema)
@@ -452,18 +564,22 @@ def _init_db():
                 _ensure_column(cur, "niche_hunt_runs", "progress_json", "TEXT DEFAULT '[]'")
                 cur.execute(_INDEXES)
                 cur.execute(_MIGRATIONS)
-                try:
-                    cur.execute("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 0")
-                except Exception:
-                    pass
+                # Both only when needed: each ALTER locks users (every signed-in request) until this boot commits.
+                credits_col = _pg_column(cur, "users", "credits") or {}
+                if str(credits_col.get("column_default") or "").split("::")[0].strip("'() ") != "0":
+                    try:
+                        cur.execute("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 0")
+                    except Exception:
+                        pass
                 # Ranking half-credits (0.5) need a non-integer column.
-                try:
-                    cur.execute(
-                        "ALTER TABLE users ALTER COLUMN credits "
-                        "TYPE DOUBLE PRECISION USING credits::double precision"
-                    )
-                except Exception:
-                    pass
+                if credits_col.get("data_type") not in (None, "double precision"):
+                    try:
+                        cur.execute(
+                            "ALTER TABLE users ALTER COLUMN credits "
+                            "TYPE DOUBLE PRECISION USING credits::double precision"
+                        )
+                    except Exception:
+                        pass
         else:
             conn.executescript(schema)
             cur = conn.cursor()
@@ -1823,8 +1939,9 @@ def reclaim_stale_cook_jobs(stale_seconds: int = 180) -> int:
         return cur.rowcount or 0
 
 
-def _credits_charged_for_row(row: dict) -> int:
-    """Credits to refund for a cook row (HQ cooks charge more than 1)."""
+def _credits_charged_for_row(row: dict) -> float:
+    """Credits to refund for a cook row (HQ cooks charge more than 1, ranking shorts half a credit: an int here once
+    turned a 0.5 charge into a 1-credit refund). Same rule as cook_runner.job_credits_charged."""
     try:
         req = json.loads(row.get("request_json") or "{}")
     except Exception:
@@ -1833,9 +1950,9 @@ def _credits_charged_for_row(row: dict) -> int:
     if raw is None:
         raw = row.get("credit_deducted")
     try:
-        n = int(raw or 0)
+        n = _credit_amount(raw)
     except (TypeError, ValueError):
-        n = 1 if raw else 0
+        n = 1.0 if raw else 0.0
     if n <= 0 and row.get("credit_deducted"):
         return 1
     return max(0, n)
@@ -1911,20 +2028,55 @@ def fail_cook_job_with_refund(
         if (cur.rowcount or 0) != 1:
             return False, 0
 
+        return True, _refund_once_in(cur, job_id, row)
+
+
+def _refund_once_in(cur, job_id: str, row: dict) -> float:
+    """Give a cook's credits back at most once, inside the caller's transaction: credit_deducted flips 1 -> 0 in its
+    own conditional UPDATE, and only the caller that flipped it adds the credits. A failed cook, a cancel, the
+    sweeper and either web container can all ask; one of them pays. Returns the credits given back."""
+    cur.execute(_q("UPDATE cook_jobs SET credit_deducted = 0 WHERE job_id = ? AND credit_deducted = 1"), (job_id,))
+    if (cur.rowcount or 0) != 1:
+        return 0
+    refunded = _credits_charged_for_row(row)
+    if refunded <= 0 or not row.get("user_id"):
+        return 0
+    cur.execute(_q("UPDATE users SET credits = credits + ? WHERE id = ?"), (refunded, int(row["user_id"])))
+    return refunded
+
+
+def refund_cook_credits_once(job_id: str) -> float:
+    """A failed cook's credits back, at most once (see _refund_once_in). Returns the credits given back."""
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM cook_jobs WHERE job_id = ?"), (job_id,))
+        found = cur.fetchone()
+        return _refund_once_in(cur, job_id, dict(found)) if found else 0
+
+
+def cancel_cook_job_with_refund(job_id: str, message: str = "Cancelled by user") -> tuple[bool, float]:
+    """Cancel a cook that is still queued or running and give its credits back, each exactly once.
+
+    Returns (cancelled, credits_refunded). `cancelled` is False when the cook already finished, failed or was
+    cancelled (by the sweeper, the cook itself or the other web container): nothing is touched. Same shape as
+    fail_cook_job_with_refund: a conditional status UPDATE, then the credit_deducted flip and the credits in the same
+    transaction."""
+    now = time.time()
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM cook_jobs WHERE job_id = ?"), (job_id,))
+        found = cur.fetchone()
+        if not found:
+            return False, 0
+        row = dict(found)
         cur.execute(
-            _q("""UPDATE cook_jobs SET credit_deducted = 0
-                  WHERE job_id = ? AND credit_deducted = 1"""),
-            (job_id,),
+            _q("""UPDATE cook_jobs SET status = 'cancelled', error = ?, finished_at = ?
+                  WHERE job_id = ? AND status IN ('queued', 'web_queued', 'running')"""),
+            (message, now, job_id),
         )
-        refunded = _credits_charged_for_row(row) if (cur.rowcount or 0) == 1 else 0
-        if refunded > 0 and row.get("user_id"):
-            cur.execute(
-                _q("UPDATE users SET credits = credits + ? WHERE id = ?"),
-                (refunded, int(row["user_id"])),
-            )
-        else:
-            refunded = 0
-        return True, refunded
+        if (cur.rowcount or 0) != 1:
+            return False, 0
+        return True, _refund_once_in(cur, job_id, row)
 
 
 def append_cook_progress(job_id: str, message: str, phase: str = "running") -> None:
@@ -2374,6 +2526,7 @@ def _ensure_niche_cron_table() -> None:
     );
     """
     with _conn() as conn:
+        schema_lock(conn, "niche_cron")     # each container's cron loop runs this: one at a time
         if IS_PG:
             with conn.cursor() as cur:
                 cur.execute(ddl)

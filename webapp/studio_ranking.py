@@ -136,6 +136,7 @@ def initialize():
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "studio_ranking")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS ranking_watch_jobs (
                 id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, source TEXT NOT NULL, start_s INTEGER NOT NULL,
                 end_s INTEGER NOT NULL, mode TEXT NOT NULL, question_sha TEXT NOT NULL, model TEXT NOT NULL,
@@ -1138,12 +1139,7 @@ async def _upload_room(request: Request, limit: int, too_big: str):
             _inflight["bytes"] = max(0, _inflight["bytes"] - need)
 
 
-async def _read_json(request: Request, limit: int, too_big: str) -> dict:
-    buf = bytearray()
-    async for chunk in request.stream():
-        buf += chunk
-        if len(buf) > limit:
-            raise HTTPException(413, too_big)
+def _parse_json(buf: bytearray) -> dict:
     try:
         body = json.loads(buf)
     except ValueError:
@@ -1151,6 +1147,26 @@ async def _read_json(request: Request, limit: int, too_big: str) -> dict:
     if not isinstance(body, dict):
         raise HTTPException(400, "The request could not be read.")
     return body
+
+
+async def _read_json(request: Request, limit: int, too_big: str) -> dict:
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > limit:
+            raise HTTPException(413, too_big)
+    return await _call("quick", _parse_json, buf)              # tens of MB of JSON: parsed off the event loop
+
+
+def _decode_clip(b64: str) -> tuple[bytes, str]:
+    """The clip's bytes and its source id (decoding and hashing up to 24 MB happens in a worker thread)."""
+    try:
+        data = base64.b64decode(b64, validate=True)
+    except ValueError:
+        raise HTTPException(400, "The clip could not be read.") from None
+    if not data:
+        raise HTTPException(400, "The clip is empty.")
+    return data, "file:" + hashlib.sha256(data).hexdigest()[:20]
 
 
 def _field(body: dict, name: str, kind, default=None, required=False):
@@ -1198,14 +1214,8 @@ def make_router(access) -> APIRouter:
                 raise HTTPException(422, "question is too long.")
             if mime not in sw.UPLOAD_MIMES or len(b64) > sw.MAX_UPLOAD_BYTES * 4 // 3 + 8:
                 raise HTTPException(400, too_big)
-            try:
-                data = base64.b64decode(b64, validate=True)
-            except ValueError:
-                raise HTTPException(400, "The clip could not be read.") from None
+            data, source = await _call("quick", _decode_clip, b64)
             del b64, body["data_b64"]
-            if not data:
-                raise HTTPException(400, "The clip is empty.")
-            source = "file:" + hashlib.sha256(data).hexdigest()[:20]
             return await _call("quick", start, user, source, _field(body, "start", float, 0),
                                _field(body, "end", float, required=True), _field(body, "mode", str, "scout"),
                                question, use_credits=_field(body, "use_credits", bool, False), data=data, mime=mime)

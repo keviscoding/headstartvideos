@@ -340,6 +340,22 @@ def test_asks_spread_over_more_than_ten_minutes_keep_the_storage_link():
     studio._link_asks.pop(99, None)
 
 
+def _kie_file_host(data, asked):
+    """A stand-in for Kie's file host behind the relay's async HTTP client (byte ranges answered as 206)."""
+    import httpx
+
+    def answer(request):
+        asked.append(request)
+        wanted = request.headers.get("Range")
+        first = int((wanted or "bytes=0-").split("=")[1].split("-")[0])
+        body = data[first:]
+        headers = {"Content-Length": str(len(body)), "Content-Type": "audio/wav"}
+        if wanted:
+            headers["Content-Range"] = f"bytes {first}-{len(data) - 1}/{len(data)}"
+        return httpx.Response(206 if wanted else 200, headers=headers, content=body)
+    return lambda: httpx.AsyncClient(transport=httpx.MockTransport(answer))
+
+
 def test_kies_files_come_through_the_relay_for_a_studio_that_cant_reach_kies_file_host(env, monkeypatch):
     """A creator's network cut every connection to aiquickdraw.com: their Studio fetches Kie's finished files here
     (local_runtime/cr_relay.py). Only Kie's file hosts, only for a Studio account, byte ranges passed on."""
@@ -347,21 +363,8 @@ def test_kies_files_come_through_the_relay_for_a_studio_that_cant_reach_kies_fil
     from fastapi.testclient import TestClient
     data = b"RIFF" + bytes(range(256)) * 20
     asked = []
-
-    class Upstream:
-        def __init__(self, url, headers):
-            first = int((headers.get("Range") or "bytes=0-").split("=")[1].split("-")[0])
-            self.body, self.status_code = data[first:], 206 if headers.get("Range") else 200
-            self.headers = {"Content-Length": str(len(self.body)), "Content-Type": "audio/wav"}
-            if headers.get("Range"):
-                self.headers["Content-Range"] = f"bytes {first}-{len(data) - 1}/{len(data)}"
-
-        def iter_content(self, size):
-            yield self.body
-
-        def close(self):
-            pass
-    monkeypatch.setattr(studio.requests, "get", lambda url, headers=None, **kw: asked.append((url, headers, kw)) or Upstream(url, headers))
+    monkeypatch.setattr(studio, "relay_client", _kie_file_host(data, asked))
+    monkeypatch.setattr(studio.requests, "get", lambda *a, **k: pytest.fail("a relay never takes a worker thread"))
     app = FastAPI()
     app.include_router(studio.make_router(lambda req: user(1, "daily") if req.headers.get("x-test-user") else None,
                                           prefix="/api/studio"))
@@ -370,14 +373,100 @@ def test_kies_files_come_through_the_relay_for_a_studio_that_cant_reach_kies_fil
     assert client.get("/api/studio/media-relay", params={"url": url}).status_code == 401
     got = client.get("/api/studio/media-relay", params={"url": url}, headers={"x-test-user": "1"})
     assert got.status_code == 200 and got.content == data and got.headers["content-type"] == "audio/wav"
-    assert asked[-1][0] == url and asked[-1][2]["allow_redirects"] is False
+    assert str(asked[-1].url) == url and asked[-1].headers["accept-encoding"] == "identity"
     part = client.get("/api/studio/media-relay", params={"url": url}, headers={"x-test-user": "1", "Range": "bytes=100-"})
-    assert part.status_code == 206 and part.content == data[100:] and asked[-1][1]["Range"] == "bytes=100-"
+    assert part.status_code == 206 and part.content == data[100:] and asked[-1].headers["Range"] == "bytes=100-"
     for other in ("https://example.com/x.wav", "http://tempfile.aiquickdraw.com/x.wav",
                   "https://aiquickdraw.com.evil.example/x.wav", "https://user:pw@tempfile.aiquickdraw.com/x.wav",
                   "https://tempfile.aiquickdraw.com:8443/x.wav"):
         assert client.get("/api/studio/media-relay", params={"url": other}, headers={"x-test-user": "1"}).status_code == 400
     assert len(asked) == 2, "nothing else is ever fetched"
+
+
+def test_relays_share_one_client_per_event_loop_closed_at_shutdown():
+    """A client per relay built a TLS context on the event loop each time (about 9 ms); one is shared and kept open
+    between relays, and the server closes it when it stops."""
+    import asyncio
+
+    async def life():
+        first, again = studio.relay_client(), studio.relay_client()
+        assert first is again and not first.is_closed
+        await studio.close_relay_client()
+        assert first.is_closed and studio.relay_client() is not first
+        await studio.close_relay_client()
+    asyncio.run(life())
+
+
+def test_a_finished_relay_leaves_the_shared_client_open(env, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    shared = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"voice")))
+    monkeypatch.setattr(studio, "relay_client", lambda: shared)
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: user(1, "daily"), prefix="/api/studio"))
+    client = TestClient(app)
+    for _ in range(2):
+        got = client.get("/api/studio/media-relay", params={"url": "https://tempfile.aiquickdraw.com/r/v.mp3"})
+        assert got.status_code == 200 and got.content == b"voice"
+    assert not shared.is_closed
+
+
+def test_a_relay_never_follows_a_redirect_and_frees_its_slot_on_every_answer(env, monkeypatch):
+    """Kie's host answering a redirect, an error or a file over the limit: refused, and the account's six slots all
+    come back (a seventh relay still gets through)."""
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    answers = iter([httpx.Response(302, headers={"Location": "https://example.com/x"}), httpx.Response(500),
+                    httpx.Response(404), httpx.Response(200, headers={"Content-Length": str(700 * 1024 * 1024)}),
+                    httpx.Response(200, content=b"x"), httpx.Response(200, content=b"x"), httpx.Response(200, content=b"x"),
+                    httpx.Response(200, content=b"ok")])
+    monkeypatch.setattr(studio, "relay_client",
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(lambda request: next(answers))))
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: user(1, "daily"), prefix="/api/studio"))
+    client = TestClient(app)
+    url = "https://tempfile.aiquickdraw.com/r/voice-123.wav"
+    codes = [client.get("/api/studio/media-relay", params={"url": url}).status_code for _ in range(8)]
+    assert codes == [404, 502, 404, 413, 200, 200, 200, 200]
+
+
+def test_a_relay_waiting_for_its_accounts_slot_holds_no_worker_thread(env, monkeypatch):
+    """Six files streaming for one account, a seventh waits for a slot without taking a thread from the site."""
+    import asyncio
+    import anyio.to_thread
+    import httpx
+
+    release = asyncio.Event()
+
+    async def slow_body():
+        await release.wait()
+        yield b"done"
+
+    monkeypatch.setattr(studio, "relay_client", lambda: httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=slow_body()))))
+    router = studio.make_router(lambda req: user(1, "daily"), prefix="/api/studio")
+    relay = next(r.endpoint for r in router.routes if r.path == "/api/studio/media-relay")
+
+    class Asked:
+        headers = {}
+
+    async def scenario():
+        streams = [await relay(Asked(), url="https://tempfile.aiquickdraw.com/r/%d.wav" % i, user=user(1, "daily"))
+                   for i in range(6)]
+        waiting = asyncio.ensure_future(relay(Asked(), url="https://tempfile.aiquickdraw.com/r/7.wav",
+                                              user=user(1, "daily")))
+        await asyncio.sleep(0.05)
+        busy = anyio.to_thread.current_default_thread_limiter().borrowed_tokens
+        assert not waiting.done() and busy == 0, "the seventh waits on the event loop, not in a thread"
+        release.set()
+        bodies = [b"".join([c async for c in s.body_iterator]) for s in streams]
+        seventh = await asyncio.wait_for(waiting, 5)
+        return bodies, seventh.status_code
+
+    bodies, status = asyncio.run(scenario())
+    assert bodies == [b"done"] * 6 and status == 200
 
 
 def test_uploads_to_kies_cut_upload_host_go_through_the_relay(env, monkeypatch):

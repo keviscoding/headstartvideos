@@ -208,8 +208,7 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
         content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
 
     if not is_remote():
-        rel = os.path.relpath(local_path, str(ROOT))
-        return f"/api/files/{rel}"
+        return _files_url(local_path)
 
     key = (key or "").lstrip("/")
     size = os.path.getsize(local_path)
@@ -256,6 +255,35 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
             f"[storage] Spaces upload failed key={key!r} size={size} "
             f"{spaces_fingerprint()} err={e}"
         )
+        raise _friendly_spaces_error(e) from e
+
+
+def _files_url(local_path) -> str:
+    """The /api/files link of a file kept on this computer (local development, no Spaces). A file on another drive
+    than the app (Windows: C: and D:) has no relative path, so it keeps its own; os.path.relpath raised there."""
+    try:
+        rel = os.path.relpath(local_path, str(ROOT))
+    except ValueError:
+        rel = Path(local_path).resolve().as_posix()
+    return f"/api/files/{rel}"
+
+
+def store_private_file(local_path: str, key: str, content_type: str | None = None) -> str:
+    """Persist a local file under `key` WITHOUT public-read and return the key, for presigned_get_url and the cooks'
+    authenticated fetch (fetch_to_local). The file is streamed, never read whole (a clips bundle can be large).
+    Without Spaces (local development) it stays where it is: its /api/files path, as store_file returns."""
+    if not content_type:
+        content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
+    if not is_remote():
+        return _files_url(local_path)
+    key = (key or "").lstrip("/")
+    try:
+        with open(local_path, "rb") as body:
+            _make_client().put_object(Bucket=_spaces_creds()[2], Key=key, Body=body, ContentType=content_type)
+        print(f"[storage] Spaces ok (private) key={key!r} size={os.path.getsize(local_path)}")
+        return key
+    except Exception as e:
+        print(f"[storage] private Spaces upload failed key={key!r} {spaces_fingerprint()} err={e}")
         raise _friendly_spaces_error(e) from e
 
 

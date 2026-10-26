@@ -12,20 +12,20 @@
 
 ## Or do it yourself
 
-1. Install these if you don't have them:
-   - **Python 3.13**: https://www.python.org/downloads/ (on Windows, tick
-     **Add Python to PATH**)
-   - **Node.js LTS**: https://nodejs.org
-   - **FFmpeg with subtitle support**: Mac: `brew install ffmpeg-full`;
-     Windows: `winget install -e --id Gyan.FFmpeg`
-   - **Claude Code**: https://claude.com/download (sign in with your Claude
-     Pro or Max account)
+1. Install **Python 3.13** if you don't have it: https://www.python.org/downloads/
+   (on Windows, tick **Add python.exe to PATH**). It's the only tool you install
+   yourself: Studio installs the rest from its setup page (step 3).
 2. Open **Start on Mac.command** (if macOS blocks it: right-click → Open) or
    **Start on Windows.cmd**. Keep that window open. The first launch takes a few
    minutes.
 3. Your browser opens the setup page at http://127.0.0.1:7860/cr-setup:
-   - paste your ChannelRecipe key (Studio page on channelrecipe.com),
-   - sign in to Claude Code and verify your models,
+   - if FFmpeg (video tools) or Node.js (YouTube helper) needs attention, press
+     **Fix it** next to it: Studio puts it in its own folder, no password,
+   - connect your ChannelRecipe account,
+   - Claude: Studio needs Claude Code's command-line tool (the Claude desktop
+     app alone isn't enough). Press **Install Claude Code** (Anthropic's
+     official installer), then **Open the sign-in window** and sign in with your
+     Claude Pro or Max account, then verify your models,
    - connect Kie.ai or Atlas Cloud for voice and images.
 4. Open the studio, pick a recipe, type a title and press **Create video**. Or make it from Claude Code (next
    section).

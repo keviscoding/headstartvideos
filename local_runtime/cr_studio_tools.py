@@ -264,6 +264,8 @@ def style_card(row: dict, thumb: str = "") -> dict:
             "cloud_note": block, "media_cost": one_line(row.get("cost"), 220) if row.get("cost") else "",
             "short_seconds": row.get("short_seconds"), "needs_panels": bool(row.get("panels")),
             "thumbnail_path": thumb, "preview_url": link(row["preview_url"]) if row.get("preview_url") else "",
+            # burned-in captions by the style's own design (false: none, like its channel; captions=true adds them)
+            "captions": row.get("captions", True) is not False,
             # its recurring character (options.character / character_picture change it for a video)
             "character": one_line(row.get("character"), 300) if isinstance(row.get("character"), str) else ""}
 
@@ -288,12 +290,25 @@ def features_for(row: dict, overrides=None) -> dict:
     return out
 
 
+def coded_usd(row: dict, minutes: float) -> float:
+    """A style drawn by its own renderer: its background pictures plus a piece of its own music every ~35 s (the
+    catalog's coded_media), which a quote once left out ("$0.00 in all" for a video that paid ~$0.40)."""
+    coded = row.get("coded_media") if isinstance(row.get("coded_media"), dict) else {}
+    if not coded:
+        return 0.0
+    pieces = max(1, -(-int(round(float(minutes) * 60)) // max(10, int(coded.get("piece_seconds") or 35))))
+    return float(coded.get("plates_usd") or 0) + pieces * float(coded.get("music_usd_per_piece") or 0)
+
+
 def media_estimate(cat: dict, row: dict, minutes: int, features: dict) -> dict:
     prices = cat.get("prices") or {}
     per = prices.get("features") or {}
     voice = float(((prices.get("voice") or {}).get("per_min")) or 0)
     total = voice + sum(float((per.get(k) or {}).get("per_min") or 0) for k, on in features.items() if on)
-    return {"per_video_usd": round(total * minutes, 2), "recipe_note": one_line(row.get("cost"), 260),
+    each = total * minutes + coded_usd(row, minutes)
+    if kind(row) == "short" and isinstance(row.get("short_cost_usd"), (int, float)):
+        each = float(row["short_cost_usd"])                        # the recipe's own estimate for one Short
+    return {"per_video_usd": round(each, 2), "recipe_note": one_line(row.get("cost"), 260),
             "note": "Media runs on your own accounts (pictures, voice, footage watching). Claude's writing and "
                     "directing run on your Claude Code plan, not billed per video."}
 
@@ -323,15 +338,20 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
             out["short_by_usd"] = round(most * titles - (cloud.get("balance_usd") or 0), 2)
     else:
         out["expected_total_usd"] = round(media["per_video_usd"] * titles, 2)
-        out["this_computer"] = "Renders on this computer, one video at a time; no machine to pay for."
+        out["this_computer"] = ("Renders on this computer, one video at a time: while one is made, these wait in "
+                                "Studio's queue and start by themselves. No machine to pay for.")
+        line = queue_line()
+        if line["before"]:
+            out["queue"] = {"videos_before_these": line["before"], "on_hold": line["on_hold"],
+                            "note": "They join Studio's queue behind the videos already there."}
         # the disk holds each video's working folder: one that can't fit is said with the cost, not after it; the
-        # videos are made one at a time, so a batch only warns about the ones after the first
+        # videos are made one at a time, so a batch only warns about the ones after the first (and the queue's)
         import cr_machine
         threed = bool(features.get("threed"))
         free = cr_machine.free_disk_gb(HOME, output_root())
         out["disk"] = {"needs_gb": cr_machine.need_gb(minutes, 1, threed),
                        "comfortable_gb": cr_machine.comfortable_gb(minutes, titles, threed), "free_gb": free}
-        room, warning = cr_machine.disk_check(free, minutes, titles, threed)
+        room, warning = cr_machine.disk_check(free, minutes, titles, threed, ahead=line["ahead_gb"])
         if room:
             out["disk"]["problem"] = room
         elif warning:
@@ -378,6 +398,93 @@ def summary(q: dict) -> str:
 
 # ── the tools ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+# ── the queue (cr_queue): Studio makes one video at a time; more wait their turn ──────────────────────────────────
+
+def queue_state(ahead=False) -> dict:
+    """Studio's /cr-queue: what's on hold and why ({} from a Studio that can't say)."""
+    try:
+        return call("GET", "/cr-queue" + ("?ahead=1" if ahead else ""), timeout=60)
+    except Refused:
+        return {}
+
+
+def queue_line() -> dict:
+    """How many videos are before a new one (being made, waiting, on hold) and what they still need on the disk."""
+    try:
+        jobs = call("GET", "/api/queue", timeout=20).get("jobs") or []
+    except Refused:
+        jobs = []
+    live = [j for j in jobs if j.get("state") in ("running", "queued", "held")]
+    state = queue_state(ahead=True) if live else {}
+    return {"before": len(live), "on_hold": bool(state.get("held")), "ahead_gb": float(state.get("ahead_gb") or 0)}
+
+
+def queue_row(job: dict) -> dict:
+    """One video of /api/queue as the tools say it: its place in line, or why it's on hold."""
+    row = {"id": "video:" + str(job.get("slug")), "title": job.get("title"), "state": job.get("state")}
+    if job.get("state") == "running":
+        row.update(percent=round(100 * float(job.get("progress") or 0)), minutes_so_far=round((job.get("elapsed")
+                   or 0) / 60), last_line=job.get("line") or "")
+    elif job.get("state") == "queued":
+        if job.get("position"):
+            row.update(position=job["position"], videos_before_it=job.get("ahead", job["position"] - 1))
+    elif job.get("state") == "held":
+        row["on_hold_because"] = job.get("reason") or ""
+    if job.get("error"):
+        row["error"] = job["error"]
+    return row
+
+
+HOLD_NOTE = ("These videos are on hold: something every video needs stopped (on_hold_because says what, and what to "
+             "do). Nothing of theirs was made or paid for. Tell the creator in plain words. When they've fixed it and "
+             "want to go on, call carry_on_queue (Studio checks each one's setup again; Claude Code asks them to "
+             "approve); carry_on_queue(remove=true) takes them out of the queue instead. Never carry on for them.")
+
+
+def tool_queue(args):
+    """Studio's queue: the video being made, the ones waiting (in order) and the ones on hold, with why."""
+    jobs = call("GET", "/api/queue", timeout=20).get("jobs") or []
+    rows = [queue_row(j) for j in jobs if j.get("state") in ("running", "queued", "held")]
+    state = queue_state()
+    out = {"videos": rows, "waiting": sum(r["state"] == "queued" for r in rows),
+           "on_hold": sum(r["state"] == "held" for r in rows)}
+    if state.get("held"):
+        out["hold"] = {"reason": state.get("reason") or "", "videos": len(state["held"]),
+                       "can_use_credits": state.get("code") == "out_of_watches"}
+        out["next"] = HOLD_NOTE + (" Ranking Shorts held because the month's clip watches ran out can go on with "
+                                   "carry_on_queue(use_credits=true), 0.02 credits a watch, only if the creator says "
+                                   "so." if out["hold"]["can_use_credits"] else "")
+    elif rows:
+        out["next"] = ("Studio makes them one at a time, by itself: the creator doesn't need to wait or press anything. "
+                       "Check again in a few minutes, not in a loop; Studio shows a notification when each is done.")
+    else:
+        out["next"] = "Nothing is being made or waiting."
+    return out
+
+
+def tool_carry_on_queue(args):
+    """Carry on (or Remove) the videos on hold, as the Studio page's notice does."""
+    same_studio()
+    state = queue_state()
+    if not state.get("held"):
+        return {"carried_on": 0, "message": "Nothing is on hold."}
+    if args.get("remove") is True:
+        got = call("POST", "/cr-queue/drop", {}, timeout=30)
+        return {"removed": got.get("removed", 0),
+                "message": "Taken out of the queue. Nothing of theirs was made or paid for; make them again any time."}
+    credits = args.get("use_credits") is True
+    if credits and state.get("code") != "out_of_watches":
+        raise Refused("use_credits is only for Ranking Shorts held because the month's clip watches ran out.")
+    got = call("POST", "/cr-queue/resume", {"use_credits": credits}, timeout=240)
+    still = [{"id": "video:" + h["slug"], "title": h.get("title"), "on_hold_because": h.get("reason") or ""}
+             for h in got.get("held") or []]
+    out = {"carried_on": got.get("resumed", 0), "still_on_hold": still}
+    out["next"] = ("Back in the queue: Studio makes them one at a time, by itself. " if out["carried_on"] else "") + (
+        "Some are still on hold: Studio checked their setup again and they can't start yet (on_hold_because). Tell "
+        "the creator what to fix." if still else "Check queue or progress now and then.")
+    return out
+
+
 def tool_setup_check(args):
     try:
         status = call("GET", "/cr-status", timeout=60)
@@ -407,6 +514,12 @@ def tool_setup_check(args):
                                  "fix": "" if status.get("browser") else
                                  "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
                                  "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
+            "video_tools": tool_summary(status, "ffmpeg", "fix_ffmpeg"),
+            "node": {**tool_summary(status, "node", "fix_node"),
+                     "blocks_every_video": not status.get("node", True),
+                     "note": "Only videos that download from YouTube (Research footage, Ranking Shorts) need Node.js "
+                             "22 or newer; Studio refuses those before anything is paid until fix_node has run."
+                             if status.get("node", True) and not status.get("node_youtube", True) else ""},
             "network": network_summary(status.get("network") or {}),
             "computer": computer_summary(status.get("computer")),
             "speech_model": {"ready": bool(speech.get("ready")), "state": speech.get("state") or "",
@@ -415,12 +528,29 @@ def tool_setup_check(args):
                              "Studio downloads it by itself while it's 'downloading' or 'checking': call setup_check "
                              "again in a minute. Otherwise call fix_speech_model (Studio downloads and checks it "
                              "itself; never install it from this shell)."},
-            "claude_code": {"signed_in": bool(claude.get("authenticated")),
+            "claude_code": {"installed": bool(claude.get("installed")), "signed_in": bool(claude.get("authenticated")),
+                            "fix": "" if claude.get("installed") else
+                            "Call fix_claude_cli: Studio runs Anthropic's official Claude Code installer itself. Never "
+                            "install Claude Code from this shell. Then the creator signs in once (setup_page, step 2: "
+                            "Open the sign-in window).",
                             "models_verified": bool(claude.get("models_verified")),
                             "usage_limit_reached": bool((claude.get("allowance") or {}).get("blocked"))},
             "studio_cloud": {"available": bool(cloud.get("available")), "balance_usd": cloud.get("balance_usd"),
                              "why": cloud.get("why") or "", "topup_url": cloud.get("topup_url")},
             "gallery_url": link("/cr-gallery")}
+
+
+def tool_summary(status: dict, key: str, fix: str) -> dict:
+    """FFmpeg or Node.js: ready, why not, and the fix tool that installs it in Studio's own folder."""
+    # Node.js: ready for YouTube downloads (22 or newer); an older one stops only the videos that use YouTube
+    ready = bool(status.get("node_youtube", status.get("node")) if key == "node" else status.get(key))
+    can_fix = bool((status.get("can_fix") or {}).get(key, True))
+    return {"ready": ready, "why": "" if ready else str(status.get(key + "_reason") or ""),
+            "fix": "" if ready else (f"Call {fix}: Studio downloads it into its own folder (pinned version, checksum "
+                                     "checked, no password). Never install it from this shell: Studio wouldn't see "
+                                     "it, and Homebrew or winget would ask for the creator's password."
+                                     if can_fix else "Studio can't install it on this computer: help the creator "
+                                     "install it with their system's package manager, then call setup_check.")}
 
 
 def computer_summary(pc) -> dict:
@@ -469,6 +599,41 @@ def tool_fix_speech_model(args):
         return {"running": False, "message": CLOSED}
     return {"state": state.get("state"), "message": "Studio is downloading and checking its speech-timing model (about "
             "140 MB, a minute or two). Call setup_check in a minute; speech_model.ready turns true when it works."}
+
+
+def _fix(path: str, what: str, check: str) -> dict:
+    try:
+        state = call("POST", path, {}, timeout=60)
+    except Closed:
+        return {"running": False, "message": CLOSED}
+    if state.get("state") == "failed":
+        return {"state": "failed", "message": state.get("message") or "It stopped. Call setup_check for details."}
+    return {"state": state.get("state"), "message": f"Studio is installing {what} in its own folder, in the background "
+            f"(a minute or two). Call setup_check in a minute; {check} turns true when it works. If it says failed, "
+            "read its message to the creator."}
+
+
+def tool_fix_ffmpeg(args):
+    """Studio downloads FFmpeg + ffprobe (pinned, SHA-256 checked) into its own folder and puts them first on PATH."""
+    return _fix("/cr-setup/fix-ffmpeg", "FFmpeg", "video_tools.ready")
+
+
+def tool_fix_node(args):
+    """Studio downloads Node.js (pinned, checked against nodejs.org's SHASUMS256.txt) into its own folder."""
+    return _fix("/cr-setup/fix-node", "Node.js", "node.ready")
+
+
+def tool_fix_claude_cli(args):
+    """Studio runs Anthropic's official Claude Code installer, then tells the creator how to sign in once."""
+    try:
+        state = call("POST", "/cr-setup/fix-claude", {}, timeout=60)
+    except Closed:
+        return {"running": False, "message": CLOSED}
+    return {"state": state.get("state"), "message": (state.get("message") or "") if state.get("state") in (
+        "done", "failed") else "Studio is running Anthropic's official Claude Code installer (a minute or two). Call "
+        "setup_check in a couple of minutes: claude_code.installed turns true. Then the creator signs in once: on "
+        "Studio's setup page (setup_page), step 2, Open the sign-in window, and they sign in in their browser with "
+        "their Claude Pro or Max account. Never type or see their password; never sign in for them."}
 
 
 def tool_fix_graphics_browser(args):
@@ -562,12 +727,18 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
     steps = ["script", "voiceover", "images", "pexels", "video"] + (["thumbnail"] if thumbs else [])
     p = {"title": "\n".join(titles), "style": row["name"], "minutes": minutes, "steps": steps,
          "script": str(options.get("script") or "").strip(), "extra": extra, "byo_audio": "",
-         "burn_subs": options.get("captions", True) is not False, "force": False,
+         # captions: the style's own choice unless asked (some styles have none, like their channel: list_styles'
+         # captions false); captions=true burns them in anyway
+         "burn_subs": (options["captions"] is not False) if "captions" in options else row.get("captions", True) is not False,
+         "cr_captions": "on" if options.get("captions") is True and row.get("captions") is False else "",
+         "force": False,
          "thumb_count": max(1, min(int(options.get("thumbnail_count") or 2), 4)),
          "desc": description, "chapters": 5 if description else 0, "sources": 3 if description else 0,
          "features": features, "render_backend": "original", "character": "", "character_image": "",
          "avatar_id": "", "avatar_s": 8, "avatar_count": 1, "offer": "", "offer_plugs": 0, "panels": "",
-         "cta": None, "pictures_per_min": None, "threed_look": ""}
+         "cta": None, "pictures_per_min": None, "threed_look": "",
+         # Create's Quicker 3D review: one 3D review round (cr_threed_look), for styles with 3D scenes only
+         "threed_quick": options.get("quicker_3d_review") is True and bool((features or {}).get("threed"))}
     if p["script"] and len(titles) > 1:
         raise Refused("Your own script goes with one title.")
     if kind(row) == "short":
@@ -707,14 +878,30 @@ def tool_make_videos(args):
             raise Refused(" ".join(blockers) + f" Setup: {link('/cr-setup')}", error.status, error.data) from None
         else:
             raise
-    queued = [{"id": "video:" + (q_["slug"] if isinstance(q_, dict) else str(q_)),
-               "title": q_.get("title") if isinstance(q_, dict) else str(q_)} for q_ in result.get("queued") or []]
+    queued = [queued_video(q_) for q_ in result.get("queued") or []]
     record.setdefault("local", []).extend({"slug": v["id"][6:], "title": v["title"], "at": time.time()} for v in queued)
     _write(STATE / "jobs.json", record)
+    held = [v for v in queued if v.get("on_hold_because")]
+    before = (queued[0].get("videos_before_it") or 0) if queued else 0
+    said = (HOLD_NOTE if held else
+            f"They're in Studio's queue behind {before} video{'s' if before != 1 else ''} and start by themselves, one "
+            "at a time: the creator doesn't need to wait. " if before else "Studio makes them one at a time. ")
     return {"started": True, "where": "this_computer", "videos": queued, "quote": q["summary"],
-            "next": "Studio makes them one at a time. Check with progress(id) every few minutes (don't wait in a "
-                    "loop); Studio shows a notification when each one is done. open_in_studio(page='projects') "
-                    "shows them on the Studio page."}
+            "next": said + ("" if held else "Check with progress(id) every few minutes (don't wait in a loop); Studio "
+                            "shows a notification when each one is done. open_in_studio(page='projects') shows them "
+                            "on the Studio page.")}
+
+
+def queued_video(q_) -> dict:
+    """One video make_videos or resume_video queued: its id, and its place in line or why it's on hold."""
+    if not isinstance(q_, dict):
+        return {"id": "video:" + str(q_), "title": str(q_)}
+    out = {"id": "video:" + str(q_.get("slug")), "title": q_.get("title")}
+    if q_.get("held"):
+        out["on_hold_because"] = q_["held"]
+    elif q_.get("position"):
+        out.update(position=q_["position"], videos_before_it=q_.get("ahead", q_["position"] - 1))
+    return out
 
 
 def resume_first_answer(matches: list, others: list) -> dict:
@@ -750,6 +937,27 @@ def _job_status(slug: str) -> dict:
         out["watching_clips"] = {"watched": int(watched.group(1)), "of": int(watched.group(2)),
                                  "note": "Still watching YouTube videos for its footage; it stops by itself at its "
                                          "budget and carries on with the clips it found."}
+    if out["state"] in ("queued", "held"):
+        try:
+            row = next((j for j in call("GET", "/api/queue", timeout=20).get("jobs") or [] if j.get("slug") == slug), None)
+        except Refused:
+            row = None
+        if row:
+            out.update({k: v for k, v in queue_row(row).items() if k in ("position", "videos_before_it",
+                                                                          "on_hold_because")})
+        out["note"] = HOLD_NOTE if out["state"] == "held" else ("Waiting in Studio's queue: it starts by itself when "
+                                                                "the videos before it finish.")
+    # captions the video should carry but doesn't, and why (cr_captions logs one "Captions: ..." line at the final mux)
+    said = next((line for line in reversed(status.get("lines") or []) if str(line).strip().startswith("Captions: none")),
+                None)
+    if said:
+        out["captions_note"] = str(said).strip()
+    # footage watching that moved to ChannelRecipe's watcher, or stopped, because Kie's watcher wasn't answering (cr_watch)
+    moved = [str(line).strip() for line in status.get("lines") or []
+             if re.search(r"Kie's video watcher isn't answering|footage watching stopped for this video|"
+                          r"ChannelRecipe's watcher watched", str(line))]
+    if moved:
+        out["footage_note"] = " ".join(dict.fromkeys(moved))[:600]
     if status.get("video"):
         out.update(watch_url=link("/f/video/" + _quote_path(slug)), project_url=link("/editor/" + _quote_path(slug)))
     elif out["done"] or out["state"] in ("error", "stopped"):
@@ -835,8 +1043,6 @@ def _recovery(slug: str, out: dict) -> bool:
         out.update(usage_resets=r["reset_label"], usage_reset_passed=bool(r.get("reset_passed")))
     if r.get("stopped_at") and not out.get("error"):
         out["stopped"] = r["stopped_at"]
-    if r.get("pending_resume"):
-        out["carries_on_when_studio_is_free"] = True
     auto = r.get("auto") or {}
     out["carries_on_by_itself"] = {"would": bool(auto.get("safe")), "why": auto.get("why") or "",
                                    "times_so_far": auto.get("count", 0), "at_most": auto.get("limit", 2)}
@@ -862,16 +1068,10 @@ def tool_progress(args):
     if ident:
         raise Refused("Use an id from make_videos (video:…, cloud), a style clone (lk_…, op_…) or a style sample (sm_…).")
     queue = call("GET", "/api/queue", timeout=20)
-    jobs = []
-    for job in queue.get("jobs") or []:
-        row = {"id": "video:" + str(job.get("slug")), "title": job.get("title"), "state": job.get("state")}
-        if job.get("state") == "running":
-            row.update(percent=round(100 * float(job.get("progress") or 0)), minutes_so_far=round((job.get("elapsed")
-                       or 0) / 60), last_line=job.get("line") or "")
-        if job.get("error"):
-            row["error"] = job["error"]
-        jobs.append(row)
+    jobs = [queue_row(job) for job in queue.get("jobs") or []]
     out = {"this_computer": jobs, "busy": bool(queue.get("busy"))}
+    if any(j["state"] == "held" for j in jobs):
+        out["hold_note"] = HOLD_NOTE
     try:
         live = {j["id"] for j in jobs}
         stopped = [{"id": "video:" + r["slug"], "title": r.get("title"), "style": r.get("style"), "state": "stopped",
@@ -918,8 +1118,8 @@ def tool_resume_video(args):
     if presenter:
         call("POST", "/cr-workspace/presenter-choice/" + _quote_path(slug), {"choice": presenter}, timeout=60)
     try:
-        # a free resume only (cr_recover): one that would stop again at a step needing the creator's yes is refused,
-        # and one asked for while Studio makes another video carries on as soon as that one finishes
+        # a free resume only (cr_recover): one that would stop again at a step needing the creator's yes is refused;
+        # while another video is made it joins Studio's queue like any Resume (cr_queue) and starts in its turn
         result = call("POST", "/cr-workspace/recovery/" + _quote_path(slug), {"only_if_free": True}, timeout=180)
     except Refused as error:
         if error.status == 404:                                    # an older Studio: the plain resume
@@ -930,16 +1130,26 @@ def tool_resume_video(args):
                             "the creator, and only after they say yes call recover_video(id, key=recovery_key)."}
         else:
             raise
-    out = {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
-           **({"presenter": presenter} if presenter else {}),
-           "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
-           "next": "It carries on from where it stopped and reuses everything already made (script, pictures, "
-                   "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
-    if result.get("waiting"):
-        out.update(resumed=False, waiting=True,
-                   next="Studio is making another video; this one carries on as soon as that finishes, reusing "
-                        "everything already made. Check progress() now and then.")
-    return out
+    where = queue_place(result)
+    return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
+            **({"presenter": presenter} if presenter else {}), **where,
+            "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
+            "next": queue_next(where) +
+                    "It carries on from where it stopped and reuses everything already made (script, pictures, "
+                    "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
+
+
+def queue_place(result: dict) -> dict:
+    """A resumed video's place in Studio's queue (cr_queue): position and videos before it, or why it's on hold."""
+    placed = [queued_video(q) for q in (result or {}).get("queued") or []]
+    first = placed[0] if placed else {}
+    return {k: first[k] for k in ("position", "videos_before_it", "on_hold_because") if k in first}
+
+
+def queue_next(where: dict) -> str:
+    return (HOLD_NOTE + " " if where.get("on_hold_because") else
+            "It waits in Studio's queue and starts by itself when the videos before it finish. "
+            if where.get("videos_before_it") else "")
 
 
 def tool_recover_video(args):
@@ -970,19 +1180,17 @@ def tool_recover_video(args):
                        "trying again.")
         return out
     approved = result.get("approved") or {}
+    where = queue_place(result)
     out = {"recovered": True, "id": "video:" + slug, "message": result.get("message") or "",
            "approved_claude_steps": len(approved.get("approved_stages") or []),
-           "media_tasks_sent_again": len(approved.get("set_aside") or [])}
+           "media_tasks_sent_again": len(approved.get("set_aside") or []), **where}
     if result.get("scheduled"):
         out.update(recovered=False, scheduled=True,
                    next="Studio carries it on by itself after Claude's usage resets. Keep Studio open; check "
                         "progress(id) after the reset.")
-    elif result.get("waiting"):
-        out["next"] = ("Studio is making another video; this one carries on as soon as that one finishes. Check "
-                       "progress() now and then.")
     else:
-        out["next"] = ("It carries on from where it stopped and reuses everything already made. Check progress(id) "
-                       "now and then; Studio shows a notification when it's done.")
+        out["next"] = (queue_next(where) + "It carries on from where it stopped and reuses everything already made. "
+                       "Check progress(id) now and then; Studio shows a notification when it's done.")
     return out
 
 
@@ -1014,19 +1222,22 @@ def look_progress(look_id: str) -> dict:
                    similar_styles=similar_styles(d.get("similar")),
                    **({"shorts_note": SHORTS_NOTE} if d.get("shorts") else {}),
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
-                        "with look_id, a style name, an example title and their answers. The 'medium' (3D) and "
-                        "'animation' (animated 2D characters) questions decide how the videos are made: ask them "
-                        "first, in plain words. A medium_gap (for Studio's guess; another answer can change it) is "
-                        "something Studio can't make yet: read it to the creator before anything is paid. Animated "
-                        "in code adds a few minutes of their Claude Code usage to the study (usually 3 to 10, at "
-                        "most 25: Claude writes and checks the channel's animation); its videos then cost their voice and at most a few "
-                        "background pictures. Say so before they choose. " + SIMILAR_NEXT)
+                        "with look_id, a style name, an example title and their answers. The 'made' question decides "
+                        "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
+                        "their Claude Code write the channel's own renderer during the study (usually 5 to 15 more "
+                        "minutes of their Claude usage, at most 25). Its videos then cost their voice, plus at most a "
+                        "few background pictures, and the renderer can be improved later with style_lab. Instead of "
+                        "code gives Studio's ready-made pictures or 3D engine, which won't look or move exactly like the "
+                        "channel. Say both before they choose. A medium_gap is something Studio can't make yet: read it "
+                        "to the creator before anything is paid. " + SIMILAR_NEXT)
+
     return out
 
 
-SHORTS_NOTE = ("These references are Shorts. Studio studies them like any videos, but for now the style it saves "
-               "makes regular landscape (16:9) videos, not vertical Shorts: tell the creator before the paid study "
-               "(their Shorts recipes, similar_styles kind='short', make vertical Shorts).")
+SHORTS_NOTE = ("These references are Shorts. Written in code (the default answer to 'made'), the style makes vertical "
+               "Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9) "
+               "videos for now: tell the creator before the paid study (their Shorts recipes, similar_styles "
+               "kind='short', make vertical Shorts too).")
 SIMILAR_NEXT = ("similar_styles are the styles they already have that come closest (suggestions only, never a reason not "
                 "to study): before the paid study, mention them in a line each. They can use one now (make_videos with its "
                 "id), try a few seconds of one on their topic first (style_sample: try_first.cost_usd on their own "
@@ -1435,15 +1646,31 @@ def tool_delete_style(args):
 
 # ── MCP plumbing ──────────────────────────────────────────────────────────────────────────────────────────────
 
+def tool_style_lab(args):
+    action, style = str(args.get("action") or "status"), str(args.get("style") or "")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", style):
+        raise ValueError("style: one of the creator's style ids from list_styles (kind='mine')")
+    if action == "status":
+        return call("GET", f"/cr-style-lab/{style}", timeout=30)
+    if action not in ("start", "preview", "check", "save"):
+        raise ValueError("action: start, status, preview, check or save")
+    body = {k: args[k] for k in ("fresh", "seconds") if k in args}
+    # a preview draws in a real browser on this computer (a minute or two for 3D); a check waits for the judge
+    return call("POST", f"/cr-style-lab/{style}/{action}", body, timeout=900 if action == "preview" else 300)
+
+
 def _schema(properties=None, required=()):
     return {"type": "object", "properties": properties or {}, "required": list(required), "additionalProperties": False}
 
 
 _OPTIONS = {"type": "object", "description": (
-    "Optional. captions (default true), thumbnails (default true), thumbnail_count 1-4, description (YouTube "
+    "Optional. captions (default: the style's own; a style whose captions is false has none, like its channel, and "
+    "captions=true burns them in anyway), thumbnails (default true), thumbnail_count 1-4, description (YouTube "
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
     "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
-    "short_seconds 15-60 for Shorts, ranking {ranks 3-10, narrator_lines, vine_booms, meme_sounds full|light|off, "
+    "short_seconds 15-60 for Shorts, quicker_3d_review (true: one 3D review round instead of two or three, about "
+    "half the Claude time of a 3D video, fewer last fixes; Create's Quicker 3D review), "
+    "ranking {ranks 3-10, narrator_lines, vine_booms, meme_sounds full|light|off, "
     "punch_ins, captions} for Ranking Shorts. character: words for the main character who appears in every picture "
     "(age, hair, face, clothes, one recognisable detail); they replace the style's own character for these videos, and "
     "on a style with a character picture Studio draws the new one once in the style's look (one picture, about $0.02). "
@@ -1454,8 +1681,9 @@ _OPTIONS = {"type": "object", "description": (
     "chooses it): if Claude's usage limit stops a video, Studio carries it on by itself after the reset Claude "
     "reported, trying that step once more on their Claude plan.")}
 _WHERE = {"type": "string", "enum": ["this_computer", "studio_cloud"],
-          "description": "this_computer (free machine, one video at a time) or studio_cloud (a ChannelRecipe machine "
-                         "renders it, paid from the cloud balance; videos render side by side)."}
+          "description": "this_computer (free machine, one video at a time: more wait in Studio's queue and start by "
+                         "themselves) or studio_cloud (a ChannelRecipe machine renders it, paid from the cloud balance; "
+                         "videos render side by side)."}
 _FREE = {"readOnlyHint": True, "openWorldHint": False}
 _DELETES = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 
@@ -1466,6 +1694,19 @@ TOOLS = {
                              "Studio installs it itself, in its own environment (never install it from this shell). "
                              "Free; takes a few minutes in the background.", _schema(),
                              {"readOnlyHint": False, "openWorldHint": False}),
+    "fix_ffmpeg": (tool_fix_ffmpeg, "When setup_check's video_tools isn't ready: Studio downloads FFmpeg and ffprobe "
+                   "(a pinned build, its SHA-256 checked) into its own folder, no password. Never install FFmpeg from "
+                   "this shell. Free; a minute or two in the background.", _schema(),
+                   {"readOnlyHint": False, "openWorldHint": False}),
+    "fix_node": (tool_fix_node, "When setup_check's node isn't ready (missing, or older than Node.js 22): Studio "
+                 "downloads Node.js from nodejs.org (pinned, checksum checked) into its own folder, no password. Never "
+                 "install Node.js from this shell. Free; a minute in the background.", _schema(),
+                 {"readOnlyHint": False, "openWorldHint": False}),
+    "fix_claude_cli": (tool_fix_claude_cli, "When setup_check's claude_code.installed is false (Studio needs the "
+                       "claude command-line tool; the Claude desktop app alone isn't enough): Studio runs Anthropic's "
+                       "official installer into the creator's home folder. Free; a minute or two. The creator then "
+                       "signs in once on Studio's setup page.", _schema(),
+                       {"readOnlyHint": False, "openWorldHint": True}),
     "fix_speech_model": (tool_fix_speech_model, "When setup_check says the speech-timing model isn't ready (and isn't "
                          "already downloading): Studio downloads it (about 140 MB) and checks it loads, by itself. "
                          "Free; a minute or two in the background.", _schema(),
@@ -1485,9 +1726,11 @@ TOOLS = {
                        "titles": {"type": "integer", "minimum": 1, "maximum": MAX_TITLES}, "where": _WHERE,
                        "options": _OPTIONS}, ["style"]), _FREE),
     "make_videos": (tool_make_videos, "Start making up to 5 videos in one style, on this computer or on Studio Cloud. "
-                    "Returns ids at once and never waits for a render. Spends money: first get the cost with quote "
-                    "(or call without quote_id to get it), tell the creator, then call with quote_id. A title that "
-                    "already stopped with its work saved comes back as resume_first: offer to carry it on instead.",
+                    "On this computer they join Studio's queue (even while another video is being made) and start "
+                    "by themselves, one at a time; call it again for more, in other styles too. Returns ids and each "
+                    "one's place in line at once and never waits for a render. Spends money: first get the cost with "
+                    "quote (or call without quote_id to get it), tell the creator, then call with quote_id. A title "
+                    "that already stopped with its work saved comes back as resume_first: offer to carry it on instead.",
                     _schema({"titles": {"type": "array", "items": {"type": "string"}, "minItems": 1,
                                         "maxItems": MAX_TITLES},
                              "style": {"type": "string", "description": "A style id from list_styles."},
@@ -1501,6 +1744,16 @@ TOOLS = {
                                  "video that pays again for every step. Offer resume_video first.")}},
                             ["titles", "style", "where"]),
                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
+    "queue": (tool_queue, "Studio's queue on this computer: the video being made, the ones waiting in order (position, "
+              "videos_before_it) and the ones on hold, with why (on_hold_because) and what to do. Free.", _schema(),
+              _FREE),
+    "carry_on_queue": (tool_carry_on_queue, "The videos on hold after something every video needs stopped (Claude's "
+                       "usage limit, a balance, a key, the disk): carry on with them once the creator fixed it and asks "
+                       "(Studio checks each one's setup again first; one still blocked stays on hold, saying why), or "
+                       "remove=true to take them out of the queue. use_credits=true only for Ranking Shorts held on "
+                       "used-up clip watches, and only when the creator says so. Carrying on spends money: ask first.",
+                       _schema({"remove": {"type": "boolean"}, "use_credits": {"type": "boolean"}}),
+                       {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "progress": (tool_progress, "How the creator's videos and style clones are coming along. id: video:<slug>, "
                  "cloud, lk_… (a style look) or op_… (a style study); none for everything. Free. Check every few "
                  "minutes, not in a tight loop. A stopped video says what stopped it (stopped_on: voice, presenter, "
@@ -1620,6 +1873,20 @@ TOOLS = {
                              "accept_medium": {"type": "boolean"}},
                             ["look_id", "style_name", "example_title"]),
                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
+    "style_lab": (tool_style_lab, "Work on a style's renderer (the code that draws every video in an animated 2D or "
+                  "3D style) like any code project, then plug it back in. start: a workspace folder with renderer.js, "
+                  "scene.json (the test scene), the channel's own frames (refs/) and GUIDE.md (read it first). Edit "
+                  "the files yourself, then preview: contract checks, test shots, a 5 s video and a stress sweep, on "
+                  "this computer. check: the likeness judge scores the shots against the channel's frames and its "
+                  "bar. save: the previewed renderer becomes the style's next version for every new video. No money "
+                  "is spent; show the creator the shots and the video as you go.",
+                  _schema({"action": {"type": "string", "enum": ["start", "status", "preview", "check", "save"]},
+                           "style": {"type": "string", "description": "A style id from list_styles (kind='mine')."},
+                           "fresh": {"type": "boolean", "description": "start: begin again from the saved style "
+                                                                       "(the old workspace is kept aside)."},
+                           "seconds": {"type": "number", "description": "preview: video length, 1-8 s (default 5)."}},
+                          ["action", "style"]),
+                  {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
     "delete_video": (tool_delete_video, "Delete a finished or stopped video, only when the creator asks: it moves to "
                      "Studio's trash (the finished file, its description and thumbnails, its working files) and "
                      "Recently deleted on the Studio page restores it for 30 days. Their voice library, styles and "

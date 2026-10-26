@@ -5,7 +5,7 @@
   const all = selector => [...document.querySelectorAll(selector)];
   const boot = window.CR_WORKSPACE || {};
   const state = {catalog: null, setup: null, selected: null, inspected: null, input: 'idea', narration: 'ai',
-    audio: '', featureDrafts: {}, page: 'create', family: 'all', projectFilter: 'all',
+    audio: '', featureDrafts: {}, captionsDrafts: {}, page: 'create', family: 'all', projectFilter: 'all',
     queue: [], jobs: [], studies: [], busy: false, submitting: false, uploading: false,
     openJob: null, currentOutput: null, timer: null, refresh: null, optionalLoaded: false, projectNodes: new Map()};
   const STORAGE = 'channelrecipe.workspace.v1';
@@ -137,7 +137,7 @@
     state.featureDrafts[state.selected.name] = featureValues();
     const draft = {recipe: identity(state.selected), title: $('crw-title').value, script: $('crw-script').value,
       batch: $('crw-batch-titles').value, minutes: $('crw-minutes').value, input: state.input,
-      extra: $('crw-extra').value, features: state.featureDrafts, captions: checked('crw-captions'),
+      extra: $('crw-extra').value, features: state.featureDrafts, captionsByRecipe: state.captionsDrafts,
       description: checked('crw-description'), thumbnails: checked('crw-thumbnails'),
       thumbnailCount: $('crw-thumbnail-count').value, chapters: $('crw-chapters').value,
       sources: checked('crw-sources'), sourceCount: $('crw-source-count').value,
@@ -147,10 +147,13 @@
   function restore() {
     let d = {}; try {d = JSON.parse(localStorage.getItem(STORAGE) || '{}') || {};} catch (_) {}
     state.featureDrafts = d.features && typeof d.features === 'object' ? d.features : {};
+    // captions are chosen per recipe (a style may have none by design); an older draft's one switch is the fallback
+    state.captionsDrafts = d.captionsByRecipe && typeof d.captionsByRecipe === 'object' ? d.captionsByRecipe : {};
+    state.captionsAll = typeof d.captions === 'boolean' ? d.captions : undefined;
     for (const [id, key] of [['crw-title','title'],['crw-script','script'],['crw-batch-titles','batch'],['crw-extra','extra'],
       ['crw-minutes','minutes'],['crw-thumbnail-count','thumbnailCount'],['crw-chapters','chapters'],['crw-source-count','sourceCount']])
       if (typeof d[key] === 'string') $(id).value = d[key];
-    for (const [id, key] of [['crw-captions','captions'],['crw-description','description'],['crw-thumbnails','thumbnails'],
+    for (const [id, key] of [['crw-description','description'],['crw-thumbnails','thumbnails'],
       ['crw-sources','sources'],['crw-fast-toggle','fast'],['crw-adaptive','adaptive']]) if (typeof d[key] === 'boolean') $(id).checked = d[key];
     setInput(d.input === 'script' ? 'script' : 'idea', false);
     return d;
@@ -207,6 +210,11 @@
       input.addEventListener('change', () => {if (key === 'ai_images' && !input.checked) {const depth = group.querySelector('[data-feature="depth"]'); if (depth) depth.checked = false;} if (key === 'depth' && input.checked) {const images = group.querySelector('[data-feature="ai_images"]'); if (images) images.checked = true;} updateOptional(); save(); summary();});
       group.append(label);
     }
+    // Burned-in captions start at the recipe's own choice: a style with none (like its channel) starts off and says
+    // so; switching it on asks for them on this video (they are burned in anyway, cr_captions).
+    const chosenCaptions = state.captionsDrafts[recipe.name];
+    $('crw-captions').checked = typeof chosenCaptions === 'boolean' ? chosenCaptions : recipe.captions !== false && state.captionsAll !== false;
+    captionsNote();
     text('crw-features-note', strict(recipe) ? 'Every visual scene uses your learned animation kit. Narration, captions and sound remain available.' : 'Choose the sources this recipe can use. Account requirements are checked before generation.');
     $('crw-character').value = castOf(recipe); $('crw-character-image').value = ''; characterView();
     hide('crw-panels-section', !recipe.panels); if (recipe.panels) loadPanels();
@@ -254,6 +262,13 @@
       $('crw-panels-recent').dataset.loaded = '1';
     } catch (e) {text('crw-panels-status', e.message);}
   }
+  function captionsNote() {
+    const none = state.selected?.captions === false, cloud = state.renderOn === 'cloud' && state.cloudInfo?.available && !cloudBlock();
+    text('crw-captions-note', !none ? '' : !checked('crw-captions') ? 'This style has no captions, like its channel. Switch this on to add them to a video.'
+      : cloud ? 'This style has no captions, like its channel, and Studio Cloud renders it that way. Render on this computer to add them.'
+      : 'This style has no captions, like its channel. They will be added to this video.');
+    hide('crw-captions-note', !none);
+  }
   function updateOptional() {
     const features = featureValues(); hide('crw-fast-section', !features.threed || strict());
     hide('crw-palette-section', !features.threed || strict());
@@ -291,7 +306,23 @@
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
-    footageNote();
+    footageNote(); threedNote();
+  }
+  // A 3D video's time is mostly Claude's: it directs every shot, then reviews them in rounds (a customer's 2-minute 3D
+  // video spent 84 of its 116 minutes in Claude Opus, 2026-10-25). Said before Create, with Quicker 3D review. Sections
+  // of about 50 s, three at a time; one Claude round took 8-19 minutes on customers' runs (re-measure after Studio 106
+  // asks Opus for medium effort, and lower these).
+  function threedEstimate(minutes, quick) {
+    const groups = Math.max(1, Math.ceil(minutes * 60 * 0.85 / 50 / 3)), rounds = quick ? 1 : minutes <= 3 ? 2 : 3;
+    const calls = (1 + rounds) * groups, nearest = v => Math.max(5, Math.round(v / 5) * 5);
+    return [nearest(calls * 8), nearest(calls * 19)];
+  }
+  function threedNote() {
+    const r = state.selected, on = !!(r && featureValues().threed && !strict(r) && !isShort(r) && !isRanking(r));
+    hide('crw-threed-note', !on);
+    if (!on) return;
+    const minutes = number('crw-minutes',10,1,60), [lo, hi] = threedEstimate(minutes, checked('crw-threed-quick'));
+    text('crw-threed-note', `3D adds about ${lo} to ${hi} minutes to a ${minutes}-minute video: Claude directs every shot and reviews them, on your Claude plan. Quicker 3D review (Creative direction, 3D look) cuts the reviews to one round.`);
   }
   // Research footage watches YouTube videos on the creator's video-model account before the video is made: what that
   // adds, said before Create (a customer's 10-minute video watched clips for 22 hours, 2026-10-25). The numbers are
@@ -300,18 +331,38 @@
     const r = state.selected, b = (state.catalog?.footage_watch || [])[number('crw-minutes',10,1,60) - 1];
     const on = !!(r && b && featureValues().youtube && !strict(r) && !isShort(r) && !isRanking(r) && state.narration !== 'own');
     hide('crw-footage-note', !on);
-    if (on) text('crw-footage-note', `Research footage adds about ${b.typical_minutes[0]} to ${b.typical_minutes[1]} minutes to a ${b.minutes}-minute video: Studio watches up to ${b.videos} YouTube videos on your video-model account to find its clips. It stops watching after ${b.stop_minutes} minutes and goes on with what it found.`);
+    if (on) text('crw-footage-note', `Research footage adds about ${b.typical_minutes[0]} to ${b.typical_minutes[1]} minutes to a ${b.minutes}-minute video: Studio watches up to ${b.videos} YouTube videos on your video-model account to find its clips. It stops watching after ${b.stop_minutes} minutes and goes on with what it found. If Kie's video watcher isn't answering, ChannelRecipe's own watcher takes over, from your plan's monthly clip watches (never your credits).` + (state.catalog?.footage_watcher?.note ? ' ' + state.catalog.footage_watcher.note : ''));
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
     const needsPanels = !!state.selected?.panels && !state.panels;
-    const blocked = state.submitting || state.uploading || state.drawing || !state.catalog || !ready || state.busy || (state.narration === 'own' && !state.audio) || needsPanels;
+    // While Studio makes a video (or learns a style), Create adds this one to the queue: Studio makes them one at a
+    // time, so the creator can queue several and walk away (cr_queue).
+    const blocked = state.submitting || state.uploading || state.drawing || !state.catalog || !ready || (state.narration === 'own' && !state.audio) || needsPanels;
     $('crw-create').disabled = blocked;
-    let message = !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.busy ? 'A project is using this studio. Its progress is available in Projects.' : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : 'Ready. Each Create starts a separate new project.';
+    if (!state.submitting) createLabel();
+    let message = !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : queuing() ? queueNote() : 'Ready. Each Create starts a separate new project.';
     text('crw-readiness', message);
     const status = $('crw-connection'); status.querySelector('span:last-of-type').textContent = ready ? 'Accounts connected' : 'Accounts need attention';
     status.querySelector('.crw-status-dot').className = `crw-status-dot ${ready ? 'is-ready' : 'is-warning'}`;
     cloudChoice();
+  }
+  // The queue (cr_queue): Create says Add to queue while Studio works, and what waits says its place or why it's held.
+  function queuing() {
+    const cloud = state.renderOn === 'cloud' && state.cloudInfo?.available && !cloudBlock();
+    return !cloud && (state.busy || state.heldScope === 'all' && state.queue.some(q => q.state === 'held'));
+  }
+  function createLabel() {$('crw-create').textContent = queuing() ? 'Add to queue' : 'Create video';}
+  function queueNote() {
+    const waiting = state.queue.filter(q => q.state === 'queued').length, held = state.queue.filter(q => q.state === 'held');
+    if (held.length && state.heldScope === 'all') return `The queue is on hold: ${state.heldReason || 'something every video needs stopped.'} A video you add now waits with them; Carry on starts them again.`;
+    const making = state.queue.some(q => q.state === 'running') ? 'Studio is making a video' : 'Studio is busy';
+    return `${making}${waiting ? ` and ${waiting} more ${waiting === 1 ? 'is' : 'are'} waiting` : ''}. Add to queue: this one starts when the ones before it finish, one at a time. You don't need to stay.`;
+  }
+  function placeText(job) {
+    if (job.state === 'held') return 'On hold';
+    if (job.state !== 'queued' || !Number.isFinite(job.ahead)) return '';
+    return job.ahead === 0 ? 'Starting next' : job.ahead === 1 ? 'Next in line' : `${job.ahead} videos before it`;
   }
   function showPage(name, persist = true) {
     state.page = ['create','projects','styles'].includes(name) ? name : 'create';
@@ -435,19 +486,20 @@
       video.addEventListener('play',()=>{for(const other of all('.crw-video-preview'))if(other!==video)other.pause();video.controls=true;play.hidden=true;});video.addEventListener('pause',()=>{play.hidden=false;});video.addEventListener('ended',()=>{video.controls=false;play.hidden=false;});
       media.append(video,play);
       posterObserver?.observe(video);
-    } else {media.classList.add('crw-preview-unavailable');media.append(el('span','', ['running','queued'].includes(job.state)?'Video is in production':'No finished video yet'));}
-    const body=el('div','crw-card-body');body.append(statusBadge(job.state),el('h3','',job.title||'Untitled video'),el('p','crw-card-meta',`${r?.label||'Video project'}${job.mtime?' · '+date(job.mtime):''}`));
-    const actions=el('div','crw-card-actions');const open=el('button','crw-secondary-button',job.hasVideo?'Video & exports':['running','queued'].includes(job.state)?'View progress':'Review issue');open.type='button';open.addEventListener('click',()=>job.hasVideo?openOutput(job):openProgress(job));actions.append(open);
+    } else {media.classList.add('crw-preview-unavailable');media.append(el('span','', job.state==='queued'?'Waiting in the queue':job.state==='held'?'On hold in the queue':job.state==='running'?'Video is in production':'No finished video yet'));}
+    const body=el('div','crw-card-body');const place=placeText(job);body.append(statusBadge(job.state),el('h3','',job.title||'Untitled video'),el('p','crw-card-meta',`${r?.label||'Video project'}${place?' · '+place:''}${job.mtime?' · '+date(job.mtime):''}`));
+    if(job.state==='held'&&job.reason)body.append(el('p','crw-card-held',job.reason));
+    const actions=el('div','crw-card-actions');const open=el('button','crw-secondary-button',job.hasVideo?'Video & exports':['running','queued','held'].includes(job.state)?'View progress':'Review issue');open.type='button';open.addEventListener('click',()=>job.hasVideo?openOutput(job):openProgress(job));actions.append(open);
     if(!['running','queued','held'].includes(job.state)){const del=el('button','crw-text-button crw-delete-button','Delete');del.type='button';del.setAttribute('aria-label',`Delete ${job.title||'this video'}`);del.addEventListener('click',()=>openDelete('video',job.slug));actions.append(del);}
     body.append(actions);card.append(media,body);return card;
   }
   function renderProjects() {
-    const projects=combinedProjects().filter(j=>state.projectFilter==='all'||(state.projectFilter==='done'?j.state==='done':state.projectFilter==='active'?['running','queued'].includes(j.state):!['running','queued','done'].includes(j.state)));
+    const projects=combinedProjects().filter(j=>state.projectFilter==='all'||(state.projectFilter==='done'?j.state==='done':state.projectFilter==='active'?['running','queued','held'].includes(j.state):!['running','queued','held','done'].includes(j.state)));
     const target=$('crw-projects-list');const wanted=new Set(projects.map(j=>j.slug));
     const available=new Set(combinedProjects().map(j=>j.slug));for(const [slug,cached] of state.projectNodes)if(!available.has(slug)){discardProject(cached);state.projectNodes.delete(slug);}
     for(const node of [...target.children])if(!wanted.has(node.dataset.slug)){node.querySelector('video')?.pause();node.remove();}
     projects.forEach((job,index)=>{
-      const fingerprint=JSON.stringify([job.state,job.title,job.style,job.mtime,job.hasVideo,job.editable]);let saved=state.projectNodes.get(job.slug);
+      const fingerprint=JSON.stringify([job.state,job.title,job.style,job.mtime,job.hasVideo,job.editable,placeText(job),job.reason||'']);let saved=state.projectNodes.get(job.slug);
       if(!saved||saved.fingerprint!==fingerprint){discardProject(saved);saved={fingerprint,node:projectCard(job)};state.projectNodes.set(job.slug,saved);}
       if(target.children[index]!==saved.node)target.insertBefore(saved.node,target.children[index]||null);
     });
@@ -469,7 +521,11 @@
         data = {done: true, state: 'error', lines: [], error: 'This video stopped before Studio last restarted. Its saved work is kept: press Resume saved project to carry on from where it stopped.'};
       }
       const lines = data.lines || [];
-      const last = lines[lines.length-1] || '', now = phaseInfo(last);
+      const last = lines[lines.length-1] || '';
+      const inLine = state.queue.find(q=>q.slug===state.openJob && ['queued','held'].includes(q.state));
+      const place = inLine ? placeText(inLine) : '';
+      const now = inLine?.state === 'held' || data.state === 'held' ? {phase:'On hold in the queue',detail:inLine?.reason || ''}
+        : data.state === 'queued' ? {phase:'Waiting in the queue',detail:`${place ? place + '. ' : ''}It starts by itself; Studio makes one video at a time.`} : phaseInfo(last);
       text('crw-progress-phase', data.done ? (data.state === 'done' ? 'Ready to watch' : 'This project stopped') : now.phase);
       text('crw-progress-detail', data.done ? '' : now.detail); hide('crw-progress-detail', data.done || !now.detail);
       const queued = state.queue.find(q=>q.slug===state.openJob); text('crw-progress-time',data.elapsed != null ? elapsed(data.elapsed) : queued?.elapsed != null ? elapsed(queued.elapsed) : '');
@@ -495,7 +551,7 @@
           if (saved.available_for_resume) {const resume=el('button','crw-text-button crw-resume-saved','Resume saved project'); resume.type='button'; resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/cr-submit-project',{method:'POST',body:{project_id:saved.project_id}});toast('Saved project submitted. Completed assets will be reused.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}finally{resume.disabled=false;}});$('crw-progress-actions').append(resume);}
           if (saved.available_for_resume) {try {const voice=await api(`/cr-workspace/voice/${encoded(state.openJob)}`); if ((voice.stopped_on_voice || /narration (task|service)/i.test(data.error || '')) && !voice.has_voice) voiceChoices(voice, saved);} catch (_) {/* Resume stays available */}}
           if (saved.available_for_resume) {try {const presenter=await api(`/cr-workspace/presenter-choice/${encoded(state.openJob)}`); if (presenter.stopped_on_presenter) presenterChoices(presenter, saved);} catch (_) {/* Resume stays available */}}
-          if (saved.available_for_resume) {try {const rec=await api(`/cr-workspace/recovery/${encoded(state.openJob)}`); if (rec.needs_approval || (rec.fix_first||[]).length || (rec.do_first||[]).length || rec.pending_resume || rec.auto?.safe || (rec.carry_on_after_reset && rec.reset_label)) recoveryChoices(rec);} catch (_) {/* Resume stays available */}}
+          if (saved.available_for_resume) {try {const rec=await api(`/cr-workspace/recovery/${encoded(state.openJob)}`); if (rec.needs_approval || (rec.fix_first||[]).length || (rec.do_first||[]).length || rec.auto?.safe || (rec.carry_on_after_reset && rec.reset_label)) recoveryChoices(rec);} catch (_) {/* Resume stays available */}}
         }
       }
     } catch (e) {text('crw-progress-note',e.message);}
@@ -548,10 +604,9 @@
     for (const m of rec.media || []) list.append(el('li', '', m.reason));
     if (list.childElementCount) box.append(list);
     for (const f of [...new Set([...(rec.fix_first || []), ...(rec.do_first || [])])]) box.append(el('p', 'crw-field-help crw-recovery-fix', f));
-    if (rec.pending_resume) box.append(el('p', 'crw-field-help', 'Approved. It carries on as soon as Studio finishes the video it is making.'));
-    else if (rec.auto?.safe) box.append(el('p', 'crw-field-help', `Studio carries this on by itself in a minute or so (${rec.auto.why}). Everything already made is reused.`));
+    if (rec.auto?.safe) box.append(el('p', 'crw-field-help', `Studio carries this on by itself in a minute or so (${rec.auto.why}). Everything already made is reused.`));
     if (rec.carry_on_after_reset && rec.reset_label && !rec.reset_passed) box.append(el('p', 'crw-field-help', `Studio carries it on by itself after ${rec.reset_label}, as you chose.`));
-    if (rec.needs_approval && !rec.pending_resume) {
+    if (rec.needs_approval) {
       if (plain) plain.hidden = true;             // a plain Resume would stop at the same step again
       if (/Resume saved project/.test($('crw-progress-note').textContent)) text('crw-progress-note', 'Its saved work is kept. Below: what stopped it, and how to carry it on.');
       const claude = (rec.claude_stages || []).some(s => s.needs_approval), money = (rec.media || []).some(m => m.needs_approval && m.pays_twice);
@@ -583,10 +638,10 @@
     if (confirm(`${names} stopped earlier with ${found.length === 1 ? 'its' : 'their'} work saved (script, voice, pictures). Carry ${found.length === 1 ? 'it' : 'them'} on from where ${found.length === 1 ? 'it' : 'they'} stopped? Everything already made is reused.\n\nOK: carry on. Cancel: other choices.`)) {
       for (const m of found) {
         // a free resume only: one that needs a yes (a stopped Claude step) waits for it in Projects
-        try {const r = await api(`/cr-workspace/recovery/${encoded(m.slug)}`, {method: 'POST', body: {only_if_free: true}}); toast(r.waiting ? `“${m.title}” carries on as soon as Studio is free.` : `Carrying on “${m.title}”. Completed work is reused.`);}
+        try {const r = await api(`/cr-workspace/recovery/${encoded(m.slug)}`, {method: 'POST', body: {only_if_free: true}}); toast(r.waiting ? `“${m.title}” joins the queue and carries on in its turn. Completed work is reused.` : `Carrying on “${m.title}”. Completed work is reused.`);}
         catch (err) {error(`“${m.title}”: ${err.message}`); showPage('projects'); await refreshActivity(true); return;}
       }
-      if (others.length) toast(`Started from saved work. Create the other title${others.length === 1 ? '' : 's'} again when Studio is free: ${others.join(', ')}.`);
+      if (others.length) toast(`Carried on from saved work. Create the other title${others.length === 1 ? '' : 's'} on its own: ${others.join(', ')}.`);
       save(); showPage('projects'); await refreshActivity(true);
       const first = found[0]; if (first) await openProgress({slug: first.slug, title: first.title});
       return;
@@ -746,6 +801,7 @@
   // Claude limits), or a Studio closed before they started. Nothing of theirs was spent; the creator decides.
   function drawHeld(q) {
     const held = q?.held || [];
+    state.heldScope = held.length ? q.scope || '' : ''; state.heldReason = held.length ? q.reason || '' : '';
     for (const box of all('[data-held-notice]')) {
       box.replaceChildren(); box.hidden = !held.length; if (!held.length) continue;
       const n = held.length, names = held.slice(0, 3).map(h => `“${h.title}”`).join(', ') + (n > 3 ? ` and ${n - 3} more` : '');
@@ -792,7 +848,8 @@
       if (results[2].status==='fulfilled' && results[2].value) state.jobs=results[2].value.jobs || [];
       const active = state.studies.find(x=>x.state==='running') || state.queue.find(x=>['running','queued'].includes(x.state));
       const notice=$('crw-active-notice');notice.replaceChildren();notice.hidden=!state.busy;
-      if (state.busy) {notice.append(el('strong','',active?.label || active?.title || 'Production in progress'),el('span','',active?.operation_id?'Your reference study is using the creative workspace.':'This studio is finishing a project.'));
+      const waiting = state.queue.filter(q=>q.state==='queued').length;
+      if (state.busy) {notice.append(el('strong','',active?.label || active?.title || 'Production in progress'),el('span','',active?.operation_id?'Your reference study is using the creative workspace.':waiting?`${waiting} more ${waiting===1?'video is':'videos are'} waiting in the queue. Studio makes them one at a time.`:'This studio is finishing a project. Videos you create now join the queue.'));
         const a=el('a','crw-inline-link','View progress');a.href=active?.link || '#projects';notice.append(a);
         if ('Notification' in window && Notification.permission === 'default') {
           const ask=el('button','crw-inline-link','Notify me when it’s ready');ask.type='button';
@@ -812,7 +869,7 @@
     const features=featureValues(); const steps=['script','voiceover','images','pexels','video'];if(checked('crw-thumbnails'))steps.push('thumbnail');
     const p={title,style:state.selected.name,minutes:number('crw-minutes',10,1,60),steps,
       script:state.input==='script'?$('crw-script').value.trim():'',extra:withPalette($('crw-extra').value.trim(),features),byo_audio:state.narration==='own'?state.audio:'',
-      burn_subs:checked('crw-captions'),force:false,thumb_count:number('crw-thumbnail-count',2,1,4),
+      burn_subs:checked('crw-captions'),cr_captions:checked('crw-captions')&&state.selected?.captions===false?'on':'',force:false,thumb_count:number('crw-thumbnail-count',2,1,4),
       desc:checked('crw-description'),chapters:checked('crw-description')?number('crw-chapters',5,0,20):0,
       sources:checked('crw-description')&&checked('crw-sources')?number('crw-source-count',3,0,10):0,
       features,render_backend:features.threed&&checked('crw-fast-toggle')&&!strict()?'manimgx':'original',
@@ -820,7 +877,8 @@
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
-      threed_look:threedLook(features),carry_on_after_reset:checked('crw-carry-on')};
+      threed_look:threedLook(features), threed_quick:!!(features.threed && !strict() && checked('crw-threed-quick')),
+      carry_on_after_reset:checked('crw-carry-on')};
     if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
       // A Short to remake: any YouTube link form (Shorts, watch, youtu.be, m., any case), sent as one plain link, for one topic
       const pasted=$('crw-rank-reference').value.trim(), refId=(/(?:youtu\.be\/|youtube\.com\/(?:shorts\/|watch\?(?:[^#]*&)?v=|live\/|embed\/))([A-Za-z0-9_-]{11})/i.exec(pasted)||[])[1]||'';
@@ -830,7 +888,7 @@
       const ranking={ranks:number('crw-ranks',5,3,10),commentary:checked('crw-rank-commentary'),booms:checked('crw-rank-booms'),sfx:$('crw-rank-sfx').value,
         punch_ins:checked('crw-rank-punch'),clean:checked('crw-rank-clean'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{}),...(reference?{reference}:{})};
       p.extra=`[[ranking=${JSON.stringify(ranking)}]] `+(p.extra||'');}
-    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';}
+    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';p.threed_quick=false;}
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
@@ -870,10 +928,11 @@
     chooseGroup('[data-render-on]','renderOn',state.renderOn||'local');
     // When the cloud is the better choice, say so: this computer is already making a video, or a long one would tie it up.
     const minutes=number('crw-minutes',10,1,60), suggest=!why&&state.renderOn!=='cloud'
-      ? (state.busy?'Your computer is making another video. Studio Cloud can make this one at the same time. '
+      ? (state.busy?'Your computer is making another video, so on this computer this one waits its turn in the queue. Studio Cloud can make it at the same time. '
         :minutes>=15?`A ${minutes}-minute video keeps this computer busy for a long time. Studio Cloud renders it while you keep working. `:'')
       : '';
     box.classList.toggle('is-suggested', !!suggest);
+    if (!state.submitting) createLabel();
     text('crw-cloud-note', why || (state.renderOn==='cloud'
       ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; a ChannelRecipe machine${gpu?' with a graphics card renders the 3D scenes and':''} does the heavy rendering at $${rate} an hour${gpu?'':' (a 10-minute video is usually under $1)'}. It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
       : `${suggest}Or render on a ChannelRecipe machine at about $${rate} an hour and keep your computer free. Balance: $${balance}.`));
@@ -903,28 +962,33 @@
     clearTimeout(cloudPanel.timer); if(working&&state.page==='projects')cloudPanel.timer=setTimeout(cloudPanel,10000);
   }
   async function submit(event) {
-    event.preventDefault(); if(state.submitting||state.busy)return;error(''); let p;
+    event.preventDefault(); if(state.submitting)return;error(''); let p;
     try {p=payload();} catch(e){error(e.message);return;}
     if(state.renderOn==='cloud'&&state.cloudInfo?.available&&!cloudBlock()){
       state.submitting=true;gate();$('crw-create').textContent='Starting in the cloud…';
       try {await api('/cr-cloud/start',{method:'POST',body:p});save();showPage('projects');toast('Studio is preparing your video here. A ChannelRecipe machine renders it next.');await cloudPanel();}
-      catch(e){error(e.message);} finally{state.submitting=false;$('crw-create').textContent='Create video';gate();}
+      catch(e){error(e.message);} finally{state.submitting=false;gate();}
       return;
     }
     state.submitting=true;gate();$('crw-create').textContent='Checking your video…';
     let ok=false;
     try {ok=await rankingBatchOk(p);} catch(_) {ok=true;}       // the run itself checks again
-    if (!ok) {state.submitting=false;$('crw-create').textContent='Create video';gate();return;}
+    if (!ok) {state.submitting=false;gate();return;}
     try {
       // /api/run performs the authoritative option, account and renderer checks
       // before creating work; a second preflight would repeat those requests.
       const result=await api('/api/run',{method:'POST',body:p});$('crw-rank-reference').value='';$('crw-carry-on').checked=false;save();showPage('projects');   // a Short to remake and carrying on by itself go with that video only
-      toast(['Your new video project has started.', ...(result.warnings || [])].join(' '));await refreshActivity(true);
-      const first=(result.queued||[])[0];if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
+      const first=(result.queued||[])[0], n=(result.queued||[]).length, many=n>1?`These ${n} videos`:'It';
+      const said=first?.held?`Added to the queue, on hold with the others: ${first.held}`
+        :first&&first.ahead>0?`Added to the queue. ${many} ${n>1?'start':'starts'} by ${n>1?'themselves':'itself'} when the ${first.ahead===1?'video':`${first.ahead} videos`} before ${n>1?'them':'it'} ${first.ahead===1?'finishes':'finish'}. You don't need to stay.`
+        :n>1?`Your ${n} videos are queued. Studio makes them one at a time.`:'Your new video project has started.';
+      toast([said, ...(result.warnings || [])].join(' '));await refreshActivity(true);
+      if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
     } catch(e){
+      // a title that already stopped with its work saved (cr_recover): carry that one on first
       if(e.details?.resume_first){try{await resumeFirst(e,p);}catch(err){error((err.details?.blockers||[]).join(' ')||err.message);showPage('create');}}
       else{error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}
-    }finally{state.submitting=false;$('crw-create').textContent='Create video';gate();}
+    }finally{state.submitting=false;gate();}
   }
   async function optionalAccounts() {
     if(state.optionalLoaded)return;state.optionalLoaded=true;
@@ -949,7 +1013,7 @@
       const [catalog,setup]=await Promise.all([api('/cr-workspace/catalog'),api('/cr-status?cached=1')]);state.catalog=catalog;state.setup=setup;
       if(setup.cached)api('/cr-status').then(fresh=>{state.setup=fresh;gate();autoVerify();checkForUpdate();}).catch(()=>{});
       text('crw-release',setup.local_version?`Studio ${setup.local_version.replace(/^5\.3-admin\./,'')}`:'');
-      const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label||providerName(narration.provider),narration.model_label||friendlyModel(narration.model)].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');
+      const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label||providerName(narration.provider),narration.model_label||friendlyModel(narration.model)].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');text('crw-narration-note',narration.note||'');hide('crw-narration-note',!narration.note);
       const initial=findRecipe(boot.preset?.style||draft.recipe)||findRecipe('documentary')||rows()[0]; if(!initial)throw new Error('No visual recipes are installed. Update this studio from your ChannelRecipe account.');
       if(boot.preset?.features)state.featureDrafts[initial.name]=boot.preset.features;
       selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();checkForUpdate();autoVerify();refreshCloud();
@@ -968,10 +1032,11 @@
   for(const b of all('[data-project-filter]'))b.addEventListener('click',()=>{state.projectFilter=b.dataset.projectFilter;chooseGroup('[data-project-filter]','projectFilter',state.projectFilter);renderProjects();});
   for(const b of all('[data-family]'))b.addEventListener('click',()=>{state.family=b.dataset.family;chooseGroup('[data-family]','family',state.family);gallery();});
   $('crw-form').addEventListener('submit',submit);
-  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();summary();});
+  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();summary();captionsNote();});
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
   $('crw-form').addEventListener('input',()=>{updateOptional();summary();save();cloudChoice();});
+  $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
   $('crw-form').addEventListener('change',()=>{updateOptional();summary();save();cloudChoice();});
   $('crw-recipe-open').addEventListener('click',openGallery);$('crw-styles-browse').addEventListener('click',openGallery);
   $('crw-gallery-search').addEventListener('input',gallery);$('crw-gallery-close').addEventListener('click',()=>{$('crw-gallery').close();$('crw-recipe-open').focus();});
@@ -1017,15 +1082,28 @@
   const VOICE_STYLES = {Zephyr:'Bright',Puck:'Upbeat',Charon:'Informative',Kore:'Firm',Fenrir:'Excitable',Leda:'Youthful',Orus:'Firm',Aoede:'Breezy',Callirrhoe:'Easy-going',Autonoe:'Bright',Enceladus:'Breathy',Iapetus:'Clear',Umbriel:'Easy-going',Algieba:'Smooth',Despina:'Smooth',Erinome:'Clear',Algenib:'Gravelly',Rasalgethi:'Informative',Laomedeia:'Upbeat',Achernar:'Soft',Alnilam:'Firm',Schedar:'Even',Gacrux:'Mature',Pulcherrima:'Forward',Achird:'Friendly',Zubenelgenubi:'Casual',Vindemiatrix:'Gentle',Sadachbia:'Lively',Sadaltager:'Knowledgeable',Sulafat:'Warm'};
   const voices = {data: null, previews: new Set(), playing: null};
   function sharedSample(name) {const samples = state.setup?.account?.voice_samples?.[voices.data?.model] || {}; return samples[name] || '';}
+  // What a voice sounds like: its tone (the classic Gemini voices) and the use case Kie files it under.
+  const voiceAbout = name => [VOICE_STYLES[name], voices.data?.groups?.[name]].filter(Boolean).join(' · ');
+  // A voice model with no list to browse (a voice ID on that account): typed here, never a trip to Setup.
+  function renderVoiceId() {
+    const list = $('crw-voices-list'), row = el('div', 'crw-voice-row'), input = el('input');
+    list.replaceChildren(); input.type = 'text'; input.maxLength = 100; input.id = 'crw-voices-id';
+    input.placeholder = 'Paste a voice ID, or leave it for ' + (voices.data.default_voice || 'the default voice');
+    input.setAttribute('aria-label', 'Voice ID'); input.value = voices.data.voice || '';
+    const use = el('button', 'crw-primary-button', 'Use'); use.type = 'button';
+    use.addEventListener('click', () => chooseVoice(input.value.trim() || voices.data.default_voice, use));
+    row.append(input, use); list.append(row);
+  }
   function renderVoices() {
     const list = $('crw-voices-list'), query = $('crw-voices-search').value.trim().toLowerCase(), data = voices.data;
+    if (!data.voices.length) {renderVoiceId(); return;}
     list.replaceChildren();
-    const names = data.voices.filter(name => !query || name.toLowerCase().includes(query) || (VOICE_STYLES[name] || '').toLowerCase().includes(query));
+    const names = data.voices.filter(name => !query || name.toLowerCase().includes(query) || voiceAbout(name).toLowerCase().includes(query));
     const ordered = [data.voice, ...names.filter(name => name !== data.voice && VOICE_STYLES[name]), ...names.filter(name => name !== data.voice && !VOICE_STYLES[name])].filter(name => names.includes(name));
     for (const name of ordered) {
       const row = el('div', 'crw-voice-row' + (name === data.voice ? ' is-current' : '')); row.setAttribute('role', 'listitem');
       const play = el('button', 'crw-secondary-button crw-voice-play', '▶'); play.type = 'button'; play.setAttribute('aria-label', 'Preview ' + name); play.addEventListener('click', () => previewVoice(name, play));
-      const copy = el('div'); copy.append(el('strong', '', name), el('span', '', VOICE_STYLES[name] ? VOICE_STYLES[name] + ' voice' : 'Gemini voice'));
+      const copy = el('div'); copy.append(el('strong', '', name), el('span', '', voiceAbout(name) || 'Gemini voice'));
       row.append(play, copy);
       if (name === data.voice) row.append(el('span', 'crw-voice-badge', 'Selected'));
       else {const use = el('button', 'crw-primary-button', 'Use'); use.type = 'button'; use.addEventListener('click', () => chooseVoice(name, use)); row.append(use);}
@@ -1076,7 +1154,7 @@
     text('crw-voices-status', ''); $('crw-voices-search').value = '';
     try {voices.data = await api('/cr-voices?style=' + encodeURIComponent(state.selected?.name || ''));} catch (e) {error(e.message); return;}
     if (!voices.data.connected) {error('Connect a voice account in Setup & accounts first.'); return;}
-    $('crw-voices-sources').hidden = !voices.data.library;
+    $('crw-voices-sources').hidden = !voices.data.library; $('crw-voices-search').hidden = false;
     if (voices.data.library) {
       if (!voices.data.style) {error('Choose a recipe first, then its voice.'); return;}
       text('crw-voices-sub', `ElevenLabs · for ${state.selected?.label || state.selected?.name || 'this recipe'}`);
@@ -1084,24 +1162,40 @@
       library.source = 'mine'; chooseGroup('[data-voice-source]', 'voiceSource', 'mine');
       $('crw-voices').showModal(); $('crw-voices-search').focus(); await loadLibrary(); return;
     }
-    if (!voices.data.voices.length) {location.href = '/cr-setup'; return;}
     voices.previews = new Set(voices.data.previews || []);
-    text('crw-voices-sub', `${voices.data.model_label} on ${voices.data.provider_label} · ${voices.data.voices.length} voices`);
+    const listed = voices.data.voices.length, gemini = /^google\/gemini-/.test(voices.data.model || '');
+    $('crw-voices-search').hidden = !listed;
+    text('crw-voices-sub', `${voices.data.model_label} on ${voices.data.provider_label}` + (listed ? ` · ${listed} voices` : ''));
     const shared = Object.keys(state.setup?.account?.voice_samples?.[voices.data.model] || {}).length;
-    text('crw-voices-note', shared ? 'Press ▶ to hear a voice.' : `Press ▶ to hear a voice. The first play of each voice makes a short sample with your ${voices.data.provider_label} account (a tiny amount of your balance); after that it replays free.`);
-    renderVoices(); $('crw-voices').showModal(); $('crw-voices-search').focus();
+    const hear = !listed ? `This voice model has no list to browse: paste a voice ID from your ${voices.data.provider_label} account.`
+      : shared ? 'Press ▶ to hear a voice (free: ChannelRecipe\'s own sample of each voice).'
+      : gemini ? `Press ▶ to hear a voice (free: ChannelRecipe's own sample of each voice; if it can't be fetched, Studio asks before making one with your ${voices.data.provider_label} balance).`
+      : `Press ▶ to hear a voice. The first play of each voice makes a short sample with your ${voices.data.provider_label} account (a tiny amount of your balance); after that it replays free.`;
+    text('crw-voices-note', [voices.data.note, hear].filter(Boolean).join(' '));
+    renderVoices(); $('crw-voices').showModal(); (listed ? $('crw-voices-search') : $('crw-voices-id'))?.focus();
   }
-  async function previewVoice(name, button) {
+  // A free sample first (ChannelRecipe's own); when none can be fetched, a sample on the creator's balance is made only
+  // after they press the button that names its cost, and only for that voice.
+  async function previewVoice(name, button, confirmPaid = false) {
     const audio = $('crw-voices-audio');
     if (voices.playing === name && !audio.paused) {audio.pause(); return;}
     let url = sharedSample(name) || (voices.previews.has(name) ? '/cr-voices/sample/' + encodeURIComponent(name) : '');
     if (!url) {
-      button.classList.add('is-loading'); button.disabled = true; text('crw-voices-status', `Making a short ${name} sample…`);
-      try {url = (await api('/cr-voices/preview', {method: 'POST', body: {voice: name}})).url; voices.previews.add(name); text('crw-voices-status', '');}
+      button.classList.add('is-loading'); button.disabled = true; text('crw-voices-status', `Getting a short ${name} sample…`);
+      try {const made = await api('/cr-voices/preview', {method: 'POST', body: confirmPaid ? {voice: name, confirm_paid: true} : {voice: name}});
+        if (made.needs_paid) {askPaidSample(name, button, made); return;}
+        url = made.url; voices.previews.add(name);
+        text('crw-voices-status', made.paid ? `Made a short ${name} sample with your ${voices.data.provider_label} balance; it replays free from now on.` : '');}
       catch (e) {text('crw-voices-status', e.message); return;}
       finally {button.classList.remove('is-loading'); button.disabled = false;}
     }
     voices.playing = name; audio.src = url; audio.play().catch(() => text('crw-voices-status', 'Press ▶ again to play.'));
+  }
+  function askPaidSample(name, button, made) {
+    const status = $('crw-voices-status'), yes = el('button', 'crw-secondary-button', `Make the ${name} sample`);
+    yes.type = 'button'; yes.dataset.paidSample = name;
+    yes.addEventListener('click', () => {status.replaceChildren(); previewVoice(name, button, true);});
+    status.replaceChildren(el('span', '', (made.message || 'Free sample unavailable: make one with your balance?') + ' '), yes);
   }
   async function chooseVoice(name, button) {
     button.disabled = true;

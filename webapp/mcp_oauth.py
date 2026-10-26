@@ -8,10 +8,13 @@ ChannelRecipe session cookie).
 
 from __future__ import annotations
 
+import functools
 import json
 import secrets
 import time
 from typing import Any
+
+import anyio.to_thread
 from urllib.parse import urlencode
 
 from pydantic import AnyHttpUrl
@@ -85,7 +88,9 @@ def _ensure_oauth_tables() -> None:
         expires_at  REAL NOT NULL
     );
     """
+    from webapp.database import schema_lock
     with _conn() as conn:
+        schema_lock(conn, "mcp_oauth")                  # two containers boot together: one at a time
         if IS_PG:
             with conn.cursor() as cur:
                 for stmt in ddl.strip().split(";"):
@@ -190,6 +195,12 @@ def _db_delete(table: str, key: str) -> None:
         conn.cursor().execute(_q(f"DELETE FROM {table} WHERE {col} = ?"), (key,))
 
 
+async def _off(fn, *args, **kwargs):
+    """A blocking database call in a worker thread: the MCP server awaits these methods on the event loop, and a
+    database round trip there holds up every other request (/api/health included)."""
+    return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+
+
 class ChannelRecipeOAuthProvider(
     OAuthAuthorizationServerProvider[AuthorizationCode, RefreshToken, AccessToken]
 ):
@@ -199,7 +210,7 @@ class ChannelRecipeOAuthProvider(
         _ensure_oauth_tables()
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        raw = _db_get("mcp_oauth_clients", client_id)
+        raw = await _off(_db_get, "mcp_oauth_clients", client_id)
         if not raw:
             return None
         try:
@@ -210,7 +221,8 @@ class ChannelRecipeOAuthProvider(
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         if not client_info.client_id:
             raise ValueError("No client_id provided")
-        _db_put(
+        await _off(
+            _db_put,
             "mcp_oauth_clients",
             "client_id",
             client_info.client_id,
@@ -228,13 +240,13 @@ class ChannelRecipeOAuthProvider(
             "scopes": list(params.scopes or [MCP_SCOPE]),
             "client_state": params.state,
         }
-        _db_put("mcp_oauth_pending", "state", state, pending, expires_at=time.time() + AUTH_CODE_TTL)
+        await _off(_db_put, "mcp_oauth_pending", "state", state, pending, expires_at=time.time() + AUTH_CODE_TTL)
         return f"{oauth_login_url()}?{urlencode({'state': state})}"
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
-        raw = _db_get("mcp_oauth_codes", authorization_code)
+        raw = await _off(_db_get, "mcp_oauth_codes", authorization_code)
         if not raw:
             return None
         try:
@@ -247,10 +259,10 @@ class ChannelRecipeOAuthProvider(
     ) -> OAuthToken:
         if not client.client_id:
             raise ValueError("No client_id")
-        stored = _db_get("mcp_oauth_codes", authorization_code.code)
+        stored = await _off(_db_get, "mcp_oauth_codes", authorization_code.code)
         if not stored:
             raise ValueError("Invalid authorization code")
-        _db_delete("mcp_oauth_codes", authorization_code.code)
+        await _off(_db_delete, "mcp_oauth_codes", authorization_code.code)
 
         access = f"cr_oa_{secrets.token_urlsafe(32)}"
         refresh = f"cr_or_{secrets.token_urlsafe(32)}"
@@ -275,8 +287,8 @@ class ChannelRecipeOAuthProvider(
         refresh_data["_kind"] = "refresh"
         refresh_data["subject"] = authorization_code.subject
         refresh_data["resource"] = authorization_code.resource
-        _db_put("mcp_oauth_tokens", "token", access, access_data, expires_at=access_row.expires_at)
-        _db_put("mcp_oauth_tokens", "token", refresh, refresh_data, expires_at=refresh_row.expires_at)
+        await _off(_db_put, "mcp_oauth_tokens", "token", access, access_data, expires_at=access_row.expires_at)
+        await _off(_db_put, "mcp_oauth_tokens", "token", refresh, refresh_data, expires_at=refresh_row.expires_at)
 
         return OAuthToken(
             access_token=access,
@@ -294,7 +306,7 @@ class ChannelRecipeOAuthProvider(
         if token.startswith("cr_mcp_"):
             from webapp.database import get_user_by_mcp_api_key
 
-            user = get_user_by_mcp_api_key(token)
+            user = await _off(get_user_by_mcp_api_key, token)
             if not user:
                 return None
             return AccessToken(
@@ -304,7 +316,7 @@ class ChannelRecipeOAuthProvider(
                 expires_at=None,
                 subject=str(user["id"]),
             )
-        raw = _db_get("mcp_oauth_tokens", token)
+        raw = await _off(_db_get, "mcp_oauth_tokens", token)
         if not raw or raw.get("_kind") == "refresh":
             return None
         try:
@@ -317,7 +329,7 @@ class ChannelRecipeOAuthProvider(
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
-        raw = _db_get("mcp_oauth_tokens", refresh_token)
+        raw = await _off(_db_get, "mcp_oauth_tokens", refresh_token)
         if not raw or raw.get("_kind") != "refresh":
             return None
         try:
@@ -333,7 +345,7 @@ class ChannelRecipeOAuthProvider(
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        raw = _db_get("mcp_oauth_tokens", refresh_token.token)
+        raw = await _off(_db_get, "mcp_oauth_tokens", refresh_token.token)
         if not raw or raw.get("_kind") != "refresh":
             raise ValueError("Invalid refresh token")
         subject = raw.get("subject")
@@ -351,7 +363,7 @@ class ChannelRecipeOAuthProvider(
         )
         access_data = access_row.model_dump(mode="json")
         access_data["_kind"] = "access"
-        _db_put("mcp_oauth_tokens", "token", access, access_data, expires_at=access_row.expires_at)
+        await _off(_db_put, "mcp_oauth_tokens", "token", access, access_data, expires_at=access_row.expires_at)
         return OAuthToken(
             access_token=access,
             token_type="Bearer",
@@ -363,7 +375,7 @@ class ChannelRecipeOAuthProvider(
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         tok = getattr(token, "token", None) or ""
         if tok:
-            _db_delete("mcp_oauth_tokens", tok)
+            await _off(_db_delete, "mcp_oauth_tokens", tok)
 
     async def verify_token(self, token: str) -> AccessToken | None:
         """Kept for callers that expect TokenVerifier; SDK uses load_access_token."""
@@ -487,7 +499,7 @@ def login_page_html(
 
 async def render_login(request: Request) -> Response:
     state = (request.query_params.get("state") or "").strip()
-    if not state or not oauth_provider.get_pending(state):
+    if not state or not await _off(oauth_provider.get_pending, state):
         raise HTTPException(400, "Invalid or expired login link. Click Connect again in Claude.")
 
     # Silent approve when already logged into ChannelRecipe in this browser —
@@ -497,9 +509,9 @@ async def render_login(request: Request) -> Response:
     if token:
         from webapp.database import get_session_user
 
-        user = get_session_user(token)
+        user = await _off(get_session_user, token)
         if user:
-            redirect = oauth_provider.complete_login(state, int(user["id"]))
+            redirect = await _off(oauth_provider.complete_login, state, int(user["id"]))
             return RedirectResponse(url=redirect, status_code=302)
 
     return HTMLResponse(login_page_html(state=state, logged_in_email=""))
@@ -510,20 +522,20 @@ async def handle_login_post(request: Request) -> Response:
     state = str(form.get("state") or "").strip()
     api_key = str(form.get("api_key") or "").strip()
     use_session = str(form.get("use_session") or "").strip() in ("1", "true", "yes")
-    if not state or not oauth_provider.get_pending(state):
+    if not state or not await _off(oauth_provider.get_pending, state):
         raise HTTPException(400, "Invalid or expired login state.")
 
     from webapp.database import get_user_by_mcp_api_key, ensure_user_mcp_api_key, get_session_user
 
     user = None
     if api_key:
-        user = get_user_by_mcp_api_key(api_key)
+        user = await _off(get_user_by_mcp_api_key, api_key)
     if not user and (use_session or not api_key):
         sess = request.cookies.get("session")
         if sess:
-            user = get_session_user(sess)
+            user = await _off(get_session_user, sess)
             if user:
-                ensure_user_mcp_api_key(int(user["id"]))
+                await _off(ensure_user_mcp_api_key, int(user["id"]))
 
     if not user:
         return HTMLResponse(
@@ -537,5 +549,5 @@ async def handle_login_post(request: Request) -> Response:
             status_code=401,
         )
 
-    redirect = oauth_provider.complete_login(state, int(user["id"]))
+    redirect = await _off(oauth_provider.complete_login, state, int(user["id"]))
     return RedirectResponse(url=redirect, status_code=302)
