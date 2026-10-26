@@ -153,7 +153,9 @@ def notify(title: str, message: str, *, run=subprocess.Popen) -> bool:
                       "$n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Information; "
                       f"$n.BalloonTipTitle = {quote(title)}; $n.BalloonTipText = {quote(message)}; $n.Visible = $true; "
                       "$n.ShowBalloonTip(8000); Start-Sleep -Seconds 9; $n.Dispose()")
-            run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script],
+            # without PowerShell 7's module path (Studio started from pwsh), so Windows PowerShell loads its own
+            env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+            run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script], env=env,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             return True
     except (OSError, ValueError):

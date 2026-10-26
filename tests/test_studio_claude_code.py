@@ -546,6 +546,19 @@ def test_mac_notification_quotes_its_text(monkeypatch):
     assert ccc.notify("x", "y", run=lambda *a, **k: runs.append(a)) is False and len(runs) == 1
 
 
+def test_windows_notification_starts_powershell_without_powershell_7s_module_path(monkeypatch):
+    """Started from pwsh, Windows PowerShell 5.1 inherited PS7's PSModulePath and couldn't load Add-Type (2026-10-26)."""
+    runs = []
+    monkeypatch.setattr(ccc.sys, "platform", "win32")
+    monkeypatch.setattr(ccc.os, "name", "nt")
+    monkeypatch.delenv("CR_NOTIFY", raising=False)
+    monkeypatch.setenv("PSModulePath", r"C:\Program Files\PowerShell\7\Modules")
+    assert ccc.notify("Ready", "It's done", run=lambda args, **kw: runs.append((args, kw)))
+    (args, kw), = runs
+    assert args[0] == "powershell" and "''s done" in args[-1]
+    assert not any(k.upper() == "PSMODULEPATH" for k in kw["env"])
+
+
 def test_configure_tells_the_plugin_where_studio_is(tmp_path, pointer):
     ccc.configure(tmp_path / "studio")
     assert json.loads(pointer.read_text()) == {"home": str((tmp_path / "studio").resolve()), "port": 7860}
