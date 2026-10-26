@@ -529,18 +529,33 @@ def _saturation(hex_color: str) -> float:
     return 0.0 if hi == 0 else (hi - lo) / hi
 
 
+_SUBTITLES = re.compile(r"\b(subtitles?|captions?)\b", re.I)
+_NONE = re.compile(r"\b(no|without|never|rare|rarely|occasional)\b", re.I)
+
+
+def _named_subtitles(styles) -> list:
+    """The watched text styles that describe the channel's own subtitles ("Bold word-by-word kinetic subtitles"),
+    never a "no subtitles" note."""
+    return [str(t) for t in (styles if isinstance(styles, list) else [])
+            if isinstance(t, str) and _SUBTITLES.search(t) and not _NONE.search(t)]
+
+
 def _text(plan: Plan, profile: dict):
     text = profile.get("text") or {}
     density = _v(text.get("density"), {}) or {}
     lettering = _v(text.get("lettering"), "")
     captions = density.get("caption", 0)
-    if captions < 0.3:
+    named = _named_subtitles(_v(text.get("style"), []))
+    if captions < 0.3 and not named:
         plan.set("look.captions.off", True, area="Text", label="Subtitles",
                  why=f"the references show subtitles on {round(captions * 100)}% of the runtime", source="watched",
                  show="off")
     else:
+        # what Gemini named outright ("giant word-by-word bold kinetic subtitles") beats its share estimate: a
+        # "Nobody Gets In" clone had its own word-by-word captions turned off at 20% (the owner's test, 2026-10-26)
         plan.set("look.captions.off", False, area="Text", label="Subtitles",
-                 why=f"subtitles on {round(captions * 100)}% of the runtime", source="watched", show="on")
+                 why=(f"the references show {named[0].lower()}" if captions < 0.3
+                      else f"subtitles on {round(captions * 100)}% of the runtime"), source="watched", show="on")
     if lettering == "comic":
         # bold comic-book display letters for words on screen, an easy-to-read hand for subtitles
         plan.set("look.textfx.fonts.head", "Bangers", area="Text", label="Lettering",

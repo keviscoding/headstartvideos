@@ -567,3 +567,19 @@ def test_the_installed_styles_closest_to_a_channel_are_ranked_with_a_reason():
     assert shorts[0]["id"] == "cr-shorts-3d" and shorts[0]["kind"] == "short" and "Shorts too" in shorts[0]["why"]
     # what an unlisted recipe makes is read from its switches
     assert cm.style_families("mine", {"features": {"on": ["youtube", "maps"]}}) == {"footage": 0.5, "graphic": 0.5}
+
+
+def test_subtitles_the_watcher_named_stay_on_whatever_its_share_estimate():
+    """The owner's Windows test (2026-10-26): "Nobody Gets In" shows giant word-by-word subtitles, Gemini named them, but
+    its share estimate (20%) turned the clone's captions off, and the video had none."""
+    import cr_style_map as m
+
+    def captions(share, styles):
+        plan = m.Plan()
+        m._text(plan, {"text": {"density": {"value": {"caption": share}},
+                                "style": {"value": styles}}})
+        return plan.overrides["look"]["captions"]["off"]
+    assert captions(0.2, ["Giant word-by-word bold kinetic subtitles", "Top status bar"]) is False
+    assert captions(0.2, ["Hand-lettered labels"]) is True
+    assert captions(0.2, ["No subtitles, only big title cards"]) is True
+    assert captions(0.6, []) is False
