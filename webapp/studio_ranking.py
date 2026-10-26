@@ -136,6 +136,7 @@ def initialize():
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "studio_ranking")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS ranking_watch_jobs (
                 id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, source TEXT NOT NULL, start_s INTEGER NOT NULL,
                 end_s INTEGER NOT NULL, mode TEXT NOT NULL, question_sha TEXT NOT NULL, model TEXT NOT NULL,

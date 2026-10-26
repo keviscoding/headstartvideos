@@ -88,7 +88,9 @@ def _ensure_oauth_tables() -> None:
         expires_at  REAL NOT NULL
     );
     """
+    from webapp.database import schema_lock
     with _conn() as conn:
+        schema_lock(conn, "mcp_oauth")                  # two containers boot together: one at a time
         if IS_PG:
             with conn.cursor() as cur:
                 for stmt in ddl.strip().split(";"):

@@ -47,6 +47,7 @@ def initialize() -> None:
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "channel_check")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS channel_checks (
                 id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, data_json TEXT NOT NULL,
                 created_at DOUBLE PRECISION NOT NULL)""")

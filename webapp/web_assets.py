@@ -2,7 +2,10 @@
 
 Pages link every /static file at its content version (/static/app.js?v=<hash>), worked out from the file itself, so
 a file can be cached for a year and a deploy that changes it changes its link. Nobody bumps a ?v= by hand any more.
-A file asked for without its current version (an old page, a hand-typed link) is cached for an hour.
+A file asked for without a version (a hand-typed link) is cached for an hour. A file asked for at a version that
+isn't this container's (during a rolling deploy two containers serve two releases: a page from the new one asks the
+old one for app.js?v=<new>) is never stored: otherwise the edge would keep the OLD file under the NEW link for an
+hour, or a year once a later request gets the right one cached behind it.
 
 Without a Cache-Control header of our own, DigitalOcean marks every response "private" and Cloudflare caches
 nothing, so each visit re-downloads app.js, the fonts' CSS and the pictures from the app itself.
@@ -26,6 +29,7 @@ mimetypes.add_type("image/webp", ".webp")
 mimetypes.add_type("video/mp4", ".mp4")
 YEAR = "public, max-age=31536000, immutable"
 HOUR = "public, max-age=3600"
+STALE = "no-store"
 # marketing pages: browsers and the edge keep them a minute and serve them while they refresh
 PAGE = "public, max-age=60, stale-while-revalidate=600"
 # the app shell: always revalidated, so a deploy reaches signed-in people at once
@@ -83,16 +87,22 @@ def html_page(path: Path, cache: str = PAGE, headers: dict | None = None, fill: 
     return HTMLResponse(body, headers={"Cache-Control": cache, **(headers or {})})
 
 
+def cache_for(asked: str, current: str) -> str:
+    """Cache-Control for a /static file asked for at version `asked` (from ?v=) when this container has `current`."""
+    if not asked:
+        return HOUR
+    return YEAR if asked == current else STALE
+
+
 class CachedStatic(StaticFiles):
-    """/static with cache headers: a year at the file's current version, an hour otherwise."""
+    """/static with cache headers: a year at the file's current version, an hour without a version, never stored at
+    another version (see the module's note)."""
 
     async def get_response(self, path, scope):
         response = await super().get_response(path, scope)
         if response.status_code in (200, 206, 304):
             query = parse_qs((scope.get("query_string") or b"").decode("latin-1"))
-            asked = (query.get("v") or [""])[0]
-            current = asset_version(path)
-            response.headers["Cache-Control"] = YEAR if asked and asked == current else HOUR
+            response.headers["Cache-Control"] = cache_for((query.get("v") or [""])[0], asset_version(path))
         return response
 
 

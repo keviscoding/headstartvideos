@@ -155,7 +155,7 @@ def test_on_postgres_the_lock_comes_first_and_the_record_after_the_event_applied
     with db.stripe_event_once("evt_1", "invoice.paid") as fresh:
         assert fresh and len(conn.sql) == 2, "nothing recorded while the event applies"
     lock, check, record = conn.sql
-    assert lock == ("SELECT pg_advisory_xact_lock(%s)", (db.STRIPE_EVENT_LOCK,))
+    assert lock == (f"SELECT pg_advisory_xact_lock({db.STRIPE_EVENT_LOCK})", ())
     assert "SELECT 1 FROM stripe_events WHERE event_id = %s" in check[0] and check[1] == ("evt_1",)
     assert "ON CONFLICT (event_id) DO NOTHING" in record[0] and record[1][:2] == ("evt_1", "invoice.paid")
 

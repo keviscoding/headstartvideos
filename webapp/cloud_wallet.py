@@ -35,6 +35,7 @@ def initialize():
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "cloud_wallet")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS cloud_wallets (
                 user_id INTEGER PRIMARY KEY, balance_cents INTEGER NOT NULL DEFAULT 0,
                 updated_at DOUBLE PRECISION NOT NULL)""")

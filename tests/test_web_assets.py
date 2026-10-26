@@ -26,8 +26,18 @@ def test_a_versioned_file_is_cached_for_a_year_and_an_unversioned_one_for_an_hou
     v = web_assets.asset_version("app.js")
     assert c.get(f"/static/app.js?v={v}").headers["cache-control"] == web_assets.YEAR
     assert c.get("/static/app.js").headers["cache-control"] == web_assets.HOUR
-    assert c.get("/static/app.js?v=old").headers["cache-control"] == web_assets.HOUR, "an old link never pins new code"
+    assert c.get("/static/app.js?v=old").headers["cache-control"] == "no-store", "an old link never pins new code"
     assert c.get("/static/no-such-file.js").status_code == 404
+
+
+def test_during_a_rolling_deploy_a_version_this_container_doesnt_have_is_never_stored():
+    """Two containers serve two releases for a while: a page from the new one can ask the old one for
+    app.js?v=<new>. Cached, the edge would keep the old file under the new link (an hour, or a year behind it)."""
+    current = web_assets.asset_version("app.js")
+    assert web_assets.cache_for(current, current) == web_assets.YEAR
+    assert web_assets.cache_for("0123456789", current) == web_assets.STALE == "no-store"
+    assert web_assets.cache_for("", current) == web_assets.HOUR
+    assert web_assets.cache_for("0123456789", "") == "no-store", "a file this release doesn't have at all"
 
 
 def test_pages_are_short_lived_and_the_app_shell_always_revalidates():
