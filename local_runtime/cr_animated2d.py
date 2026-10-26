@@ -1096,12 +1096,22 @@ def _keep(style: dict, code: str, digest: str, home) -> Path:
     target = Path(home) / "assets" / "styles" / "learned" / name
     target.mkdir(parents=True, exist_ok=True)
     versions = sorted(target.glob("renderer-v*.js"), key=lambda p: int(re.sub(r"\D", "", p.stem) or 0))
-    same = next((p for p in versions if hashlib.sha256(p.read_bytes()).hexdigest() == digest), None)
+    same = next((p for p in versions if code_sha256(p) == digest), None)
     if same is None:
         number = (int(re.sub(r"\D", "", versions[-1].stem)) + 1) if versions else 1
         same = target / f"renderer-v{number}.js"
-        same.write_text(code, encoding="utf-8")
+        same.write_text(code, encoding="utf-8", newline="")
     return same
+
+
+def code_sha256(path: Path) -> str:
+    """A saved renderer's hash as its code reads, the way renderer_for checks it: Windows line ends (a renderer saved
+    before Studio 109 was written with them) read as the code's own, so a style is never "changed on disk" just for
+    being saved on Windows. "" when the file can't be read as text."""
+    try:
+        return hashlib.sha256(Path(path).read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    except (OSError, UnicodeDecodeError):
+        return ""
 
 
 def carry(style: dict, record: dict, home) -> dict:
@@ -1186,7 +1196,7 @@ def renderer_problem(info: dict, home=None) -> str:
     path = Path(home or HERE) / "assets" / str(saved.get("file") or "")
     if not saved.get("file") or not path.is_file():
         return "This style's animation is missing from the Studio folder. Study the channel again."
-    if hashlib.sha256(path.read_bytes()).hexdigest() != saved.get("sha256"):
+    if code_sha256(path) != saved.get("sha256"):
         return "This style's animation changed on disk since it was saved. Study the channel again."
     return ""
 

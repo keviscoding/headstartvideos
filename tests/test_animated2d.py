@@ -433,6 +433,29 @@ def test_the_renderer_is_saved_versioned_with_the_style_and_never_used_changed(h
     assert "Use pictures instead" in a2d.renderer_problem(failed, home)
 
 
+def test_a_renderer_saved_on_windows_is_not_changed_on_disk(home, tmp_path):
+    """The owner's Windows test (2026-10-26): before 109, Windows wrote a saved renderer with \\r\\n line ends and the
+    readiness check hashed its bytes, so every coded style read "changed on disk" right after its study."""
+    code = BEAN
+    assert "\n" in code
+    digest = hashlib.sha256(code.encode()).hexdigest()
+    folder = tmp_path / "op"
+    (folder / "renderer").mkdir(parents=True)
+    (folder / "renderer" / "renderer.js").write_text(code, encoding="utf-8", newline="")
+    (folder / "renderer" / "build.json").write_text(json.dumps({"state": "passed", "sha256": digest,
+                                                                "manifest": {"name": "bean-shorts"}}))
+    style = a2d.attach({"name": "cr_clone_winbeans", "look": {"visuals": "cr_animated2d"}}, folder, home)
+    saved = home / "assets" / style["look"]["animated2d"]["renderer"]["file"]
+    assert saved.read_bytes() == code.encode(), "saved exactly as written, on every computer"
+    saved.write_bytes(code.replace("\n", "\r\n").encode())          # as a Studio before 109 saved it on Windows
+    assert a2d.renderer_problem(style, home) == ""
+    assert a2d.renderer_for(style, home)[0] == code
+    again = a2d.attach({"name": "cr_clone_winbeans", "look": {}}, folder, home)
+    assert again["look"]["animated2d"]["renderer"]["version"] == 1, "the Windows copy is the same version"
+    saved.write_bytes(b"\xff\xfe not text")
+    assert "changed on disk" in a2d.renderer_problem(style, home)
+
+
 def test_the_likeness_check_of_an_animated_style_is_its_renderers_build(tmp_path):
     import cr_style_likeness as like
     from PIL import Image
