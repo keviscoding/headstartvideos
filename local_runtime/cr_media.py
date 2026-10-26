@@ -57,6 +57,7 @@ class TaskFailed(AccountStop):
         action = (" Review this image prompt or choose another image model in Setup & accounts." if self.category == "moderation" and task == "images"
                   else " Review this narration text in your provider log." if self.category == "moderation" and task == "narration"
                   else " Top up this account, then resume." if self.category == "balance"
+                  else " Reconnect this account's key in Setup & accounts, then resume." if self.category == "access"
                   else " Kie charged nothing for it. Wait a few minutes and press Resume saved project, or voice this video "
                        "another way (Gemini through Kie, your own ElevenLabs account, or your own recording)."
                   if fresh_attempt_ok(provider, task, receipt) and task == "narration"
@@ -167,19 +168,36 @@ def fresh_attempt_ok(provider, task, receipt, *, asked=False) -> bool:
 
     A presenter (avatars) Kie failed the same way is made again only when the creator asks: a video whose presenter
     stopped offers "try the presenter again" (cr-presenter.json), and before this a failed receipt stopped every Resume
-    of that video for good (a customer's video, 2026-10-25). Studio never retries a presenter by itself."""
-    if provider != "kie" or task not in ("narration", "avatars") or not isinstance(receipt, dict):
+    of that video for good (a customer's video, 2026-10-25). Studio never retries a presenter by itself.
+
+    A moving clip (motion) Kie failed on its side and reported 0 credits for goes again the same way (Studio once,
+    run()); the clip otherwise became its first frame for good, even on Resume. Unlike a voice, a clip needs Kie's
+    word that it cost nothing, even when the creator asks.
+
+    A request Kie refused before making anything (no task: a rate limit, an empty balance, a key problem) cannot pay
+    twice either. A rate limit is waited out (run()); after a top-up or a fixed key, the creator's Resume sends it
+    again. Before this, the refused receipt stopped every Resume of that video at the same picture (cr_recover,
+    2026-10-26). A refusal of the words themselves (moderation, a bad request) still stops: sending it again can't
+    help."""
+    if provider != "kie" or not isinstance(receipt, dict) or receipt.get("status") != "failed":
+        return False
+    code, reason = str(receipt.get("failure_code") or ""), str(receipt.get("failure_message") or "")
+    if receipt.get("rejected"):
+        category = str(receipt.get("failure_category") or failure_category(code, reason))
+        if receipt.get("id") or receipt.get("credits") not in (0, None) or task not in TASKS:
+            return False
+        return category == "rate_limit" or (asked and category in ("balance", "access"))
+    if task not in ("narration", "avatars", "motion"):
         return False
     if task == "avatars" and not asked:
         return False
-    if receipt.get("status") != "failed" or receipt.get("rejected") or not receipt.get("id"):
+    if not receipt.get("id"):
         return False
     credits = receipt.get("credits")
     if isinstance(credits, bool) or (credits is not None and not isinstance(credits, (int, float))):
         return False
-    if credits is None and not asked or credits is not None and credits != 0:
+    if credits is None and (not asked or task == "motion") or credits is not None and credits != 0:
         return False
-    code, reason = str(receipt.get("failure_code") or ""), str(receipt.get("failure_message") or "")
     if failure_category(code, reason) in ("moderation", "balance", "access", "rate_limit", "cancelled"):
         return False
     if code == "422" and "task id is blank" in reason.casefold():
@@ -306,6 +324,10 @@ def _url(value):
     return str(value)
 
 
+class TransferFailed(AccountStop):
+    """A finished task's file didn't download: fetching it again pays nothing (run() tries again by itself)."""
+
+
 def download(url, dest):
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -313,7 +335,7 @@ def download(url, dest):
     try:
         with requests.get(_url(url), stream=True, timeout=(15, 180)) as res:
             if res.status_code != 200:
-                raise AccountStop("The generated file could not be downloaded. Resume to fetch the existing task; do not submit it again.")
+                raise TransferFailed("The generated file could not be downloaded. Resume to fetch the existing task; do not submit it again.")
             size = 0
             with tmp.open("wb") as f:
                 for chunk in res.iter_content(1024 * 1024):
@@ -325,7 +347,7 @@ def download(url, dest):
                 raise AccountStop("The model account returned an empty media file.")
         tmp.replace(dest)
     except requests.RequestException:
-        raise AccountStop("The file transfer stopped. Resume to fetch the existing task; no new generation is needed.")
+        raise TransferFailed("The file transfer stopped. Resume to fetch the existing task; no new generation is needed.")
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -427,29 +449,61 @@ def _never_sent(error) -> bool:
     return any(sign in text for sign in ("NewConnectionError", "NameResolutionError", "Failed to establish a new connection"))
 
 
-def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
+# Retries that can't pay twice (fresh_attempt_ok), Studio's own, with these pauses (s) before each one. A voice or a
+# moving clip Kie ran and failed on its own side for 0 credits; any request Kie refused for its rate limit (nothing
+# was made, so nothing was charged).
+NARRATION_RETRY_PAUSES = (30, 90)
+RETRY_PAUSES = {"narration": NARRATION_RETRY_PAUSES, "motion": (30,)}
+RATE_LIMIT_PAUSES = (30, 90)
+# A task Kie accepted and is still making is checked (polling its ID never pays again) for this long when the caller
+# set no limit of its own: past 30 minutes it used to stop the video ("still pending"), though nothing was wrong.
+PENDING_PATIENCE = 2 * 3600
+SLOW_AFTER = 30 * 60                  # past this, check every SLOW_POLL seconds instead of every 5
+SLOW_POLL = 15
+# An answer about the task Studio couldn't read (an error page, half a reply) is asked again after these pauses (s);
+# a finished file that didn't download is fetched again after these.
+UNREADABLE_WAITS = (5, 10, 20, 30, 60, 60)
+DOWNLOAD_WAITS = (10, 30, 60)
+
+
+def run(task, inputs, dest, *, model=None, log=print, timeout_s=None):
     """One media task, from its receipt when it was already made. A narration Kie ran and then failed on its own side,
     charging nothing (fresh_attempt_ok: "Internal Error", "generate task timeout"), is submitted again after
     NARRATION_RETRY_PAUSES for every caller. Only the long-video voice used to ride these out; the Shorts call run()
     directly, so one of them stopped the whole Short ("The Short stopped unexpectedly (cr_media.TaskFailed: Kie.ai failed
     this narration task. generate task timeout. Kie charged nothing for it ...)", Photo Comedy Shorts, sweep
-    2026-10-26)."""
-    pauses = NARRATION_RETRY_PAUSES if task == "narration" else ()
-    for attempt, pause in enumerate(pauses + (None,)):
+    2026-10-26). A clip Kie failed the same way, and a request Kie refused for its rate limit, go again too
+    (RETRY_PAUSES, RATE_LIMIT_PAUSES). timeout_s: the caller's own limit on waiting for the task; without one Studio
+    keeps checking an accepted task for PENDING_PATIENCE."""
+    tries = 0
+    while True:
         try:
             return _run_once(task, inputs, dest, model=model, log=log, timeout_s=timeout_s)
         except TaskFailed as failed:
             receipt = {"status": "failed", "id": getattr(failed, "task_id", None), "rejected": failed.rejected,
-                       "credits": failed.credits, "failure_code": failed.code, "failure_message": failed.reason}
+                       "credits": failed.credits, "failure_code": failed.code, "failure_message": failed.reason,
+                       "failure_category": failed.category}
             provider = account(task)[0]
-            if pause is None or not fresh_attempt_ok(provider, task, receipt):
+            limited = failed.rejected and failed.category == "rate_limit"
+            pauses = RATE_LIMIT_PAUSES if limited else RETRY_PAUSES.get(task, ())
+            if tries >= len(pauses) or not fresh_attempt_ok(provider, task, receipt):
                 raise
-            log(f"{PROVIDERS[provider]['label']} {task} hit a passing error ({failed.reason or failed.code}) and charged "
-                f"nothing; trying again in {pause} s (attempt {attempt + 2} of {len(pauses) + 1}).")
+            pause = pauses[tries]
+            tries += 1
+            if limited:
+                log(f"{PROVIDERS[provider]['label']} asked Studio to slow down ({failed.code}); nothing was made or "
+                    f"charged. Trying again in {pause} s (attempt {tries + 1} of {len(pauses) + 1}).")
+            else:
+                log(f"{PROVIDERS[provider]['label']} {task} hit a passing error ({failed.reason or failed.code}) and "
+                    f"charged nothing; trying again in {pause} s (attempt {tries + 1} of {len(pauses) + 1}).")
             time.sleep(pause)
 
 
-def _run_once(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
+class _Unreadable(Exception):
+    pass
+
+
+def _run_once(task, inputs, dest, *, model=None, log=print, timeout_s=None):
     provider, key = account(task)
     dest = Path(dest)
     model = model or PROVIDERS[provider]["models"][task]
@@ -481,7 +535,9 @@ def _run_once(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                     raise TaskFailed(provider, previous, task)
                 kept = marker.with_name(marker.stem + f".failed-{int(time.time() * 1000)}.json")
                 marker.replace(kept)                         # the failed receipt stays, under its own name
-                log(f"{PROVIDERS[provider]['label']} failed task {previous.get('id')} charged nothing; trying again.")
+                log(f"{PROVIDERS[provider]['label']} refused this request before making anything; sending it again."
+                    if previous.get("rejected") else
+                    f"{PROVIDERS[provider]['label']} failed task {previous.get('id')} charged nothing; trying again.")
                 previous = {}
             if previous and not previous.get("id"):
                 raise AccountStop("This media submission has an uncertain result. Check your provider task log and the .cr-tasks receipt before deliberately retrying.")
@@ -535,8 +591,13 @@ def _run_once(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                     raise AccountStop("The media submission was interrupted. Check the provider task log before retrying; it may already be running.")
             task_id = previous["id"]
         log(f"{PROVIDERS[provider]['label']}: {model} · task {task_id}")
-        deadline = time.monotonic() + timeout_s
+        label = PROVIDERS[provider]["label"]
+        patient = timeout_s is None
+        started = time.monotonic()
+        deadline = started + (PENDING_PATIENCE if patient else timeout_s)
+        unreadable, transfers, told, last_unread = 0, 0, False, None
         while time.monotonic() < deadline:
+            outputs = None
             try:
                 url = base + ("/recordInfo" if provider == "kie" else "/prediction/" + task_id)
                 res = requests.get(url, headers=headers, params={"taskId": task_id} if provider == "kie" else None,
@@ -546,32 +607,67 @@ def _run_once(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                     continue  # Polling an existing ID is safe; creating a new job is not.
                 parsed = _data(res, provider)
                 detail = parsed.get("data") or parsed
+                if not isinstance(detail, dict):
+                    raise ValueError("no task detail")
                 state = detail.get("state" if provider == "kie" else "status")
                 if state in ("success", "completed", "succeeded"):
-                    outputs = json.loads(detail.get("resultJson") or "{}").get("resultUrls", []) if provider == "kie" else detail.get("outputs", [])
+                    outputs = json.loads(detail.get("resultJson") or "{}").get("resultUrls", []) if provider == "kie" \
+                        else detail.get("outputs", [])
                     if not outputs:
-                        raise AccountStop("The completed task returned no media. Check the provider task log.")
-                    output = _url(outputs[0])
-                    previous.update(status="generated", url=output, completed_at=time.time(),
-                                    credits=detail.get("creditsConsumed"), cost=detail.get("cost"))
-                    _write(marker, previous)
-                    download(output, dest)
-                    previous.update(status="complete", file_sha256=hashlib.sha256(dest.read_bytes()).hexdigest())
-                    _write(marker, previous)
-                    _references[output] = {"task_fingerprint": fingerprint}
-                    return output
-                if state in ("fail", "failed", "cancelled", "canceled"):
-                    previous["status"] = "failed"
-                    reason = re.sub(r"\s+", " ", str(detail.get("failMsg") or "")).replace(key, "[redacted]")[:200]
-                    previous.update(failure_message=reason, failure_code=("cancelled" if state in ("cancelled", "canceled") else str(detail.get("failCode") or "")[:40]),
-                                    credits=detail.get("creditsConsumed"))
-                    _write(marker, previous)
-                    raise TaskFailed(provider, previous, task)
+                        raise _Unreadable("The completed task returned no media. Check the provider task log.")
+                unreadable = 0
             except requests.RequestException:
-                pass  # Read-only task poll; keep the original ID.
-            except (ValueError, TypeError, AttributeError, KeyError):
-                raise AccountStop("The task status could not be read. Resume to check the same provider task.")
-            time.sleep(5)
+                time.sleep(5)
+                continue  # Read-only task poll; keep the original ID.
+            except TaskFailed:
+                raise
+            except (ValueError, TypeError, AttributeError, KeyError, _Unreadable, AccountStop) as why:
+                # An answer about an existing task Studio couldn't read: asking again pays nothing.
+                last_unread = why
+                if unreadable >= len(UNREADABLE_WAITS):
+                    if isinstance(why, (_Unreadable, AccountStop)):
+                        raise AccountStop(str(why)) from None
+                    raise AccountStop("The task status could not be read. Resume to check the same provider task.") \
+                        from None
+                wait = UNREADABLE_WAITS[unreadable]
+                unreadable += 1
+                log(f"{label} gave an answer about task {task_id} that Studio couldn't read; asking again in {wait} s "
+                    "(nothing is paid again).")
+                time.sleep(wait)
+                continue
+            if outputs is not None:
+                output = _url(outputs[0])
+                previous.update(status="generated", url=output, completed_at=time.time(),
+                                credits=detail.get("creditsConsumed"), cost=detail.get("cost"))
+                _write(marker, previous)
+                try:
+                    download(output, dest)
+                except TransferFailed as stopped:
+                    if transfers >= len(DOWNLOAD_WAITS):
+                        raise
+                    wait = DOWNLOAD_WAITS[transfers]
+                    transfers += 1
+                    log(f"The finished file of task {task_id} didn't download ({stopped}); fetching it again in {wait} s "
+                        f"(try {transfers + 1} of {len(DOWNLOAD_WAITS) + 1}, nothing is paid again).")
+                    time.sleep(wait)
+                    continue                                     # asks for the task again: a fresh link if it changed
+                previous.update(status="complete", file_sha256=hashlib.sha256(dest.read_bytes()).hexdigest())
+                _write(marker, previous)
+                _references[output] = {"task_fingerprint": fingerprint}
+                return output
+            if state in ("fail", "failed", "cancelled", "canceled"):
+                previous["status"] = "failed"
+                reason = re.sub(r"\s+", " ", str(detail.get("failMsg") or "")).replace(key, "[redacted]")[:200]
+                previous.update(failure_message=reason, failure_code=("cancelled" if state in ("cancelled", "canceled") else str(detail.get("failCode") or "")[:40]),
+                                credits=detail.get("creditsConsumed"))
+                _write(marker, previous)
+                raise TaskFailed(provider, previous, task)
+            waited = time.monotonic() - started
+            if patient and waited >= SLOW_AFTER and not told:
+                told = True
+                log(f"{label} is still making task {task_id} after {int(waited // 60)} min. Studio keeps checking the "
+                    f"same task (nothing is paid again) for up to {PENDING_PATIENCE // 3600} hours.")
+            time.sleep(SLOW_POLL if patient and waited >= SLOW_AFTER else 5)
         raise AccountStop("The media task is still pending. Its ID is saved; resume this job to check it without submitting again.")
 
 
@@ -740,10 +836,6 @@ def route_avatar(original):
             return avatar_clip(provider, image_url, audio_url, dest, log, motion=motion)
         return original(provider, image_url, audio_url, dest, log, *args, **kwargs)
     return routed
-
-
-# A narration task Kie failed on its own side and charged nothing for is tried twice more, after these pauses (s).
-NARRATION_RETRY_PAUSES = (30, 90)
 
 
 def _chunks(text, limit=2400):

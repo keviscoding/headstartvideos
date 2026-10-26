@@ -409,18 +409,18 @@ def stuck_media(job, *, since=0.0, message="") -> list:
                                                                                   r.get("failure_message") or ""))
             free = cr_media.fresh_attempt_ok(provider, task, r, asked=True)
             row.update(state="failed", category=category, free=bool(free), money=True, pays_twice=False)
-            if free:
-                row.update(may_have_spent=False, needs_approval=False,
-                           reason=f"{label} failed this {what} on its side and charged nothing. Carrying on tries it "
-                                  "again; that can't pay twice.")
-            elif r.get("rejected"):
+            if r.get("rejected"):
                 fix = {"balance": f"Top up your {label} balance, then carry on.",
                        "rate_limit": f"{label} asked Studio to slow down: wait a few minutes, then carry on.",
                        "moderation": f"{label} refused the words of this {what}: change the video's instructions.",
                        "access": f"Reconnect your {label} key in Setup & accounts, then carry on."}.get(category, "")
                 row.update(may_have_spent=False, needs_approval=False, do_first=fix,
                            reason=f"{label} refused this {what} request before making anything, so nothing was "
-                                  "charged.")
+                                  "charged." + (" Carrying on sends it again; that can't pay twice." if free else ""))
+            elif free:
+                row.update(may_have_spent=False, needs_approval=False,
+                           reason=f"{label} failed this {what} on its side and charged nothing. Carrying on tries it "
+                                  "again; that can't pay twice.")
             else:
                 charged = r.get("credits")
                 said = (f"charged {charged} credits" if isinstance(charged, (int, float)) and charged
@@ -597,9 +597,17 @@ def _auto_plan(job, *, home=None, server_stages=None, allowance=None, live="", n
     usage_stop = stop["category"] == "usage_limit"
     if stop["kind"] != "local" and not usage_stop:
         return no(f"it stopped on something that needs you ({stop['category'] or 'unknown'})")
+    import cr_media
     for path, r in receipts(job):
         if r.get("status") == "submitting" and not r.get("id"):
             return no("a paid media task got no clear answer, so it needs your yes")
+        if r.get("status") == "failed":
+            # cr_media sends a failed task again when a run meets it, as the creator's Resume (asked): a run Studio
+            # starts by itself must never be where that happens unless Studio may do it on its own too
+            provider, task = str(r.get("provider") or "kie"), _task_of(r.get("model"))
+            if (cr_media.fresh_attempt_ok(provider, task, r, asked=True)
+                    and not cr_media.fresh_attempt_ok(provider, task, r)):
+                return no("a paid task's failure needs your yes to try it again")
     if server_stages is None:
         return no(UNCHECKED)
     stages = stuck_stages(home, saved["id"], server_stages, allowance=allowance, now=now)

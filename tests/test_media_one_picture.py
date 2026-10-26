@@ -193,6 +193,8 @@ def test_a_clip_that_may_have_been_charged_is_not_animated_again(hub, monkeypatc
 
 @pytest.mark.parametrize("answer", ["refused", "failed"])
 def test_a_kie_rate_limit_stops_the_video_instead_of_skipping_pictures(hub, monkeypatch, answer):
+    """A rate limit Kie answers before making anything is waited out twice first (nothing was made, so sending it
+    again can't pay twice; cr_media.RATE_LIMIT_PAUSES), then stops the video, never skipping pictures."""
     creates = []
     def create(url, **kw):
         creates.append(kw["json"])
@@ -204,4 +206,5 @@ def test_a_kie_rate_limit_stops_the_video_instead_of_skipping_pictures(hub, monk
         "state": "fail", "failCode": "429", "failMsg": "Rate limit exceeded", "creditsConsumed": 0}}))
     with pytest.raises(media.AccountStop) as stopped:
         story_stills(media.skippable(media.image), hub, ["a", "b", "c"])
-    assert not isinstance(stopped.value, media.PictureFailed) and len(creates) == 1
+    assert not isinstance(stopped.value, media.PictureFailed)
+    assert len(creates) == (1 + len(media.RATE_LIMIT_PAUSES) if answer == "refused" else 1)
