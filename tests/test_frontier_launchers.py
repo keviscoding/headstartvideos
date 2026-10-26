@@ -11,8 +11,12 @@ import uuid
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1] / "local_runtime"
-BROWSER_CHECK = ["-c", "import os, sys\nfrom playwright.sync_api import sync_playwright\np = sync_playwright().start()\n"
-                       "ok = os.path.exists(p.chromium.executable_path)\np.stop()\nsys.exit(0 if ok else 1)"]
+# the launchers start the browser Studio draws with (Playwright's headless shell), as setup's own check does
+BROWSER_CHECK = ["-c", "from playwright.sync_api import sync_playwright\nwith sync_playwright() as p:\n"
+                       "    p.chromium.launch().close()"]
+PIP = ["-m", "pip", "install", "-q", "--disable-pip-version-check", "-r", "requirements.txt"]
+SHELL = ["-m", "playwright", "install", "--only-shell", "chromium"]
+FULL = ["-m", "playwright", "install", "chromium"]
 
 
 def fake_python(path, version):
@@ -27,7 +31,7 @@ args = sys.argv[1:]
 with open(os.environ["LAUNCH_TEST_LOG"], "a") as log:
     log.write(json.dumps({{"exe":str(pathlib.Path(sys.argv[0])),"version":version,"args":args}})+"\\n")
 if args[:1] == ["-c"]:
-    if "chromium.executable_path" in args[1]:
+    if "chromium.launch" in args[1]:
         raise SystemExit(1 if os.environ.get("LAUNCH_TEST_NO_BROWSER") else 0)
     if "Studio Python:" in args[1]: print("Studio Python:", version)
     raise SystemExit(0 if tuple(map(int,version.split("."))) >= (3,10) else 1)
@@ -40,6 +44,8 @@ elif args[:2] == ["-m","venv"]:
 elif args[:2] == ["-m","pip"]:
     raise SystemExit(int(os.environ.get("LAUNCH_TEST_FAIL_PIP","0")))
 elif args[:3] == ["-m","playwright","install"]:
+    if "--only-shell" in args and os.environ.get("LAUNCH_TEST_NO_SHELL"):
+        raise SystemExit(1)                  # a Playwright older than 1.49: no --only-shell
     raise SystemExit(int(os.environ.get("LAUNCH_TEST_FAIL_BROWSER","0")))
 elif args == ["cr_studio.py"]:
     raise SystemExit(int(os.environ.get("LAUNCH_TEST_STUDIO_EXIT","0")))
@@ -90,8 +96,18 @@ def test_mac_selects_compatible_fallback_and_preserves_spaced_paths(mac_launch):
     assert create["exe"] == str(tools / "python3.11")
     assert [call["args"] for call in calls if call["exe"].endswith(".venv/bin/python")] == [
         ["-c", "import sys; print(\"Studio Python:\", sys.version.split()[0]); raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
-        ["-m","pip","install","-r","requirements.txt"],
-        ["-m","playwright","install","chromium"], BROWSER_CHECK, ["cr_studio.py"]]
+        PIP, SHELL, BROWSER_CHECK, ["cr_studio.py"]]
+    # one plain line per stage, never pip's wall of output or its upgrade notice (owner's Windows test, 2026-10-26)
+    assert "[1 of 2] Installing Studio's libraries" in result.stdout and "[2 of 2]" in result.stdout
+
+
+def test_mac_an_older_playwright_without_the_headless_shell_installs_the_full_browser(mac_launch):
+    folder, tools, run = mac_launch
+    fake_python(tools / "python3.12", "3.12.9")
+    result, calls = run(LAUNCH_TEST_NO_SHELL="1")
+    assert result.returncode == 0 and (folder / ".venv/.cr-installed").is_file()
+    venv = [call["args"] for call in calls if call["exe"].endswith(".venv/bin/python")]
+    assert venv[1:5] == [PIP, SHELL, FULL, BROWSER_CHECK]
 
 
 def test_mac_rejects_all_old_interpreters_before_creating_environment(mac_launch):
@@ -144,8 +160,7 @@ def test_mac_reinstalls_a_missing_graphics_browser_on_every_start(mac_launch):
     (folder / ".venv/.cr-installed").touch()
     result, calls = run(LAUNCH_TEST_NO_BROWSER="1")
     assert result.returncode == 0
-    assert [call["args"] for call in calls][1:] == [BROWSER_CHECK, ["-m","playwright","install","chromium"],
-                                                   ["cr_studio.py"]]
+    assert [call["args"] for call in calls][1:] == [BROWSER_CHECK, SHELL, ["cr_studio.py"]]
 
 
 def test_windows_launcher_keeps_double_click_diagnostics_and_has_no_compound_blocks():
@@ -169,6 +184,18 @@ def test_windows_launcher_keeps_double_click_diagnostics_and_has_no_compound_blo
     assert 'if not exist "requirements.txt" goto incomplete_download' in lines
     assert lines.index('set "CR_PYTHON_ARGS=-3.13"') < lines.index('set "CR_PYTHON_ARGS=-3"')
     assert ':failed' in lines and lines[lines.index(':failed') + 3] == 'pause'
+    # first run: the downloaded-ZIP mark comes off Studio's files before anything else (no "Unknown Publisher" on
+    # every launch), pip is quiet with no upgrade notice, and only the headless shell is fetched, with the full
+    # browser as the fallback for a Playwright older than 1.49 (owner's Windows test, 2026-10-26)
+    unblock = lines.index('".venv\\Scripts\\python.exe" cr_unblock.py >nul 2>&1')
+    pip = lines.index('".venv\\Scripts\\python.exe" -m pip install -q --disable-pip-version-check -r requirements.txt')
+    shell = lines.index('".venv\\Scripts\\python.exe" -m playwright install --only-shell chromium')
+    assert lines.index('if exist ".venv\\.cr-installed" goto run_studio') < unblock < pip < shell
+    assert lines[shell + 1] == 'if errorlevel 1 ".venv\\Scripts\\python.exe" -m playwright install chromium'
+    assert lines[shell + 2] == 'if errorlevel 1 goto browser_failed'
+    assert not any(line.endswith("-m pip install -r requirements.txt") for line in lines)
+    check = next(line for line in lines if "sync_playwright" in line)
+    assert "chromium.launch().close()" in check and "executable_path" not in check and check.endswith(">nul 2>&1")
     # Studio itself runs in Python's UTF-8 mode, as its video workers do (review, 2026-10-26)
     start = lines.index(':start_studio')
     assert lines.index('set "PYTHONUTF8=1"', start) < lines.index('".venv\\Scripts\\python.exe" cr_studio.py', start)

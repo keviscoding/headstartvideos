@@ -591,9 +591,13 @@ def test_footage_watching_stops_after_three_uploads_fail_in_a_row():
 
 
 def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
-    engine = b'# YouTube footage\nyt-dlp>=2025.10.22; python_version >= "3.10"\nrequests\n'
+    engine = (b"opencv-python-headless>=4.8   # VEIL's keeper (loops chained and moved) and the presenter camera moves; "
+              b"pure-ffmpeg fallback without it\n"
+              b'# YouTube footage\nyt-dlp>=2025.10.22; python_version >= "3.10"\nrequests\n')
     patched = package.patch_engine("requirements.txt", engine).decode()
     assert 'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"' in patched and "requests" in patched
+    # one OpenCV: RapidOCR needs the full opencv-python, so the engine's headless copy isn't installed beside it
+    assert "\nopencv-python>=4.8 " in "\n" + patched and "opencv-python-headless" not in patched
     # one RapidOCR for every Python: 1.3+ caps Python below 3.13 and renamed the detector the Studio calls
     assert 'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"' in patched
     # Studio's Python trusts the certificates this computer trusts (an antivirus that scans secure connections)

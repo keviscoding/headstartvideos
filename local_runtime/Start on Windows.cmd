@@ -53,23 +53,36 @@ if errorlevel 1 goto environment_failed
 if errorlevel 1 goto python_failed
 
 if exist ".venv\.cr-installed" goto run_studio
-echo Setting up ChannelRecipe. This first download may take a few minutes.
-".venv\Scripts\python.exe" -m pip install -r requirements.txt
+rem Windows marks every file extracted from a downloaded ZIP, then warns "Unknown Publisher" each time this launcher
+rem opens: take that mark off Studio's own files first (cr_unblock, as Unblock-File does; Studio repeats it each start).
+".venv\Scripts\python.exe" cr_unblock.py >nul 2>&1
+echo Setting up ChannelRecipe. The first start downloads about 320 MB and takes a few minutes.
+echo.
+rem One plain line per stage instead of pip's wall of output: -q still shows any error, and no pip upgrade notice.
+echo [1 of 2] Installing Studio's libraries, about 200 MB. This window stays quiet for a few minutes...
+".venv\Scripts\python.exe" -m pip install -q --disable-pip-version-check -r requirements.txt
 if errorlevel 1 goto libraries_failed
-".venv\Scripts\python.exe" -m playwright install chromium
+echo [2 of 2] Installing the graphics browser, about 115 MB...
+rem Playwright's headless shell only: Studio never draws with the full Chrome for Testing (about 180 MB more).
+rem A Playwright older than 1.49 has no --only-shell and draws with the full Chromium, so that one installs instead.
+".venv\Scripts\python.exe" -m playwright install --only-shell chromium
+if errorlevel 1 ".venv\Scripts\python.exe" -m playwright install chromium
 if errorlevel 1 goto browser_failed
 type nul > ".venv\.cr-installed"
 if errorlevel 1 goto marker_failed
+echo Done. Starting Studio...
 
 :run_studio
 rem The graphics browser is checked on every start, not only the first: a missing one is installed again here.
-".venv\Scripts\python.exe" -c "import os,sys;from playwright.sync_api import sync_playwright as s;p=s().start();ok=os.path.exists(p.chromium.executable_path);p.stop();sys.exit(0 if ok else 1)" >nul 2>&1
+rem It starts the browser Studio draws with (the headless shell), as setup's own check does.
+".venv\Scripts\python.exe" -c "from playwright.sync_api import sync_playwright as s;p=s().start();p.chromium.launch().close();p.stop()" >nul 2>&1
 if errorlevel 1 goto install_browser
 goto start_studio
 
 :install_browser
-echo Installing the graphics browser. This can take a few minutes.
-".venv\Scripts\python.exe" -m playwright install chromium
+echo Installing the graphics browser, about 115 MB. This can take a few minutes.
+".venv\Scripts\python.exe" -m playwright install --only-shell chromium
+if errorlevel 1 ".venv\Scripts\python.exe" -m playwright install chromium
 
 :start_studio
 rem Studio runs in Python's UTF-8 mode, as its video workers do: every file, title and tool output is UTF-8.

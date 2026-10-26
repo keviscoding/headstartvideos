@@ -3,12 +3,16 @@
 ## Easiest: let Claude Code do it
 
 1. Open this folder in Claude Code. In the Claude desktop app, choose **Code**
-   and select this folder (or run `claude` inside it from a terminal).
+   and select this folder (or run `claude` inside it from a terminal). On
+   Windows, Extract All puts this folder inside another one named after the
+   download: choose this inner folder, the one with this file in it, or
+   Studio's tools won't load.
 2. Paste: *Help me install ChannelRecipe Studio on this computer. Check what is
    missing, install it for me one step at a time, then start the studio and open
    its setup page.*
-3. Follow along. Claude explains each step. Enter keys only on the setup page,
-   never in the chat.
+3. Follow along. Claude explains each step and asks before it runs anything:
+   press Allow (Bypass permissions isn't needed). Enter keys only on the setup
+   page, never in the chat.
 
 ## Or do it yourself
 
@@ -16,11 +20,13 @@
    (on Windows, tick **Add python.exe to PATH**). It's the only tool you install
    yourself: Studio installs the rest from its setup page (step 3).
 2. Open **Start on Mac.command** (if macOS blocks it: right-click → Open) or
-   **Start on Windows.cmd**. Keep that window open. The first launch takes a few
-   minutes.
+   **Start on Windows.cmd** (if Windows asks whether to run it, press **Run**:
+   Studio then clears that warning so it doesn't ask again). Keep that window
+   open. The first launch downloads about 300 MB and takes a few minutes.
 3. Your browser opens the setup page at http://127.0.0.1:7860/cr-setup:
-   - if FFmpeg (video tools) or Node.js (YouTube helper) needs attention, press
-     **Fix it** next to it: Studio puts it in its own folder, no password,
+   - if FFmpeg (video tools) or Node.js (YouTube helper) is missing, Studio
+     downloads it into its own folder by itself while the page is open (no
+     password); only if it says it couldn't, press **Fix it** next to it,
    - connect your ChannelRecipe account,
    - Claude: Studio needs Claude Code's command-line tool (the Claude desktop
      app alone isn't enough). Press **Install Claude Code** (Anthropic's

@@ -469,6 +469,42 @@ def test_fix_claude_does_nothing_when_claude_is_there_and_says_why_an_install_fa
     assert killed == [stuck], "the whole installer is stopped, so a second Install never runs beside it"
 
 
+def test_the_sign_in_words_name_this_computers_own_terminal():
+    """The Windows test read "run ... in Terminal on a Mac, PowerShell on Windows" with a PowerShell & command
+    (2026-10-26): each computer names only its own."""
+    assert cr_installs.terminal_name(True) == "PowerShell"
+    assert cr_installs.terminal_name(False, True) == "Terminal" and cr_installs.terminal_name(False, False) == "a terminal"
+    windows = cr_installs.fix_claude(find=lambda: r"C:\Users\Zoé\.local\bin\claude.exe", background=False, windows=True)
+    said = cr_installs.status("claude")["message"]
+    assert windows["state"] == "starting" and "in PowerShell)" in said and "Terminal" not in said and "& '" in said
+    cr_installs.fix_claude(find=lambda: "/Users/zoe/.local/bin/claude", background=False, windows=False)
+    said = cr_installs.status("claude")["message"]
+    assert "PowerShell" not in said and "on a Mac" not in said and "auth login" in said
+
+
+def test_installing_claude_code_shows_a_moving_line_while_it_downloads(tmp_path):
+    """Anthropic's installer prints nothing until it ends (2.5 minutes of one still line on the owner's Windows PC):
+    setup's line follows the program growing in ~/.claude/downloads, then its setup step, with the time so far."""
+    now = [100.0]
+    progress = cr_installs.ClaudeProgress(tmp_path, 283, since=0, clock=lambda: now[0])
+    assert progress.line() == "Starting Anthropic's official Claude Code installer (0 s)…"
+    download = tmp_path / "claude-2.1.310-win32-x64.exe"
+    with open(download, "wb") as out:
+        out.truncate(85 << 20)                                 # a sparse file: no 85 MB written
+    now[0] += 70
+    assert progress.line() == "Downloading Claude Code: 85 of about 283 MB (1 min 10 s)…"
+    now[0] += 9                                                # no longer growing: checked and being set up
+    assert progress.line() == "Checking and setting up Claude Code (1 min 19 s)…"
+    download.unlink()
+    now[0] += 3
+    assert progress.line() == "Finishing the Claude Code install (1 min 22 s)…"
+    old = cr_installs.ClaudeProgress(tmp_path, 0, since=10 ** 10, clock=lambda: now[0])
+    (tmp_path / "claude-left-from-a-stopped-install").write_bytes(b"x" * 2048)
+    assert old.line().startswith("Starting"), "a file from an earlier install isn't this download"
+    unknown = cr_installs.ClaudeProgress(tmp_path, 0, since=0, clock=lambda: now[0])
+    assert unknown.line() == "Downloading Claude Code: 0 MB so far (0 s)…"
+
+
 def test_the_sign_in_window_runs_claude_by_its_full_path(tmp_path, monkeypatch):
     opened = []
     popen = lambda command, **kw: opened.append((command, kw))

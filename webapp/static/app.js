@@ -319,12 +319,15 @@ function maybeShowCookieBanner(cfg) {
     if (localStorage.getItem('cr_cookie_consent')) return;
     const banner = document.getElementById('cookie-banner');
     if (banner) banner.style.display = 'flex';
+    // room at the page's end, so nothing (the Studio page's Download button) stays under the banner
+    document.body.classList.toggle('cookie-open', !!banner);
 }
 
 function acceptCookies() {
     localStorage.setItem('cr_cookie_consent', 'accepted');
     const b = document.getElementById('cookie-banner');
     if (b) b.style.display = 'none';
+    document.body.classList.remove('cookie-open');
     // Fire after init so PostHog is live
     initAnalytics().then(() => {
         _track('cookie_consent', { choice: 'accepted' });
@@ -335,6 +338,7 @@ function declineCookies() {
     localStorage.setItem('cr_cookie_consent', 'declined');
     const b = document.getElementById('cookie-banner');
     if (b) b.style.display = 'none';
+    document.body.classList.remove('cookie-open');
     // No PostHog — can't capture here; landing decline is same.
 }
 
