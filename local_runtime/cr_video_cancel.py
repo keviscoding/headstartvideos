@@ -202,7 +202,12 @@ def worker_options(home) -> dict:
     """How Studio starts a video worker process (the Windows smoke test starts its Whisper worker the same way)."""
     # KMP_DUPLICATE_LIB_OK: two copies of Intel's OpenMP (the speech-timing model's and another library's) abort a
     # process outright on Windows ("OMP: Error #15") instead of running.
-    options = {"cwd": str(home), "stdin": subprocess.DEVNULL, "env": {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE"}}
+    # PYTHONUTF8: the engine is the private source, and 81 of its text reads, writes and tool outputs name no encoding
+    # (sweep 2026-10-25), so on Windows they used cp1252: a curly quote (”) in UTF-8 can't be read that way, and an
+    # arrow, a Japanese title or an emoji can't be written. In UTF-8 mode they are all UTF-8, as on a Mac, and so are the
+    # 3D, timeline and style workers this one starts. The Shorts run the same way (cr_shorts.child_env).
+    options = {"cwd": str(home), "stdin": subprocess.DEVNULL,
+               "env": {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8:replace"}}
     if os.name == "nt":
         options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
@@ -211,10 +216,15 @@ def worker_options(home) -> dict:
 
 
 class VideoWorkers:
-    def __init__(self, studio, home, *, popen=None, stop=None):
+    def __init__(self, studio, home, *, popen=None, stop=None, awake=None):
         self.studio, self.home = studio, Path(home)
         self.popen = popen or subprocess.Popen
         self.stop_process = stop or self._stop_process
+        # the computer stays awake while a real worker runs (cr_awake); a stand-in worker (tests) needs nothing
+        if awake is None and popen is None:
+            import cr_awake
+            awake = cr_awake.hold
+        self.awake = awake
         self.lock = threading.RLock()
         self.current = None
 
@@ -263,6 +273,7 @@ class VideoWorkers:
                     return
                 active = {"slug": slug, "run_id": run_id, "process": process, "cancel_requested": False}
                 self.current = active
+            keep = self.awake(process) if self.awake else None
             try:
                 while process.poll() is None:
                     self._follow(active, progress, state, project_id)
@@ -280,6 +291,8 @@ class VideoWorkers:
                                  cr_failure=crash_failure(log_path, process.returncode))
                     state.setdefault("lines", []).append(state["error"])
             finally:
+                if keep is not None:
+                    keep.release()
                 # Never free the account/project reservation while a worker lives.
                 if process.poll() is not None:
                     with self.lock:
