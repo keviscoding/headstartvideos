@@ -135,10 +135,14 @@ def status(home, look_id) -> dict:
     percent, message = PHASES.get(phase, PHASES["queued"])
     if saved.get("state") == "running" and time.time() - saved.get("updated_at", 0) > 900:
         saved.update(state="failed", phase="failed", error="Looking at the references stopped. Try again.")
+    if saved.get("state") == "running" and isinstance(saved.get("percent"), (int, float)):
+        percent = saved["percent"]                     # measured as the work goes, and only ever forward
     out = {"look_id": look_id, "state": saved.get("state"), "phase": phase, "percent": percent,
            "message": saved.get("error") or saved.get("message") or message,
            "references": [{"id": r["id"], "title": r.get("title", ""), "channel": r.get("channel", "")}
                           for r in saved.get("references", [])]}
+    if saved.get("state") == "running":
+        out.update({k: saved[k] for k in ("video", "videos", "left_s") if saved.get(k) is not None})
     if saved.get("state") == "done":
         mapping = saved.get("mapping") or {}
         import cr_style_map
@@ -210,6 +214,10 @@ def _lost_note(ref, lost, total) -> str:
 
 
 def _download(video_id, a, b, dest: Path, timeout=420) -> Path:
+    """One section of a reference, copied as YouTube sends it. No --force-keyframes-at-cuts: that re-encodes every
+    section on this computer (minutes each on a slow PC, most of a 9-minute look in the owner's Windows test), and the
+    measuring needs none of it: a copied section starts at the keyframe just before `a` (a second or two early at
+    most), which the cut, motion, light and sound measures and the stills taken from the same file all share."""
     import cr_style_clone
     command = cr_style_clone._ytdlp_command()
     if not command:
@@ -218,7 +226,7 @@ def _download(video_id, a, b, dest: Path, timeout=420) -> Path:
     done = subprocess.run(command + ["-q", "--no-warnings", "--no-playlist", "-f",
                                      "bv*[height<=480][height>=360]+ba/b[height<=480]/bv*+ba/b",
                                      "--merge-output-format", "mp4", "--download-sections", f"*{a}-{b}",
-                                     "--force-keyframes-at-cuts", "-o", f"{out}.%(ext)s",
+                                     "-o", f"{out}.%(ext)s",
                                      "https://www.youtube.com/watch?v=" + video_id],
                           capture_output=True, text=True, timeout=timeout, encoding="utf-8", errors="replace")
     got = sorted((Path(p) for p in glob.glob(glob.escape(str(out)) + ".*") if p.endswith((".mp4", ".mkv", ".webm"))),
@@ -277,16 +285,31 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
     path = folder(home, look_id)
     saved = _read(path / "look.json")
     log_lines = []
+    refs = saved["references"]
+    spans_of = [list(cr_style_watch.windows(float(r.get("duration_seconds") or r.get("duration") or 0))) for r in refs]
+    # the work, in steps of about the same length: each section is downloaded, then measured; the bar shows the
+    # share done (5 to 85, then Gemini's watching and the profile) and the time left is measured from the steps so far
+    steps = {"done": 0, "all": max(1, 2 * sum(len(spans) for spans in spans_of)), "from": now()}
 
-    def progress(phase, message=""):
-        saved.update(phase=phase, message=message, updated_at=now())
+    def progress(phase, message="", *, video=None):
+        share = steps["done"] / steps["all"]
+        aim = {"download": 5 + 80 * share, "measure": 5 + 80 * share, "watch": 86, "profile": 95, "done": 100}.get(
+            phase, saved.get("percent") or 0)
+        left = None
+        spent = now() - steps["from"]
+        if phase in ("download", "measure") and steps["done"] and spent >= 15:
+            left = round(spent / steps["done"] * (steps["all"] - steps["done"]))
+        saved.update(phase=phase, message=message, updated_at=now(),
+                     percent=max(int(saved.get("percent") or 0), int(aim)), video=video, videos=len(refs), left_s=left)
         _write(path / "look.json", saved)
+
+    def step_done():
+        steps["done"] = min(steps["all"], steps["done"] + 1)
 
     def log(text):
         log_lines.append(str(text))
         print(text, flush=True)
 
-    refs = saved["references"]
     work = path / "work"
     built, unmeasured = [], []
     watched = {}
@@ -294,32 +317,50 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
     def watch_one(ref, captions):
         watched[ref["id"]] = cr_style_watch.watch(ref["id"], ref.get("duration_seconds") or ref.get("duration") or 0,
                                                  call=call, log=log, transcript=captions)
+
+    def fetch(vid, a, b):
+        """One section, tried twice (once when YouTube asks to sign in): its file, or what went wrong."""
+        for attempt in (1, 2):
+            try:
+                return download(vid, a, b, work / "media" / f"{vid}_{a}_{b}.mp4")
+            except Exception as exc:                                   # noqa: BLE001
+                log(f"  download {vid} {_mmss(a)}-{_mmss(b)}: {exc}")
+                if attempt == 2 or BOT_CHECK.search(str(exc)):
+                    return exc
+    # the next video downloads while this one is measured: one download at a time, in the order they are measured
+    from concurrent.futures import ThreadPoolExecutor
+    downloads = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cr-look-download")
+    fetched = [[downloads.submit(fetch, ref["id"], a, b) for a, b in spans] for ref, spans in zip(refs, spans_of)]
     threads = []
     try:
-        for ref in refs:
+        for number, (ref, spans, pending) in enumerate(zip(refs, spans_of, fetched), 1):
             vid, duration = ref["id"], float(ref.get("duration_seconds") or ref.get("duration") or 0)
-            progress("download", f"Reading the captions of {ref.get('title') or vid}.")
+            name = ref.get("title") or vid
+            said = f"Video {number} of {len(refs)} \u00b7 " if len(refs) > 1 else ""
+            progress("download", f"{said}Reading the captions of {name}.", video=number)
             captions = transcript(vid, work)
             thread = threading.Thread(target=watch_one, args=(ref, captions), daemon=True)
             thread.start()
             threads.append(thread)
-            spans = [w for w in cr_style_watch.windows(duration)]           # what Gemini watches, minus promotions
             sections, lost = [], []
-            for a, b in spans:
-                progress("download", f"Downloading {_mmss(a)}-{_mmss(b)} of {ref.get('title') or vid}.")
-                for attempt in (1, 2):
-                    try:
-                        sections.append((a, download(vid, a, b, work / "media" / f"{vid}_{a}_{b}.mp4")))
-                        break
-                    except Exception as exc:                           # noqa: BLE001
-                        log(f"  download {vid} {_mmss(a)}-{_mmss(b)}: {exc}")
-                        if attempt == 2 or BOT_CHECK.search(str(exc)):
-                            lost.append((a, b, str(exc)))
-                            break
+            for (a, b), job in zip(spans, pending):                    # what Gemini watches, minus promotions
+                if not job.done():
+                    progress("download", f"{said}Downloading {_mmss(a)}-{_mmss(b)} of {name}.", video=number)
+                got = job.result()
+                step_done()
+                if isinstance(got, Path):
+                    sections.append((a, got))
+                else:
+                    lost.append((a, b, str(got)))
             if lost:
                 unmeasured.append(_lost_note(ref, lost, len(spans)))
-            progress("measure", f"Measuring {ref.get('title') or vid}.")
-            measured = [measure(file, start=a, keyframes=True) for a, file in sections]
+            steps["done"] = min(steps["all"], steps["done"] + len(spans) - len(sections))   # never measured
+            progress("measure", f"{said}Measuring cuts, motion, light and sound in {name}.", video=number)
+            measured = []
+            for a, file in sections:
+                measured.append(measure(file, start=a, keyframes=True))
+                step_done()
+                progress("measure", f"{said}Measuring cuts, motion, light and sound in {name}.", video=number)
             _stills(sections, measured, path / "frames", vid)
             frames = [f for m in measured for f in m.pop("_keyframes", [])]
             sheet = None
@@ -338,7 +379,7 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
                           if spoken and speech else {"words": 0, "seconds": 0},
                           "caption_lines": len(captions), "caption_words": words,
                           "excerpt": " ".join(str(w) for t, w in captions if t < 150)[:1500]})
-        progress("watch", "Gemini is watching the references.")
+        progress("watch", "Gemini is finishing watching the references.")
         for thread in threads:
             thread.join(timeout=cr_style_watch.WAIT_S + 120)
         for ref in built:
@@ -361,6 +402,8 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
         saved.update(state="failed", phase="failed", error="Studio couldn't look at these references ("
                      + str(exc)[:200] + "). Nothing was charged; try again or choose other videos.")
         _write(path / "look.json", saved)
+    finally:
+        downloads.shutdown(wait=False, cancel_futures=True)
     return status(home, look_id)
 
 

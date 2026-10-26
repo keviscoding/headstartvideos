@@ -1214,6 +1214,8 @@ def look_progress(look_id: str) -> dict:
     d = call("GET", "/cr-style-clone/look/" + look_id, timeout=30)
     out = {"id": look_id, "state": d.get("state"), "percent": d.get("percent"), "message": d.get("message"),
            "references": d.get("references")}
+    if d.get("state") == "running" and d.get("left_s"):
+        out["minutes_left"] = max(1, round(float(d["left_s"]) / 60))       # measured from the look's steps so far
     if d.get("state") == "done":
         m = d.get("mapping") or {}
         route = m.get("route") or {}
