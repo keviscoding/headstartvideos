@@ -259,6 +259,30 @@ def test_a_3d_study_is_briefed_with_the_3d_kit_from_its_start(home, kit3d, monke
     assert list((folder / "renderer").glob("old-*/round-1.txt")), "the old draft is kept aside, not deleted"
 
 
+def test_a_designed_cast_keeps_its_renderer_on_the_recipe_the_look_recommended(home, kit3d):
+    """An @ifologyfilms-type cast was promised Claude's 3D renderer on the look screen, then drawn as AI pictures: the
+    study passes the recommended base back, and that counted as a picture recipe picked by hand."""
+    import cr_style_clone as clone
+    import cr_style_look as look
+    import test_style_look as tsl
+    profile = tsm.profile({"3d": 0.85, "graphic": 0.15}, {"3d_render": 0.85}, **tsm.IFOLOGY)
+    plan = cm.plan_style(profile, tsm.STYLES)
+    again = cm.plan_style(profile, tsm.STYLES, base=plan["base"])
+    assert plan["route"]["engine"] == again["route"]["engine"] == "animated3d" and plan["base"] == "stories"
+    assert again["overrides"]["look"]["visuals"] == a2d.VISUALS3D
+    picked = next(b for b in tsm.STYLES if b not in ("stories", "3d", "nocturne"))
+    assert cm.plan_style(profile, tsm.STYLES, base=picked)["route"]["engine"] == "drawn", "a picture recipe by hand"
+    look_id, _ = _roblox_look(home)
+    path = look.folder(home, look_id) / "look.json"
+    saved = json.loads(path.read_text())
+    saved["profile"]["pictures"]["art_style"]["value"] = tsm.IFOLOGY["pictures__art_style"]["value"]
+    saved["profile"]["pictures"]["people_3d"] = {"value": {"designed": 1.0}, "confidence": 0.7, "from": ["watched"]}
+    path.write_text(json.dumps(saved))
+    payload = {"preview_id": "pv_" + "a" * 64, "reference_ids": [tsl.VIDEO], "base_style": "stories", "label": "Mine",
+               "title": "A video", "acknowledge_costs": True, "look_id": look_id, "answers": {}, "visual_mode": "mixed"}
+    assert clone._spec(home, payload)["renderer"] == "3d"
+
+
 def test_round_files_belong_to_their_build(tmp_path):
     out = tmp_path / "renderer"
     (out / "round-1").mkdir(parents=True)

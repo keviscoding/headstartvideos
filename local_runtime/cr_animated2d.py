@@ -892,7 +892,8 @@ def attach(style: dict, folder, home) -> dict:
         same = target / f"renderer-v{number}.js"
         same.write_text(code, encoding="utf-8")
     spec["renderer"] = {"file": same.relative_to(Path(home) / "assets").as_posix(), "sha256": digest,
-                        "version": int(re.sub(r"\D", "", same.stem)), "api": KIT_API, "state": built["state"],
+                        "version": int(re.sub(r"\D", "", same.stem)), "api": KIT_API, "dims": dims_of(spec),
+                        "state": built["state"],
                         "overall": built.get("overall"), "bar": built.get("bar"), "control": built.get("control"),
                         "round": built.get("round"), "manifest": built.get("manifest") or {}}
     return style

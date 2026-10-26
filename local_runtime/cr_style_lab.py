@@ -479,7 +479,7 @@ def save(home, style: str) -> dict:
         same = target / f"renderer-v{number}.js"
         same.write_text(code, encoding="utf-8")
     spec["renderer"] = {"file": same.relative_to(Path(home) / "assets").as_posix(), "sha256": sha,
-                        "version": int(re.sub(r"\D", "", same.stem)), "api": a2d.KIT_API,
+                        "version": int(re.sub(r"\D", "", same.stem)), "api": a2d.KIT_API, "dims": lab["dims"],
                         "state": ("passed" if checked.get("passed") else "below_bar") if checked else "unchecked",
                         "overall": checked.get("overall"), "bar": checked.get("bar") or lab.get("bar"),
                         "control": checked.get("control") or lab.get("control"), "manifest": found,

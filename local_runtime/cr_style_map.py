@@ -1211,10 +1211,13 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
         designed, looked = (shown, 0.0) if builds else (0.0, shown)
     else:
         designed, looked = designed_3d(profile), drawn_3d(profile)
-    by_hand = bool(designed) and bool(base) and base not in ("3d", "nocturne")
+    renders = base not in ("3d", "nocturne") and rendered_3d(profile, medium)
+    # "stories" carries Claude's renderer (the recipe the look recommends): passing it back is not a picture recipe
+    # picked by hand (a designed cast was once drawn as AI pictures because the study passed the recommended base)
+    by_hand = bool(designed) and bool(base) and base not in ("3d", "nocturne") and not (renders and base == "stories")
     if by_hand:                                   # the creator picked a picture recipe: drawn, by their choice
         designed, looked = 0.0, designed
-    rendered = not by_hand and base not in ("3d", "nocturne") and rendered_3d(profile, medium)
+    rendered = not by_hand and renders
     pictures = medium == MEDIUM_PICTURES and _families(profile).get("3d", 0) >= 0.2
     if pictures:
         designed, looked = 0.0, _families(profile).get("3d", 0)
