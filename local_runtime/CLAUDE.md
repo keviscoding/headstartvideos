@@ -189,8 +189,9 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Cloning a style (/clone-style): any channel is cloned in code by default. The look's `made` question comes first:
   ask it before anything else, in plain words. Written in code (Studio's recommendation, first) means the study has
   their Claude Code write this channel's own renderer from its frames, whatever they show (characters, graphics, maps,
-  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames: usually 10
-  to 25 minutes of Claude usage for the whole study (at most 46: the study budget plus 24 for the animation), no money.
+  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames:
+  usually 10 to 25 minutes of Claude usage for the whole study (at most 46: the study budget plus 24 for the
+  animation), no money.
   A style written in code has no motion-graphics kit (Studio 109 skips that step): its renderer draws every picture.
   Every video then reuses it: Claude directs it to the narration and Studio draws every frame on their computer, so a
   video costs its voice (plus about $0.02 for each
@@ -200,8 +201,11 @@ Studio through its own checks, so nothing needs the Studio web page.
   ready at once, but it won't look or move exactly like the channel; only when they choose it. When the study is
   done, `progress(op_…)` has `animation`: its score against the channel's own bar; read `what_to_tell_them` to the
   creator. If they want it closer, improve it with them in Style Lab (below); if they would rather have pictures,
-  they press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style`
-  returns a `medium_gap`, Studio can't make that yet: read it to the creator and call `clone_style` with
+  they press Use pictures instead on the style's page (never choose for them). Say first that those pictures come
+  with the base recipe's motion graphics and title cards, not the channel's: the page then offers to study the
+  channel's own graphics (about 7 to 20 minutes of their Claude usage, no money, only on their tick), saved as a copy.
+  If `look_progress` or `clone_style` returns a `medium_gap`, Studio can't make that yet: read it to the creator and
+  call `clone_style` with
   `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
 - Improving a style after it's saved (any style written in code): the `style_lab` tool and the /clone-style
   skill's Style Lab section. They can prompt it like any code: edit its workspace files, preview, check against the

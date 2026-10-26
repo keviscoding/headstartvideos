@@ -1114,3 +1114,16 @@ def test_browser_a_channel_written_in_code_reads_plainly_from_the_look_to_the_sa
         assert not b.errors, b.errors
     finally:
         b.close()
+
+
+def test_the_channels_graphics_are_studied_only_with_consent_and_only_for_a_coded_style_now_in_pictures(env):
+    """The opt-in graphics study (109 review): never without the tick, never for a style it doesn't fit."""
+    result = env.post("/cr-style-clone/start", env.approved())
+    source = result.json["operation_id"]
+    env.targets.pop()()
+    path = f"/cr-style-clone/{source}/graphics"
+    for payload in ({}, {"acknowledge_costs": False}, {"acknowledge_costs": "true"}):
+        assert env.post(path, payload).status_code == 400
+    refused = env.post(path, {"acknowledge_costs": True})
+    assert refused.status_code == 409 and "Only a style written in code" in refused.json["error"]
+    assert not env.targets, "no worker started"
