@@ -47,7 +47,7 @@ def browser():
 
 @pytest.fixture
 def workspace(browser):
-    env = SimpleNamespace(mode="ready", creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
+    env = SimpleNamespace(mode="ready", status_lines=None, creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
                           local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}],
@@ -240,7 +240,7 @@ def workspace(browser):
                            cr_cancel={"can_cancel": False})
         active = slug == "active-film"
         return jsonify(state="running" if active else "done", done=not active,
-                       lines=env.active_lines if active else ["published: synthetic film"],
+                       lines=(env.status_lines or env.active_lines) if active else ["published: synthetic film"],
                        progress=0.425 if active else 1, elapsed=125, error="",
                        cr_cancel={"can_cancel": active, "run_id": "exact-active-run" if active else ""})
 
@@ -836,3 +836,30 @@ def test_a_learned_style_is_deleted_from_the_style_library_and_restored(workspac
     page.get_by_role("button", name="Restore My Illustrated Worlds").click()
     page.wait_for_selector("#crw-styles-list .crw-recipe-card")
     assert "is back in your Style library" in page.locator("#crw-toast").inner_text()
+
+
+def test_progress_says_which_3d_review_round_is_running_and_why_it_takes_long(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "active"
+    env.status_lines = ["3D: previews — round 2/3, 30 scenes, 90 stills",
+                        "3D: review 2/3 — Claude is looking at 90 stills of 30 scenes (6 contact sheets)"]
+    env.open("#projects")
+    page.get_by_role("button", name="View progress", exact=True).click()
+    page.locator("#crw-progress-detail").wait_for(state="visible")
+    assert page.locator("#crw-progress-phase").inner_text() == "3D review, round 2 of 3"
+    detail = page.locator("#crw-progress-detail").inner_text()
+    assert "Claude is checking 90 stills of 30 scenes" in detail and "15 to 30 minutes" in detail
+    if os.environ.get("CR_SHOT"):
+        page.locator("#crw-progress").screenshot(path=os.environ["CR_SHOT"])
+
+
+def test_progress_shows_the_real_step_under_a_general_heading(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "active"
+    env.status_lines = ["Writing the voiceover", "  subtitles: timing narration with whisper (2 of 3 parts)"]
+    env.open("#projects")
+    page.get_by_role("button", name="View progress", exact=True).click()
+    page.locator("#crw-progress-detail").wait_for(state="visible")
+    assert page.locator("#crw-progress-phase").inner_text() == "Timing narration and captions"
+    assert page.locator("#crw-progress-detail").inner_text() == "subtitles: timing narration with whisper (2 of 3 parts)"
+

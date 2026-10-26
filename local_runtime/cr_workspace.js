@@ -399,6 +399,21 @@
     if (/subtitles|whisper|timing narration/i.test(v)) return 'Timing narration and captions'; if (/voice|tts|narration/i.test(v)) return 'Creating narration';
     if (/design|scene|graphic|image|motion|kit/i.test(v)) return 'Building visual scenes'; if (/script|fact check/i.test(v)) return 'Writing and checking the story'; return 'Preparing the project';
   };
+  // The step the studio is on now, read from the job's last log line: a short heading, plus a line that says what is
+  // really happening (a 3D review round can take half an hour, and "Reviewing visuals" alone told customers nothing)
+  const phaseInfo = line => {
+    const raw = String(line || '').trim(), said = raw.replace(/^3D:\s*/,''), threed = raw !== said;
+    let m;
+    if (threed && (m = said.match(/^review (\d+)\/(\d+) [—-] Claude is looking at (\d+) stills of (\d+) scenes/)))
+      return {phase:`3D review, round ${m[1]} of ${m[2]}`,detail:`Claude is checking ${m[3]} stills of ${m[4]} scenes and fixing what looks wrong. A round often takes 15 to 30 minutes and uses your Claude plan.`};
+    if (threed && (m = said.match(/^review (\d+)\/(\d+) [—-] (\d+) of (\d+) scenes fixed/)))
+      return {phase:`3D review, round ${m[1]} of ${m[2]}`,detail:`${m[3]} of ${m[4]} scenes fixed in this round.`};
+    if (threed && (m = said.match(/^previews [—-] round (\d+)\/(\d+), (\d+) scenes/)))
+      return {phase:`3D previews, round ${m[1]} of ${m[2]}`,detail:`Rendering quick stills of ${m[3]} scenes for Claude to check.`};
+    if (threed && /^repair/.test(said)) return {phase:'Fixing empty 3D shots',detail:said.slice(0,160)};
+    if (threed && /^checking the last fixes/.test(said)) return {phase:'Checking the last 3D fixes',detail:said.slice(0,160)};
+    return {phase:phaseCopy(raw),detail:raw.slice(0,160)};
+  };
   function statusBadge(value) {const kind = value === 'done' ? 'done' : ['running','queued'].includes(value) ? 'running' : 'stopped'; return el('span',`crw-status-badge is-${kind}`,{done:'Ready',running:'In production',queued:'Queued',held:'On hold',cancelled:'Cancelled',error:'Needs review',failed:'Needs review'}[value] || 'Saved');}
   function combinedProjects() {
     // stopped videos saved on disk first, so a live or finished entry for the same folder wins
@@ -454,7 +469,9 @@
         data = {done: true, state: 'error', lines: [], error: 'This video stopped before Studio last restarted. Its saved work is kept: press Resume saved project to carry on from where it stopped.'};
       }
       const lines = data.lines || [];
-      const last = lines[lines.length-1] || ''; text('crw-progress-phase', data.done ? (data.state === 'done' ? 'Ready to watch' : 'This project stopped') : phaseCopy(last));
+      const last = lines[lines.length-1] || '', now = phaseInfo(last);
+      text('crw-progress-phase', data.done ? (data.state === 'done' ? 'Ready to watch' : 'This project stopped') : now.phase);
+      text('crw-progress-detail', data.done ? '' : now.detail); hide('crw-progress-detail', data.done || !now.detail);
       const queued = state.queue.find(q=>q.slug===state.openJob); text('crw-progress-time',data.elapsed != null ? elapsed(data.elapsed) : queued?.elapsed != null ? elapsed(queued.elapsed) : '');
       const bar = $('crw-progress-bar'); const percent = data.done && data.state === 'done' ? 100 : Number.isFinite(data.progress) ? Math.max(0,Math.min(100,data.progress*100)) : null;
       bar.parentElement.hidden = percent === null; if (percent !== null) {bar.style.width = `${percent}%`; bar.parentElement.setAttribute('role','progressbar'); bar.parentElement.setAttribute('aria-valuemin','0'); bar.parentElement.setAttribute('aria-valuemax','100'); bar.parentElement.setAttribute('aria-valuenow',String(Math.round(percent)));}
