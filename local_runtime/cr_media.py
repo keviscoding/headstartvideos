@@ -1298,6 +1298,8 @@ def install(engine):
         cr_character.install(engine)                # a new character for one video replaces the recipe's picture
         import cr_style_prompts
         cr_style_prompts.install(engine)            # learned styles draw with today's storyboard prompt
+        import cr_spoken
+        cr_spoken.install(engine)                   # a sound cue the writer slipped into the narration isn't read aloud
     except ImportError:
         pass
     # Native Kie motion and the history kit previously bypassed the hub.
