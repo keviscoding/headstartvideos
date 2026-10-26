@@ -1669,7 +1669,8 @@ def create_app():
     cr_cloud.install_routes(studio, token, HOME)                 # the workspace's "Studio Cloud" choice
     import cr_claude_code
     cr_claude_code.install(studio, token, HOME)                  # Claude Code's style gallery and the studio tools' routes
-    cr_recover.install(studio, activity, token=token, home=HOME)  # a stopped video: one honest yes, or on by itself
+    # a stopped video: one honest yes, or on by itself (its watcher is started by main, never in tests)
+    cr_recover.install(studio, activity, token=token, home=HOME, start_watcher=False)
 
     @studio.app.get("/cr-cloud")
     def cloud_status():
@@ -1843,6 +1844,10 @@ def main():
         import cr_claude_code
         cr_claude_code.configure(HOME)                           # Claude Code in this folder: the studio tools
         studio._cr_watcher.start()                               # a desktop notification when a video is done
+    except Exception:
+        pass
+    try:
+        studio._cr_recover.start()                               # stopped videos carry on when that's clearly free
     except Exception:
         pass
     studio._ensure_dispatcher()

@@ -61,3 +61,9 @@ What they asked for: $ARGUMENTS
   this computer for now.
 - Never turn on paid options the creator didn't ask for, and never retry a stopped video by yourself: tell them what
   Studio said and let them choose.
+- **A title that already stopped** with its work saved comes back from `make_videos` as `resume_first`: offer to carry
+  it on instead (`progress(id)`, then `resume_video(id)` or, for a stopped Claude step, `recover_video` after their
+  yes), which reuses its script, voice and pictures. Only if they insist on starting over, call `make_videos` again
+  with `new_attempt=true`: a brand-new video that pays again for every step.
+- `options.carry_on_after_usage_reset` (off unless they choose it): if Claude's usage limit stops a video, Studio
+  tries that step once more by itself after the reset Claude reported, on their Claude plan.

@@ -344,7 +344,7 @@ def _task_of(model) -> str:
             continue
         for task, value in (info.get("models") or {}).items():
             if value == model:
-                return {"avatar_pro": "avatars"}.get(task, task)
+                return {"avatar_pro": "avatars", "image_edit": "images"}.get(task, task)
         if any(model == c.get("id") for c in info.get("narration_models") or [] if isinstance(c, dict)):
             return "narration"
         if any(model in (c.get("id"), c.get("generate"), c.get("edit")) for c in info.get("image_models") or []
@@ -393,7 +393,7 @@ def stuck_media(job, *, since=0.0, message="") -> list:
         label = (cr_media.PROVIDERS.get(provider) or {}).get("label", provider)
         what = TASK_WORDS.get(task, "media")
         row = {"receipt": path.relative_to(job).as_posix(), "task": task, "provider": provider,
-               "credits": r.get("credits"), "at": _mtime(path), "fix_first": ""}
+               "credits": r.get("credits"), "at": _mtime(path), "do_first": ""}
         if status == "submitting" and not r.get("id"):
             row.update(state="uncertain", free=False, may_have_spent=True, money=True, needs_approval=True, pays_twice=True,
                        reason=f"{label} was sent a {what} request but no clear answer came back, so it may have "
@@ -418,7 +418,7 @@ def stuck_media(job, *, since=0.0, message="") -> list:
                        "rate_limit": f"{label} asked Studio to slow down: wait a few minutes, then carry on.",
                        "moderation": f"{label} refused the words of this {what}: change the video's instructions.",
                        "access": f"Reconnect your {label} key in Setup & accounts, then carry on."}.get(category, "")
-                row.update(may_have_spent=False, needs_approval=False, fix_first=fix,
+                row.update(may_have_spent=False, needs_approval=False, do_first=fix,
                            reason=f"{label} refused this {what} request before making anything, so nothing was "
                                   "charged.")
             else:
@@ -474,7 +474,8 @@ def diagnose(home, job, *, server_stages=None, allowance=None, message="", claud
     stop = last_stop(job, home)
     stopped_on = ("claude_stage" if stages else "media" if media else "local" if stop["kind"] == "local" else "")
     needs = [s for s in stages if s["needs_approval"]] + [m for m in media if m.get("needs_approval")]
-    fixes = [r["fix_first"] for r in stages + media if r.get("fix_first")]
+    fixes = [r["fix_first"] for r in stages if r.get("fix_first")]          # blocking: nothing can carry it on yet
+    advice = list(dict.fromkeys(m["do_first"] for m in media if m.get("do_first")))   # free once it's done
     spent_claude = any(s["may_have_spent"] for s in stages if s["needs_approval"])
     spent_money = any(m.get("may_have_spent") and m.get("needs_approval") for m in media)
     usage = [s for s in stages if s["error_code"] == "usage_limit" and s["needs_approval"]]
@@ -482,7 +483,7 @@ def diagnose(home, job, *, server_stages=None, allowance=None, message="", claud
     out = {"slug": job.name, "project_id": project_id, "title": job_title(job, saved), "stopped_on": stopped_on,
            "stop": stop["category"] or stop["kind"], "stopped_at": _when(stop["at"]),
            "claude_stages": stages, "media": media, "needs_approval": bool(needs) and not fixes,
-           "fix_first": fixes, "key": _key(stages, media),
+           "fix_first": fixes, "do_first": advice, "key": _key(stages, media),
            "free_to_resume": not needs and not fixes,
            "carry_on_after_reset": carry_on(job), "auto_resumes": auto_record(job)["count"], "auto_limit": AUTO_LIMIT}
     if reset:
@@ -496,8 +497,10 @@ def _tell(d, spent_claude, spent_money, usage) -> str:
     if d["fix_first"]:
         return " ".join(dict.fromkeys(d["fix_first"]))
     if not d["needs_approval"]:
+        first = (" ".join(d["do_first"]) + " ") if d.get("do_first") else ""
         if d["media"]:
-            return "It can carry on as it is: the unfinished paid tasks are checked again, never paid again."
+            return first + ("It can then carry on as it is" if first else "It can carry on as it is") + \
+                ": the unfinished paid tasks are checked or sent again only where that can't pay twice."
         return "It can carry on as it is: everything already made is reused and nothing is paid twice."
     parts = []
     n = sum(1 for s in d["claude_stages"] if s["needs_approval"])
@@ -787,13 +790,18 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
             return jsonify(error="Finish the current studio request first."), 409
         try:
             data = request.get_json(silent=True) or {}
-            if data.get("acknowledge_costs") is not True:
+            free_only = data.get("only_if_free") is True       # a plain Resume: never approves anything
+            if data.get("acknowledge_costs") is not True and not free_only:
                 return jsonify(error="Read what trying again involves and accept it first."), 400
             job = find(slug)
             diag = look(job, sync=True)
             if diag["live"]:
                 return jsonify(error="This video is being made now.", recovery=diag), 409
-            when = str(data.get("when") or "now")
+            if free_only and (diag["needs_approval"] or diag["fix_first"]):
+                return jsonify(error=(" ".join(dict.fromkeys(diag["fix_first"])) if diag["fix_first"] else
+                                      "This video stopped on a step that needs your yes to try again. Open it in "
+                                      "Projects to see what that involves."), recovery=diag), 409
+            when = "now" if free_only else str(data.get("when") or "now")
             if when == "after_reset":
                 usage = [s for s in diag["claude_stages"] if s["needs_approval"]]
                 if not usage or any(s["error_code"] != "usage_limit" for s in usage) \

@@ -317,6 +317,8 @@ def studio(monkeypatch, tmp_path, env):
             return {"channels": json.loads(json.dumps(ROWS)), "prices": {}}
         if path == "/cr-claude-code/styles":
             return {"styles": []}
+        if path == "/cr-workspace/resume-first":               # no stopped video of these titles (cr_recover)
+            return {"matches": [], "others": body["titles"]}
         if path == "/cr-workspace/character":
             r = env.post(path, json=body)
             if r.status_code != 200:

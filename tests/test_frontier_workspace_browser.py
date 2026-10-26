@@ -168,7 +168,34 @@ def workspace(browser):
         if env.mode == "presenter":
             return jsonify(projects=[{"slug": "presenter-film", "title": "The Heist", "style": "documentary",
                                       "state": "stopped", "mtime": 1, "stopped_on": "presenter"}])
+        if env.mode == "claude_stage":
+            return jsonify(projects=[{"slug": "stage-film", "title": "The Vault", "style": "documentary",
+                                      "state": "stopped", "mtime": 1}])
         return jsonify(projects=[])
+
+    # cr_recover: a video stopped on a Claude step (one honest yes), and a stopped twin of a new Create
+    env.recovery = {"stopped_on": "claude_stage", "needs_approval": True, "key": "k" * 12, "fix_first": [],
+                    "do_first": [], "media": [], "claude_stages": [{
+                        "stage_id": "cc_" + "a" * 64, "step": "a Claude step that looks at pictures (Opus)",
+                        "status": "failed", "error_code": "usage_limit", "needs_approval": True,
+                        "reason": "Claude stopped at your plan's usage limit.",
+                        "spent_note": "Whether Claude counts a refusal at the limit against your usage isn't confirmed.",
+                        "reset_label": "26 Oct, 03:00 PM (Europe/London)", "reset_passed": False}],
+                    "reset_label": "26 Oct, 03:00 PM (Europe/London)", "reset_passed": False,
+                    "auto": {"safe": False, "why": "", "count": 0, "limit": 2}}
+
+    @app.get("/cr-workspace/recovery/<slug>")
+    def recovery(slug):
+        if slug != "stage-film":
+            return jsonify(error="This isn't a saved video of this Studio."), 404
+        return jsonify(env.recovery)
+
+    @app.post("/cr-workspace/recovery/<slug>")
+    def recover(slug):
+        if (request.json or {}).get("when") == "after_reset":
+            return jsonify(scheduled=True, message="Studio carries this video on by itself after the reset.")
+        return jsonify(approved={"approved_stages": ["cc_" + "a" * 64], "set_aside": []}, resumed=True,
+                       message="Carrying on from where it stopped. Everything already made is reused.")
 
     @app.get("/api/queue")
     def queue():
@@ -207,7 +234,8 @@ def workspace(browser):
 
     @app.get("/cr-workspace/project/<slug>")
     def saved_project(slug):
-        return jsonify(slug=slug, project_id="crv_" + "9" * 24, available_for_resume=slug in ("voice-film", "presenter-film"),
+        return jsonify(slug=slug, project_id="crv_" + "9" * 24,
+                       available_for_resume=slug in ("voice-film", "presenter-film", "stage-film"),
                        title="The Heist", status="error")
 
     @app.get("/cr-workspace/voice/<slug>")
@@ -232,7 +260,7 @@ def workspace(browser):
 
     @app.get("/api/status/<slug>")
     def progress(slug):
-        if slug == "presenter-film":
+        if slug in ("presenter-film", "stage-film"):
             return jsonify(error="no live job"), 404
         if slug == "voice-film":
             return jsonify(state="error", done=True, lines=["Writing the voiceover"], progress=0.08, elapsed=60,
@@ -252,6 +280,11 @@ def workspace(browser):
     def run():
         if env.mode == "selected_account_missing":
             return jsonify(error="Selected options need attention.", blockers=["Your image account needs attention."]), 409
+        if env.mode == "twin" and not request.json.get("new_attempt"):
+            return jsonify(error="\u201cThe Vault\u201d stopped on 2026-10-26 08:10 with its work saved.",
+                           resume_first=[{"title": "The Vault", "slug": "stage-film", "id": "video:stage-film",
+                                          "project_id": "crv_" + "9" * 24, "stopped": "2026-10-26 08:10"}],
+                           others=[]), 409
         slug = "fresh-" + str(len(env.creates) + 1)
         env.creates.append({"slug": slug, "body": request.json})
         return jsonify(queued=[{"slug": slug, "title": request.json["title"]}])
@@ -727,6 +760,57 @@ def test_trying_an_uncertain_presenter_again_asks_first_because_it_can_pay_twice
     assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/presenter-choice", "/cr-submit"))] == [
         {"path": "/cr-workspace/presenter-choice/presenter-film", "body": {"choice": "again"}},
         {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
+
+
+def test_a_video_stopped_on_a_claude_step_offers_one_honest_yes_on_its_card(workspace):
+    """A failed Claude step was a dead end outside a hidden setup box (ALEX, 2026-10-26). The stopped card says what
+    stopped it and what trying again may use, and only a ticked yes allows exactly those attempts and carries on."""
+    env, page = workspace, workspace.page
+    env.mode = "claude_stage"
+    env.open("#projects")
+    page.locator('.crw-project-card[data-slug="stage-film"]').get_by_role("button", name="Review issue",
+                                                                         exact=True).click()
+    box = page.locator(".crw-recovery")
+    box.wait_for(state="visible")
+    said = box.inner_text()
+    assert "Try the stopped steps again?" in said and "usage limit" in said and "26 Oct, 03:00 PM" in said
+    assert page.locator(".crw-resume-saved").is_hidden(), "a plain Resume would stop at the same step again"
+    now = page.get_by_role("button", name="Try now: I added Claude usage")
+    later = page.get_by_role("button", name="Carry on by itself after 26 Oct, 03:00 PM (Europe/London)")
+    assert now.is_disabled() and later.is_disabled()
+    assert not [p for p in env.posts if p["path"].startswith("/cr-workspace/recovery")]
+    box.locator("input[type=checkbox]").check()
+    if os.environ.get("CR_SHOT"):
+        page.locator("#crw-progress").screenshot(path=os.environ["CR_SHOT"])
+    later.click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('after the reset')")
+    assert [p for p in env.posts if p["path"].startswith("/cr-workspace/recovery")] == [
+        {"path": "/cr-workspace/recovery/stage-film", "body": {"acknowledge_costs": True, "key": "k" * 12,
+                                                               "when": "after_reset"}}]
+
+
+def test_create_offers_to_carry_on_a_stopped_video_of_the_same_title_first(workspace):
+    """Starting the same title again made a new project and paid for every step again (6 of 26 failed videos). Create
+    now offers to carry the stopped one on; a brand-new video only when the creator insists."""
+    env, page = workspace, workspace.page
+    env.mode = "twin"
+    env.open()
+    page.locator("#crw-title").fill("The Vault")
+    asked = []
+    page.once("dialog", lambda dialog: (asked.append(dialog.message), dialog.accept()))
+    page.get_by_role("button", name="Create video").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('The Vault')")
+    assert asked and "stopped earlier with its work saved" in asked[0]
+    assert [p for p in env.posts if p["path"].startswith("/cr-workspace/recovery")] == [
+        {"path": "/cr-workspace/recovery/stage-film", "body": {"only_if_free": True}}]
+    assert env.creates == [], "no new project"
+    env.open()
+    page.locator("#crw-title").fill("The Vault")
+    answers = iter([False, True])
+    page.on("dialog", lambda dialog: dialog.accept() if next(answers) else dialog.dismiss())
+    page.get_by_role("button", name="Create video").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('new video project')")
+    assert [c["body"].get("new_attempt") for c in env.creates] == [True]
 
 
 def test_a_new_character_is_drawn_or_uploaded_and_goes_with_the_video(workspace):

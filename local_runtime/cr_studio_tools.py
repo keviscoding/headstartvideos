@@ -813,7 +813,7 @@ def _recovery(slug: str, out: dict) -> bool:
              for s in r.get("claude_stages") or []]
     media = [{"task": m.get("task"), "provider": m.get("provider"), "state": m.get("state"), "reason": m.get("reason"),
               "trying_again_can_pay_twice": bool(m.get("pays_twice")), "free": bool(m.get("free")),
-              "needs_approval": bool(m.get("needs_approval")), **({"fix_first": m["fix_first"]} if m.get("fix_first")
+              "needs_approval": bool(m.get("needs_approval")), **({"do_first": m["do_first"]} if m.get("do_first")
                                                                   else {})}
              for m in r.get("media") or []]
     if r.get("stopped_on") in ("claude_stage", "media") and not out.get("stopped_on"):
@@ -828,7 +828,9 @@ def _recovery(slug: str, out: dict) -> bool:
     if r.get("key"):
         out["recovery_key"] = r["key"]
     if r.get("fix_first"):
-        out["fix_first"] = list(dict.fromkeys(r["fix_first"]))
+        out["fix_first"] = list(dict.fromkeys(r["fix_first"]))       # nothing carries it on until these are done
+    if r.get("do_first"):
+        out["do_first"] = list(r["do_first"])                         # then resume_video carries it on, free
     if r.get("reset_label"):
         out.update(usage_resets=r["reset_label"], usage_reset_passed=bool(r.get("reset_passed")))
     if r.get("stopped_at") and not out.get("error"):
@@ -915,12 +917,29 @@ def tool_resume_video(args):
     presenter = str(args.get("presenter") or "").strip()
     if presenter:
         call("POST", "/cr-workspace/presenter-choice/" + _quote_path(slug), {"choice": presenter}, timeout=60)
-    result = call("POST", "/cr-submit-project", {"project_id": saved["project_id"]}, timeout=120)
-    return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
-            **({"presenter": presenter} if presenter else {}),
-            "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
-            "next": "It carries on from where it stopped and reuses everything already made (script, pictures, "
-                    "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
+    try:
+        # a free resume only (cr_recover): one that would stop again at a step needing the creator's yes is refused,
+        # and one asked for while Studio makes another video carries on as soon as that one finishes
+        result = call("POST", "/cr-workspace/recovery/" + _quote_path(slug), {"only_if_free": True}, timeout=180)
+    except Refused as error:
+        if error.status == 404:                                    # an older Studio: the plain resume
+            result = call("POST", "/cr-submit-project", {"project_id": saved["project_id"]}, timeout=120)
+        elif (error.data or {}).get("recovery"):
+            return {"resumed": False, "id": "video:" + slug, "title": saved.get("title"), "why": str(error),
+                    "next": "Check progress(id): it lists the stopped steps and what trying them again involves. Tell "
+                            "the creator, and only after they say yes call recover_video(id, key=recovery_key)."}
+        else:
+            raise
+    out = {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
+           **({"presenter": presenter} if presenter else {}),
+           "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
+           "next": "It carries on from where it stopped and reuses everything already made (script, pictures, "
+                   "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
+    if result.get("waiting"):
+        out.update(resumed=False, waiting=True,
+                   next="Studio is making another video; this one carries on as soon as that finishes, reusing "
+                        "everything already made. Check progress() now and then.")
+    return out
 
 
 def tool_recover_video(args):

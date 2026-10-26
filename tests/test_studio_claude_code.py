@@ -978,3 +978,107 @@ def test_the_deletes_are_destructive_and_always_asked(tmp_path):
     permissions = json.loads((tmp_path / ".claude" / "settings.json").read_text())["permissions"]
     assert {"mcp__studio__delete_video", "mcp__studio__delete_style"} <= set(permissions["ask"])
     assert not {"mcp__studio__delete_video", "mcp__studio__delete_style"} & set(permissions["allow"])
+
+
+# ── a stopped video: one honest yes, never paying twice (cr_recover, 2026-10-26) ─────────────────────────────────────
+
+STAGE_STOP = {"stopped_on": "claude_stage", "needs_approval": True, "free_to_resume": False, "key": "abc123abc123",
+              "what_to_tell_them": "1 Claude step stopped and needs one more attempt.", "fix_first": [], "do_first": [],
+              "claude_stages": [{"stage_id": "cc_" + "a" * 64, "step": "a Claude writing step (Sonnet)",
+                                 "status": "failed", "error_code": "timeout", "needs_approval": True,
+                                 "reason": "Claude took too long on it and was stopped.", "spent": "yes",
+                                 "spent_note": "Claude worked on it until the time limit."}],
+              "media": [{"task": "motion", "provider": "kie", "state": "uncertain", "pays_twice": True,
+                         "needs_approval": True, "reason": "Kie.ai was sent a moving clip request but no clear answer "
+                                                           "came back."}],
+              "stopped_at": "2026-10-26 03:10", "auto": {"safe": False, "why": "a Claude step failed", "count": 0,
+                                                         "limit": 2}}
+
+
+def test_progress_names_a_stopped_claude_step_and_what_trying_again_may_use(studio):
+    studio.recovery["zombie--abc"] = dict(STAGE_STOP)
+    out = ok("progress", {"id": "video:zombie--abc"})
+    assert out["stopped_on"] == "voice", "the voice choices still own a voice stop"
+    assert out["recovery_key"] == "abc123abc123" and out["needs_approval"] is True
+    [step] = out["stuck_claude_steps"]
+    assert step["claude_usage_already_used"] == "yes" and step["error_code"] == "timeout"
+    assert out["stuck_media"][0]["trying_again_can_pay_twice"] is True
+    assert "recover_video(id, key=recovery_key)" in out["recovery_note"] and "Never approve" in out["recovery_note"]
+    studio.recovery["heist--abc"] = dict(STAGE_STOP)
+    assert ok("progress", {"id": "video:heist--abc"})["stopped_on"] == "presenter", "the presenter choices too"
+
+
+def test_progress_after_a_restart_reads_the_saved_video(studio, monkeypatch):
+    """The live job list empties on restart: progress(id) used to fail with 'unknown job'."""
+    real = studio.__call__
+
+    def restarted(method, path, body=None, **kw):
+        if path.startswith("/api/status/") and path.endswith(("/vault--abc", "/nothing--abc")):
+            raise tools.Refused("unknown job", 404)
+        if path.startswith(("/cr-workspace/voice/", "/cr-workspace/presenter-choice/")) and "zombie" not in path:
+            return {}
+        return real(method, path, body, **kw)
+
+    monkeypatch.setattr(tools, "call", restarted)
+    studio.recovery["vault--abc"] = dict(STAGE_STOP)
+    out = ok("progress", {"id": "video:vault--abc"})
+    assert out["state"] == "stopped" and out["stopped_on"] == "claude_stage" and out["stopped"] == "2026-10-26 03:10"
+    studio.recovery["vault--abc"] = {"finished": True}
+    done = ok("progress", {"id": "video:vault--abc"})
+    assert done["state"] == "done" and done["watch_url"].endswith("/f/video/vault--abc")
+    refused = tools.run_tool("progress", {"id": "video:nothing--abc"})
+    assert refused["isError"] and "no video with that id" in refused["structuredContent"]["error"]
+
+
+def test_recover_video_is_always_asked_and_sends_only_the_shown_key(studio, tmp_path):
+    studio.recovery["vault--abc"] = {**STAGE_STOP, "post": {"approved": {"approved_stages": ["cc_" + "a" * 64],
+                                                                         "set_aside": ["u.uncertain-1.json"]},
+                                                            "resumed": True, "message": "Carrying on."}}
+    out = ok("recover_video", {"id": "video:vault--abc", "key": "abc123abc123"})
+    assert out["recovered"] and out["approved_claude_steps"] == 1 and out["media_tasks_sent_again"] == 1
+    assert studio.posted("/cr-workspace/recovery/vault--abc") == [
+        {"acknowledge_costs": True, "when": "now", "added_usage": False, "key": "abc123abc123"}]
+    studio.recovery["vault--abc"]["post"] = tools.Refused("What stopped this video changed since you looked.", 409,
+                                                          {"recovery": {"key": "fff000fff000",
+                                                                        "what_to_tell_them": "Now 2 steps."}})
+    again = ok("recover_video", {"id": "video:vault--abc", "key": "abc123abc123"})
+    assert again["recovered"] is False and again["recovery_key"] == "fff000fff000" and "Nothing more" in again["next"]
+    assert tools.run_tool("recover_video", {"id": "video:vault--abc", "when": "tomorrow"})["isError"]
+    assert "recover_video" in ccc.PAID_TOOLS
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"allow": ["mcp__studio__recover_video"]}}))
+    ccc.configure(tmp_path)
+    permissions = json.loads((tmp_path / ".claude" / "settings.json").read_text())["permissions"]
+    assert "mcp__studio__recover_video" in permissions["ask"] and "mcp__studio__recover_video" not in permissions["allow"]
+    hints = tools.TOOLS["recover_video"][3]
+    assert hints["readOnlyHint"] is False and "only after they say yes" in tools.TOOLS["recover_video"][1]
+
+
+def test_resume_video_carries_on_only_when_free_and_waits_while_studio_is_busy(studio):
+    studio.recovery["zombie--abc"] = {**STAGE_STOP, "post": {"approved": {}, "resumed": False, "waiting": True}}
+    out = ok("resume_video", {"id": "video:zombie--abc"})
+    assert out["waiting"] and "as soon as that finishes" in out["next"]
+    assert studio.posted("/cr-workspace/recovery/zombie--abc") == [{"only_if_free": True}]
+    assert not studio.posted("/cr-submit-project")
+    studio.recovery["zombie--abc"]["post"] = tools.Refused("This video stopped on a step that needs your yes.", 409,
+                                                           {"recovery": STAGE_STOP})
+    refused = ok("resume_video", {"id": "video:zombie--abc"})
+    assert refused["resumed"] is False and "recover_video" in refused["next"]
+
+
+def test_make_videos_offers_to_resume_a_stopped_title_first(studio):
+    studio.twins = [{"title": "Why Rome fell", "slug": "why-rome-fell--abc", "id": "video:why-rome-fell--abc",
+                     "project_id": "crv_" + "1" * 24, "stopped": "2026-10-26 03:10"}]
+    out = ok("make_videos", {"titles": ["Why Rome fell", "Why Rome rose"], "style": "documentary", "minutes": 10,
+                             "where": "this_computer"})
+    assert out["started"] is False and out["resume_first"][0]["id"] == "video:why-rome-fell--abc"
+    assert out["other_titles"] == ["Why Rome rose"] and "new_attempt=true" in out["next"]
+    assert studio.posted("/cr-workspace/resume-first")[0] == {"titles": ["Why Rome fell", "Why Rome rose"],
+                                                              "style": "documentary", "minutes": 10, "extra": ""}
+    q = ok("quote", {"style": "documentary", "minutes": 10, "titles": 1})
+    started = ok("make_videos", {"titles": ["Why Rome fell"], "style": "documentary", "minutes": 10,
+                                 "where": "this_computer", "quote_id": q["quote_id"], "new_attempt": True,
+                                 "options": {"carry_on_after_usage_reset": True}})
+    assert started["started"] is True
+    body = studio.posted("/api/run")[0]
+    assert body["new_attempt"] is True and body["carry_on_after_reset"] is True
