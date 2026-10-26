@@ -608,13 +608,20 @@ def use_pictures(home, operation_id, bridge):
     clone["pictures_instead"] = {"at": time.time(), "renderer": {k: renderer.get(k) for k in ("state", "overall", "bar")}}
     if isinstance(clone.get("learned_v2"), dict):
         clone["learned_v2"]["route"] = mapping.get("route") or {}
+    republish(folder, saved, style)
+    return status(home, operation_id, bridge)
+
+
+def republish(folder, saved, style):
+    """A saved style changed by the creator's own action (pictures instead, a renderer saved from Style Lab), written
+    with its study's receipt, so the study still knows the style as its own."""
+    target = Path(_studio_home(folder)) / "styles" / (saved["spec"]["style_id"] + ".json")
     _write(target, style)
-    _write(folder / "ready-style.json", style)
+    _write(Path(folder) / "ready-style.json", style)
     saved["style_sha256"] = _file_hash(target)
     if saved.get("finish_receipt"):
         saved["finish_receipt"]["artifacts"][0]["sha256"] = saved["style_sha256"]
-    _write(folder / "operation.json", saved)
-    return status(home, operation_id, bridge)
+    _write(Path(folder) / "operation.json", saved)
 
 
 def _published(home, saved):
@@ -940,6 +947,32 @@ def _by_video(frames: list) -> list:
     return [g[k] for k in range(max((len(g) for g in groups.values()), default=0)) for g in groups.values() if k < len(g)]
 
 
+def renderer_frames(folder, spec) -> list:
+    """The channel's frames a renderer is built and checked against (at most 9, spread over its videos; the last one or
+    two are held out to set the bar): the look's drawn frames, filled from the study's own when the look has few."""
+    import cr_animated2d
+    import cr_style_likeness
+    frames = cr_style_likeness.frames(_studio_home(folder), spec["look_id"])
+    drawn = [p for p in frames if not cr_style_likeness.flat_graphic(p)]
+    frames = _by_video(drawn if len(drawn) >= 4 else frames)
+    if len(frames) < 9:
+        # one reference gives the look only 4 frames: the study's own frames of it (smaller) fill the frames Claude
+        # sees and the ones held out to set the bar, so the bar is still the channel's own
+        watched = [p for p in sorted((Path(folder) / "reflearn" / "ref_frames").glob("k*.jpg"))
+                   if not cr_animated2d._blank(p, 8)]
+        need = min(9 - len(frames), len(watched))
+        frames += [watched[i * len(watched) // need] for i in range(need)] if need else []
+    return frames[:9]
+
+
+def renderer_names(spec, looked) -> list:
+    """The channel's title and handle: never drawn by its renderer, though its watermark is in the frames studied."""
+    handle = re.search(r"youtube\.com/@([\w.\-]+)", str(spec.get("reference_url") or ""))
+    names = list(dict.fromkeys([str(r.get("channel") or "") for r in looked.get("references") or []]
+                               + ([handle.group(1)] if handle else [])))
+    return [n for n in names if n]
+
+
 def renderer_dims(spec, looked, home) -> int:
     """2 or 3: which kit the study's renderer is written on. A study started before the spec said "2d"/"3d" stored
     True; its planned route says which (a 3D channel once got the 2D kit, and its drafts were flat canvas code)."""
@@ -973,27 +1006,15 @@ def _renderer(folder, spec, looked, see, log):
     art = ((_read(folder / "art-checkpoint.json").get("art") or {}).get("overrides") or {}).get("look") or {}
     if art.get("character"):
         channel["cast_in_words"] = str(art["character"])[:1500]
-    frames = cr_style_likeness.frames(home, spec["look_id"])
-    drawn = [p for p in frames if not cr_style_likeness.flat_graphic(p)]
-    frames = _by_video(drawn if len(drawn) >= 4 else frames)
-    if len(frames) < 9:
-        # one reference gives the look only 4 frames: the study's own frames of it (smaller) fill the frames Claude
-        # sees and the ones held out to set the bar, so the bar is still the channel's own
-        watched = [p for p in sorted((folder / "reflearn" / "ref_frames").glob("k*.jpg"))
-                   if not cr_animated2d._blank(p, 8)]
-        need = min(9 - len(frames), len(watched))
-        frames += [watched[i * len(watched) // need] for i in range(need)] if need else []
-    # the channel's own name is never drawn, though its watermark is in the frames Claude studies
-    handle = re.search(r"youtube\.com/@([\w.\-]+)", str(spec.get("reference_url") or ""))
-    names = list(dict.fromkeys([str(r.get("channel") or "") for r in looked.get("references") or []]
-                               + ([handle.group(1)] if handle else [])))
+    frames = renderer_frames(folder, spec)
+    names = renderer_names(spec, looked)
 
     def judge(references, candidates):
         return cr_bridge.call("style/compare", {"references": [cr_style_likeness._b64(p) for p in references],
                                                 "candidates": [cr_style_likeness._b64(p) for p in candidates],
                                                 "context": RENDERER_CONTEXT_3D if three else RENDERER_CONTEXT})
     result = cr_animated2d.build(folder, {**{k: channel.get(k) for k in ("sky", "floor", "blur")}, **size}, channel, see=see,
-                                 judge=judge, references=frames[:9], home=home, log=log, names=[n for n in names if n])
+                                 judge=judge, references=frames, home=home, log=log, names=names)
     log(f"  renderer: {result.get('state')}"
         + (f", {result.get('overall')}/10 against a bar of {result.get('bar')}" if result.get("overall") is not None
            else f" ({result.get('why', '')})"))

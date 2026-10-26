@@ -1029,6 +1029,19 @@ def tool_products(args):
 
 # ── MCP plumbing ──────────────────────────────────────────────────────────────────────────────────────────────
 
+def tool_style_lab(args):
+    action, style = str(args.get("action") or "status"), str(args.get("style") or "")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", style):
+        raise ValueError("style: one of the creator's style ids from list_styles (kind='mine')")
+    if action == "status":
+        return call("GET", f"/cr-style-lab/{style}", timeout=30)
+    if action not in ("start", "preview", "check", "save"):
+        raise ValueError("action: start, status, preview, check or save")
+    body = {k: args[k] for k in ("fresh", "seconds") if k in args}
+    # a preview draws in a real browser on this computer (a minute or two for 3D); a check waits for the judge
+    return call("POST", f"/cr-style-lab/{style}/{action}", body, timeout=900 if action == "preview" else 300)
+
+
 def _schema(properties=None, required=()):
     return {"type": "object", "properties": properties or {}, "required": list(required), "additionalProperties": False}
 
@@ -1155,6 +1168,20 @@ TOOLS = {
                              "accept_medium": {"type": "boolean"}},
                             ["look_id", "style_name", "example_title"]),
                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
+    "style_lab": (tool_style_lab, "Work on a style's renderer (the code that draws every video in an animated 2D or "
+                  "3D style) like any code project, then plug it back in. start: a workspace folder with renderer.js, "
+                  "scene.json (the test scene), the channel's own frames (refs/) and GUIDE.md (read it first). Edit "
+                  "the files yourself, then preview: contract checks, test shots, a 5 s video and a stress sweep, on "
+                  "this computer. check: the likeness judge scores the shots against the channel's frames and its "
+                  "bar. save: the previewed renderer becomes the style's next version for every new video. No money "
+                  "is spent; show the creator the shots and the video as you go.",
+                  _schema({"action": {"type": "string", "enum": ["start", "status", "preview", "check", "save"]},
+                           "style": {"type": "string", "description": "A style id from list_styles (kind='mine')."},
+                           "fresh": {"type": "boolean", "description": "start: begin again from the saved style "
+                                                                       "(the old workspace is kept aside)."},
+                           "seconds": {"type": "number", "description": "preview: video length, 1-8 s (default 5)."}},
+                          ["action", "style"]),
+                  {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
 }
 
 

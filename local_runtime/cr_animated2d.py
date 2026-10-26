@@ -687,6 +687,12 @@ def _stress_scene(scene: dict, spec: dict) -> dict:
     return stress
 
 
+def split_refs(refs: list) -> tuple:
+    """(shown, held): the channel's frames Claude sees (at most 6) and the last one or two, held out to set the bar."""
+    held = refs[-2:] if len(refs) >= 7 else refs[-1:] if len(refs) >= 5 else []
+    return [r for r in refs if r not in held][:6], held
+
+
 def bar_for(control) -> float:
     """The likeness a channel's renderer must reach: judged against its own frames by the same judge, a little under
     what the channel's own held-out frame scores (every channel differs; so does the judge's reading of it)."""
@@ -734,8 +740,7 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
         result = {"key": key, "state": "failed", "why": "too few reference frames to build a renderer from"}
         _write(out / "build.json", result)
         return result
-    controls = refs[-2:] if len(refs) >= 7 else refs[-1:] if len(refs) >= 5 else []
-    shown = [r for r in refs if r not in controls][:6]
+    shown, controls = split_refs(refs)
     # the bar: the same judge scores the channel's own held-out frames, on their own and once (an odd frame of the
     # channel, a host in front of a green screen, scores low; the best of two from different videos is its usual look)
     held = _read(out / "control.json")
