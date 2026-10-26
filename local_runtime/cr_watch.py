@@ -468,9 +468,17 @@ def _install_budget(module):
 # video with one plain line, and the video goes on with the clips already found. Each line also reaches Create's
 # footage note (.cr-logs/footage-watcher.json) and Claude Code's progress tool.
 CR_WINDOW_S = 240                                     # the server's scout window (studio_ranking.MODES["scout"])
-# a video watched whole goes there as one window: its first four minutes (the plan's clip watches are shared with
-# Ranking Shorts, and a trial has 60 a month); a stretch the engine chose is watched in full, window by window
-CR_WHOLE_MAX_S = CR_WINDOW_S
+# a video watched whole: up to the engine's own "watched whole" length (youtube.FOCUS_WHOLE_S, 7 minutes), so a 4-7
+# minute video is two windows; a longer one watched whole (no captions to plan by) is its first 7 minutes, and its log
+# says so ("spans"). A stretch the engine chose is watched in full, window by window.
+CR_WHOLE_MAX_S = 420
+# The plan's clip watches are shared with Ranking Shorts (a trial has 60 a month, Creator 300): one video takes at most
+# this many through the fallback, and never more than the account has left this month (/ranking/allowance).
+CR_MAX_CLIP_WATCHES = 20
+# What Studio itself fails at before Kie is asked (yt-dlp can't fetch the copy to upload: YouTube blocking downloads,
+# a slow Archive film): not Kie's fault, not worth a clip watch, and the engine's own error stands.
+LOCAL_FAILURE = re.compile(r"could not fetch a (360p|small) copy|came down too slowly|not a youtube link", re.I)
+KIE_BREAKER = re.compile(r"kie's video watcher failed", re.I)
 CR_WAIT_S = 600                                       # one watch's wait, queue included (the server gives up at 900)
 CR_POLL_S = 4.0
 CR_PATIENCE_S = 90                                    # connection trouble retried this long (POSTs are deduplicated)
@@ -609,6 +617,36 @@ def _on_clip_clock(module, rows: list, window: tuple, clip_start: float, rel: fl
     return out
 
 
+def _low_copy(module, vid, work, span) -> Path:
+    """Where the engine keeps the copy it uploads to Kie for this watch (youtube._low_copy's own names)."""
+    safe = getattr(module, "_safe", None) or (lambda v: re.sub(r"[^A-Za-z0-9_.-]+", "_", str(v))[:110])
+    if span:
+        name = f"{safe(vid)}_{int(float(span[0]))}_{int(float(span[1]))}.mp4"
+    else:
+        name = f"{safe(vid)}.mp4"
+    return Path(work) / "low" / name
+
+
+def kie_failed(module, vid, work, span, error) -> bool:
+    """Whether a failed watch failed at Kie (its upload or its watcher), not on this computer before Kie was asked.
+    The engine makes the low copy first, then uploads it, then asks Kie: a copy on disk means Kie was reached."""
+    import subprocess
+    text = str(error)
+    if KIE_BREAKER.search(text):
+        return True
+    if LOCAL_FAILURE.search(text) or isinstance(error, (subprocess.TimeoutExpired, FileNotFoundError)):
+        return False
+    return _low_copy(module, vid, work, span).exists()
+
+
+def _allowance() -> dict:
+    try:
+        got = _bridge("ranking/allowance")
+    except Exception:                                  # noqa: BLE001 - the cap still holds without it
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
 def _say_once(b: dict, key: str, message: str) -> None:
     with _budget_lock:
         if b["cr"].get(key):
@@ -630,14 +668,37 @@ def _install_fallback(module):
             raise RuntimeError(f"not watched: {cr['stopped']}")
         if not _YOUTUBE_ID.fullmatch(str(vid)):
             raise RuntimeError("not watched: ChannelRecipe's watcher watches YouTube videos only")
-        _say_once(b, "said", f"  YouTube: Kie's video watcher isn't answering ({why}); ChannelRecipe's own watcher "
-                             "takes over this video's footage watching. It uses your plan's monthly clip watches, "
-                             "never your credits.")
+        with _budget_lock:
+            first = not cr.get("said")
+            cr["said"] = True
+        if first:
+            # how many this video may take: at most CR_MAX_CLIP_WATCHES, never more than the month has left
+            left = _allowance().get("remaining")
+            cap = CR_MAX_CLIP_WATCHES if not isinstance(left, int) else max(0, min(CR_MAX_CLIP_WATCHES, left))
+            with _budget_lock:
+                cr["cap"], cr["left"] = cap, left
+            _log(b, f"  YouTube: Kie's video watcher isn't answering ({why}); ChannelRecipe's own watcher takes over "
+                    f"this video's footage watching. It uses your plan's monthly clip watches ("
+                    + (f"{left} left this month; " if isinstance(left, int) else "")
+                    + f"at most {cap} for this video), never your credits.")
         rel = float(span[0]) if span else 0.0
         shots, summary = [], ""
+        plan = windows(span, b["dur"].get(vid))
         try:
-            for window in windows(span, b["dur"].get(vid)):
-                log = _cr_watch_one(str(vid), window[0], window[1], prompt)
+            for window in plan:
+                with _budget_lock:
+                    cap = cr.get("cap", CR_MAX_CLIP_WATCHES)
+                    if cr["windows"] + cr.get("asking", 0) >= cap:
+                        raise _Stop("this month's ChannelRecipe clip watches are used up (your credits were not used)"
+                                    if cr.get("left") == 0 else
+                                    f"it has used the {cap} clip watches one video may take, so your plan's monthly "
+                                    "watches last")
+                    cr["asking"] = cr.get("asking", 0) + 1     # held while in flight: parallel watches stay in the cap
+                try:
+                    log = _cr_watch_one(str(vid), window[0], window[1], prompt)
+                finally:
+                    with _budget_lock:
+                        cr["asking"] -= 1
                 with _budget_lock:
                     cr["windows"] += 1
                     cr["down"] = 0
@@ -670,7 +731,11 @@ def _install_fallback(module):
             raise RuntimeError("the shot log had no shots")
         with _budget_lock:
             cr["watched"] += 1
-        return {"video": summary, "shots": shots}
+        out = {"video": summary, "shots": shots}
+        length = b["dur"].get(vid)
+        if not span and (not length or length > plan[-1][1] + 2):
+            out["spans"] = [[0.0, float(plan[-1][1])]]     # watched whole, but only this much of it: the log says so
+        return out
 
     @wraps(original)
     def log_one(vid, work, prompt, span=None, prefer=None, *args, **kwargs):
@@ -681,7 +746,9 @@ def _install_fallback(module):
             return by_channelrecipe(b, vid, prompt, span, "it failed three videos in a row")
         try:
             return original(vid, work, prompt, span, prefer)
-        except Exception as error:                     # noqa: BLE001 - this watch goes to ChannelRecipe's watcher
+        except Exception as error:                     # noqa: BLE001 - only Kie's own failures go on
+            if not kie_failed(module, vid, work, span, error):
+                raise                                  # failed on this computer before Kie was asked: as before
             with _budget_lock:
                 b["cr"]["kie_failed"] += 1
             why = re.sub(r"\s+", " ", str(error))[:90] or type(error).__name__
@@ -696,8 +763,9 @@ def _fallback_done(b: dict) -> None:
     if not (cr.get("kie_failed") or cr.get("said") or cr.get("stopped")):
         return
     if cr.get("watched"):
-        _log(b, f"  YouTube: ChannelRecipe's watcher watched {cr['watched']} video(s) ({cr['windows']} clip watches) "
-                "because Kie's watcher wasn't answering.")
+        _log(b, f"  YouTube: ChannelRecipe's watcher watched {cr['watched']} video(s) with {cr['windows']} of your "
+                f"plan's clip watches (at most {cr.get('cap', CR_MAX_CLIP_WATCHES)} for a video) because Kie's watcher "
+                "wasn't answering.")
     home = _home.get("path")
     if not home:
         return
