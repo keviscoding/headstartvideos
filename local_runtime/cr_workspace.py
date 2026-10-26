@@ -23,6 +23,7 @@ import cr_style_clone
 import cr_trash
 
 PREVIEW_CACHE_SECONDS = 120
+TRASH_LOCK_WAIT_S = 5           # a delete or restore waits this long for Create's lock (the page's refreshes take it)
 
 HOME = Path(__file__).resolve().parent
 _STYLE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}\Z")
@@ -631,7 +632,7 @@ def install(studio, activity, *, token, home=None):
 
     def one_at_a_time(work):
         """The same lock Create and Resume take, so a video can't start while it is being deleted."""
-        if not activity.lock.acquire(blocking=False):
+        if not activity.lock.acquire(timeout=TRASH_LOCK_WAIT_S):
             return protect(jsonify(error="Finish the current studio request, then try again. Nothing was deleted.")), 409
         try:
             return protect(jsonify(work()))

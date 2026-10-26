@@ -806,8 +806,9 @@ def create_app():
             if activity.lock.acquire(blocking=False):
                 try:
                     if not activity.busy():
-                        # a deleted video waiting in Studio's trash (cr_trash) is not replayed
-                        for pending in [p for p in studio.OUT.rglob(".cr-finish-pending.json") if ".cr-trash" not in p.parts][:20]:
+                        # a video in Studio's trash (cr_trash) still tells ChannelRecipe how its run ended: the
+                        # replay only renames the receipt beside itself, and Restore moves the folder back whole
+                        for pending in list(studio.OUT.rglob(".cr-finish-pending.json"))[:20]:
                             try:
                                 sync_completion_receipt(cr_bridge, pending)
                             except (Exception,ValueError):

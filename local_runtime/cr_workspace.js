@@ -539,14 +539,24 @@
       if (!plan.blocked) $('crw-delete-cancel').focus();
     } catch (e) {text('crw-delete-note', ''); text('crw-delete-error', e.message); hide('crw-delete-error', false);}
   }
+  // Windows can't move a file a page is still streaming: this page's players let go of the video before it moves
+  function releaseVideo(slug) {
+    const src = `/f/video/${encoded(slug)}`, released = [];
+    for (const v of document.querySelectorAll('video')) {
+      if (v.getAttribute('src') !== src) continue;
+      v.pause(); v.removeAttribute('src'); v.load(); released.push(v);
+    }
+    return () => {for (const v of released) v.src = src;};
+  }
   async function confirmDelete() {
     const target = state.deleting, button = $('crw-delete-confirm'); if (!target) return; button.disabled = true;
+    const putBack = target.kind === 'video' ? releaseVideo(target.id) : () => {};
     try {
       const done = await api(`/cr-workspace/delete/${target.kind}/${encoded(target.id)}`, {method: 'POST', body: {}});
       $('crw-delete').close();
       undoToast(`“${done.title}” is in Studio’s trash.`, done.trash_id);
       await afterTrashChange(target.kind);
-    } catch (e) {text('crw-delete-error', e.message); hide('crw-delete-error', false); button.disabled = false;}
+    } catch (e) {putBack(); text('crw-delete-error', e.message); hide('crw-delete-error', false); button.disabled = false;}
   }
   function undoToast(message, entry) {
     const box = $('crw-toast'), undo = el('button', 'crw-inline-link crw-toast-undo', 'Undo'); undo.type = 'button';

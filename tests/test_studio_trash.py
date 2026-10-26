@@ -235,7 +235,8 @@ def test_a_move_that_fails_halfway_puts_everything_back(env, monkeypatch):
     assert job.is_dir() and published.is_dir() and list((env.output / ".cr-trash").iterdir()) == []
 
 
-def test_delete_waits_for_a_create_or_resume_in_progress(env):
+def test_delete_waits_for_a_create_or_resume_in_progress(env, monkeypatch):
+    monkeypatch.setattr(workspace, "TRASH_LOCK_WAIT_S", 0.3)
     job, _ = finished_video(env)
     env.activity.lock.acquire()
     held = threading.Event()
@@ -250,6 +251,56 @@ def test_delete_waits_for_a_create_or_resume_in_progress(env):
     held.wait(5)
     env.activity.lock.release()
     assert held.response.status_code == 409 and job.is_dir()
+
+
+def test_a_delete_waits_out_a_moment_of_the_page_refreshing(env, monkeypatch):
+    """The review (2026-10-26): the page's own refreshes take the lock briefly, so a delete waits instead of failing."""
+    monkeypatch.setattr(workspace, "TRASH_LOCK_WAIT_S", 3)
+    job, _ = finished_video(env)
+    taken, done = threading.Event(), threading.Event()
+
+    def refresh():                                          # another request holds the lock for a moment
+        with env.activity.lock:
+            taken.set()
+            done.wait(0.3)
+    threading.Thread(target=refresh).start()
+    taken.wait(2)
+    assert env.post("/cr-workspace/delete/video/how-one-ship--abc").status_code == 200 and not job.exists()
+
+
+def test_another_letter_case_never_reaches_a_video_being_made(env):
+    """The review (2026-10-26): Mac and Windows folders ignore case, so MY-VIDEO found my-video while it rendered."""
+    job, published = finished_video(env)
+    env.studio.RUNNING["slug"] = "how-one-ship--abc"
+    for slug in ("HOW-ONE-SHIP--ABC", "How-One-Ship--abc"):
+        assert env.get(f"/cr-workspace/delete/video/{slug}").status_code == 404
+        assert env.post(f"/cr-workspace/delete/video/{slug}").status_code == 404
+    assert job.is_dir() and published.is_dir() and not (env.output / ".cr-trash").exists()
+
+
+def test_files_the_creator_keeps_in_the_videos_folder_are_named_before_they_go(env):
+    job, published = finished_video(env)
+    assert not [g for g in env.get("/cr-workspace/delete/video/how-one-ship--abc").json["goes"] if "Other files" in g]
+    (published / "my edit.prproj").write_text("mine", encoding="utf-8")
+    (published / "b-roll").mkdir()
+    goes = env.get("/cr-workspace/delete/video/how-one-ship--abc").json["goes"]
+    assert goes[-1] == "Other files in its folder that Studio didn't make: b-roll, my edit.prproj"
+
+
+def test_an_older_video_with_no_published_record_lists_only_the_creators_files(env):
+    job, published = finished_video(env)
+    (job / "published.json").unlink()
+    assert not [g for g in env.get("/cr-workspace/delete/video/how-one-ship--abc").json["goes"] if "Other files" in g]
+
+
+def test_restore_waits_while_a_video_of_the_same_name_is_queued(env):
+    job, _ = finished_video(env)
+    done = env.post("/cr-workspace/delete/video/how-one-ship--abc").json
+    env.studio.QUEUE.append({"slug": "how-one-ship--abc"})
+    response = env.post(f"/cr-workspace/trash/{done['trash_id']}/restore")
+    assert response.status_code == 409 and "can't be put back yet" in response.json["error"] and not job.exists()
+    env.studio.QUEUE.clear()
+    assert env.post(f"/cr-workspace/trash/{done['trash_id']}/restore").status_code == 200 and job.is_dir()
 
 
 def test_restore_never_overwrites_a_video_made_again_with_the_same_title(env):

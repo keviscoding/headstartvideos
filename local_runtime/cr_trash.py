@@ -33,6 +33,7 @@ KEEP_DAYS = 30
 ENTRY = re.compile(r"[vs]\d{8}-\d{6}-[a-f0-9]{6}\Z")
 LEARNED = re.compile(r"cr_clone_[a-zA-Z0-9_-]{1,64}\Z")
 SLUG = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}\Z")
+STUDIO_THUMB = re.compile(r"thumbnail(?:_\d{1,2})?\.(?:png|jpg)\Z", re.I)   # the engine's own thumbnails
 AREAS = ("output", "styles")
 VIDEO_KEPT = ["Your voice library and saved recordings",
               "Your styles, characters and presenters",
@@ -163,6 +164,15 @@ def _new_entry(home, kind: str) -> Path:
             continue
 
 
+def _named_exactly(path: Path) -> bool:
+    """True when the name on disk is exactly this one. Mac and Windows folders ignore letter case, so MY-VIDEO would
+    otherwise find my-video and slip past the checks that compare names with what is being made."""
+    try:
+        return path.name in os.listdir(path.parent)
+    except OSError:
+        return False
+
+
 def _remove_empty(entry: Path) -> None:
     """The entry's own note and the folders left empty after a restore or a rollback; never anything with files."""
     (entry / "entry.json").unlink(missing_ok=True)
@@ -200,13 +210,14 @@ def _put_away(home, kind: str, record: dict, moves: list) -> Path:
             _move(src, dest)
             moved.append((src, dest))
     except (OSError, Refused) as error:
-        if _put_back(moved):
-            _remove_empty(entry)
-        # else the entry keeps its note, so Recently deleted can still put back what stayed in it
+        if not _put_back(moved):                         # the entry keeps its note: Recently deleted puts the rest back
+            raise Refused("Studio couldn't finish moving it to the trash, and couldn't put every part back. What "
+                          "moved is in Recently deleted: Restore it there.") from None
+        _remove_empty(entry)
         if isinstance(error, Refused):
             raise
-        raise Refused("Studio couldn't move it to the trash. If the video is open in a player or a folder window, "
-                      "close it and try again. Nothing was deleted.") from None
+        raise Refused("Studio couldn't move it to the trash. If the video is open in a player, a folder window or "
+                      "the timeline editor's tab, close it and try again. Nothing was deleted.") from None
     record["state"] = "done"
     _write(entry / "entry.json", record)
     return entry
@@ -233,7 +244,19 @@ def _title(job: Path) -> str:
 
 def _video_busy(studio, job: Path) -> str:
     """'' or what this video is doing that a delete must wait for."""
-    slug = job.name
+    busy = _slug_busy(studio, job.name)
+    if busy:
+        return busy
+    editor = _read(job / "_timeline" / "state.json")
+    tasks = [t for t in editor.get("tasks") or [] if isinstance(t, dict)]
+    chat = [m for m in editor.get("chat") or [] if isinstance(m, dict)]
+    if any(t.get("state") in ("queued", "working") for t in tasks) or any(m.get("pending") for m in chat):
+        return "still has timeline edits being made. Delete it once they finish."
+    return ""
+
+
+def _slug_busy(studio, slug: str) -> str:
+    """'' or what Studio is doing with a video of this name: made, queued or on hold."""
     with _studio_lock(studio):
         running = (getattr(studio, "RUNNING", None) or {}).get("slug") == slug
         queued = any(isinstance(spec, dict) and spec.get("slug") == slug for spec in getattr(studio, "QUEUE", None) or [])
@@ -246,11 +269,6 @@ def _video_busy(studio, job: Path) -> str:
     held = getattr(getattr(studio, "_cr_queue", None), "held", None) or []
     if any(isinstance(spec, dict) and spec.get("slug") == slug for spec in held):
         return "is on hold in the queue. Carry it on or remove it first."
-    editor = _read(job / "_timeline" / "state.json")
-    tasks = [t for t in editor.get("tasks") or [] if isinstance(t, dict)]
-    chat = [m for m in editor.get("chat") or [] if isinstance(m, dict)]
-    if any(t.get("state") in ("queued", "working") for t in tasks) or any(m.get("pending") for m in chat):
-        return "still has timeline edits being made. Delete it once they finish."
     return ""
 
 
@@ -262,11 +280,11 @@ def video_plan(studio, home, slug: str) -> dict:
         raise LookupError("That video isn't on this computer any more.")
     found = studio.mv.find_job(slug)
     job = Path(found) if found is not None else None
-    if (job is None or job.is_symlink() or not job.is_dir() or not _inside(job, output)
-            or job.resolve() == output.resolve() or _inside(job, root(home))):
+    if (job is None or job.is_symlink() or not job.is_dir() or not _inside(job, output) or job.name != slug
+            or not _named_exactly(job) or job.resolve() == output.resolve() or _inside(job, root(home))):
         raise LookupError("That video isn't on this computer any more.")
     moves = [("job", "output", job)]
-    published = []
+    published, others = [], []
     if job.parent.name == "_work":
         try:
             main = Path(studio.mv.main_dir(job))
@@ -282,6 +300,15 @@ def video_plan(studio, home, slug: str) -> dict:
             if owner == job.name:                        # the folder this video published to, and only it
                 moves.append(("video", "output", main))
                 published = [p for p in main.iterdir() if p.is_file() and not p.name.startswith(".")]
+                saved = _read(job / "published.json")
+                made = {n for n in [saved.get("video")] + list(saved.get("files") or []) if isinstance(n, str)}
+                # Studio names its files after the title, like the folder ("Title.mp4", "Title - description.txt")
+                stem = Path(saved["video"]).stem if isinstance(saved.get("video"), str) and saved["video"] else main.name
+                others = sorted(p.name for p in main.iterdir()   # what the creator keeps there goes too: say so
+                                if not p.name.startswith(".") and p.name not in made and not (
+                                    p.is_file() and (STUDIO_THUMB.fullmatch(p.name) or (
+                                        stem and p.name.startswith(stem)
+                                        and p.suffix.lower() in (".mp4", ".txt", ".jpg", ".png")))))
             else:                                        # a shared title folder: only the files this video put there
                 saved = _read(job / "published.json")
                 names = [saved.get("video")] + list(saved.get("files") or [])
@@ -303,6 +330,9 @@ def video_plan(studio, home, slug: str) -> dict:
         goes.append("Its YouTube description and thumbnails")
     work = _size(job) - (video.stat().st_size if finished and video.parent == job else 0)
     goes.append(f"Its working files: script, voice, pictures, footage and timeline edits ({_megabytes(max(work, 0))})")
+    if others:                                           # files the creator keeps in the video's folder go with it
+        shown = ", ".join(others[:3]) + (f" and {len(others) - 3} more" if len(others) > 3 else "")
+        goes.append(f"Other files in its folder that Studio didn't make: {shown}")
     return {"kind": "video", "id": slug, "title": _title(job), "finished": finished, "goes": goes,
             "kept": list(VIDEO_KEPT), "keep_days": KEEP_DAYS, "blocked": _video_busy(studio, job), "moves": moves}
 
@@ -366,7 +396,7 @@ def style_plan(studio, home, style: str) -> dict:
     if not isinstance(style, str) or not LEARNED.fullmatch(style):
         raise Refused("Only styles you cloned can be deleted. Studio's own recipes stay in your library.")
     path = styles / (style + ".json")
-    if path.is_symlink() or not path.is_file() or not _inside(path, styles):
+    if path.is_symlink() or not path.is_file() or not _inside(path, styles) or not _named_exactly(path):
         raise LookupError("That style isn't in your library any more.")
     data = _read(path)
     if data.get("builtin") is True or not isinstance(data.get("cr_style_clone"), dict):
@@ -500,6 +530,10 @@ def restore(studio, home, entry_id: str) -> dict:
     home = Path(home)
     entry = _entry(home, entry_id)
     saved = _read(entry / "entry.json")
+    slug = saved.get("slug")
+    if saved.get("kind") == "video" and isinstance(slug, str) and slug and _slug_busy(studio, slug):
+        raise Refused(f"A video with the same name {_slug_busy(studio, slug).split('. ')[0]}, so "
+                      f"“{saved.get('name') or entry_id}” can't be put back yet. Nothing was changed.")
     pieces = []
     for item in saved.get("items") or []:
         try:
