@@ -954,3 +954,35 @@ def test_a_studio_started_from_a_claude_code_chat_drops_the_chats_settings(monke
     assert cr_studio.chat_line() == "yes, its settings were left out (CLAUDE_EFFORT=xhigh)"
     monkeypatch.setattr(cr_studio, "CHAT_SETTINGS_DROPPED", [])
     assert cr_studio.chat_line() == "no"
+
+
+def test_setup_fix_routes_start_studios_own_installs_behind_the_local_token(runtime, monkeypatch):
+    """Setup's Fix it for FFmpeg, Node.js and Claude Code (cr_installs): a POST starts it (local token only), a GET
+    reads its progress; the sign-in window says why it can't open."""
+    import cr_installs
+    started = []
+    for name in ("fix_ffmpeg", "fix_node"):
+        monkeypatch.setattr(cr_installs, name, lambda name=name, **kw: started.append((name, kw)) or {"state": "starting"})
+    monkeypatch.setattr(cr_installs, "fix_claude", lambda **kw: started.append(("fix_claude", kw)) or {"state": "starting"})
+    for path in ("/cr-setup/fix-ffmpeg", "/cr-setup/fix-node", "/cr-setup/fix-claude"):
+        assert runtime.client.post(path, headers={"Host": "127.0.0.1:7860"}).status_code == 403, "never without the token"
+        response = runtime.client.post(path, headers=runtime.headers)
+        assert response.status_code == 202 and response.json == {"state": "starting"}
+    assert [name for name, _ in started] == ["fix_ffmpeg", "fix_node", "fix_claude"]
+    assert started[0][1] == {"home": runtime.job} and started[1][1] == {"home": runtime.job}
+    monkeypatch.setitem(cr_installs.FIXES, "ffmpeg", {"state": "downloading", "done": 10 << 20, "total": 57 << 20,
+                                                      "what": "FFmpeg 9.0.2", "message": "", "tail": ""})
+    assert "10 of 57 MB" in runtime.client.get("/cr-setup/fix-ffmpeg", headers=runtime.headers).json["message"]
+    monkeypatch.setattr(cr_studio.cr_claude, "find_executable", lambda: "/Users/zoe/.local/bin/claude")
+    monkeypatch.setattr(cr_studio.cr_claude, "status", lambda *a, **k: {"authenticated": True})
+    answer = runtime.client.get("/cr-setup/fix-claude?signin=1", headers=runtime.headers).json
+    assert answer["installed"] is True and answer["signed_in"] is True
+    assert "signed_in" not in runtime.client.get("/cr-setup/fix-claude", headers=runtime.headers).json
+
+    def cant(**kw):
+        raise cr_installs.Stop("Install Claude Code first: press Install Claude Code.")
+    monkeypatch.setattr(cr_installs, "open_sign_in", cant)
+    refused = runtime.client.post("/cr-setup/claude-sign-in", headers=runtime.headers)
+    assert refused.status_code == 409 and "Install Claude Code first" in refused.json["error"]
+    status = runtime.client.get("/cr-status", headers=runtime.headers).json
+    assert status["ffmpeg"] is True and status["node"] is True and set(status["can_fix"]) == {"ffmpeg", "node", "claude"}

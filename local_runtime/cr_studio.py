@@ -20,6 +20,7 @@ import cr_media
 import cr_render
 import cr_claude
 import cr_failure
+import cr_installs
 import cr_machine
 import cr_mcp
 import cr_network
@@ -501,37 +502,49 @@ def sync_completion_receipt(bridge, pending):
 
 
 def tool_ready(name, flag="-version"):
-    executable = shutil.which(name)
-    if not executable:
-        return False
-    try:
-        return subprocess.run([executable, flag], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                              timeout=5).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    return cr_installs.runs(name, flag)
 
 
 def video_tools_ready(ffmpeg="ffmpeg", ffprobe="ffprobe"):
-    if not tool_ready(ffprobe):
-        return False
-    executable = shutil.which(ffmpeg)
-    if not executable:
-        return False
-    try:
-        # A minimal Homebrew build can pass -version but cannot burn captions.
-        for flag, required in (("-filters", {"subtitles"}),
-                               ("-encoders", {"libx264", "aac", "libmp3lame"})):
-            result = subprocess.run([executable, flag], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                    timeout=5)
-            names = {line.split()[1] for line in result.stdout.splitlines() if len(line.split()) > 1}
-            if result.returncode or not required <= names:
-                return False
-        return True
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    """FFmpeg and ffprobe run, and FFmpeg can burn captions (libass) and make H.264, AAC and MP3 (cr_installs)."""
+    return not cr_installs.video_tools_problem(ffmpeg, ffprobe)
+
+
+def node_ready():
+    """Node.js (any version) or Deno runs: what every video needs, as before. Downloading from YouTube needs more
+    (Node 22 or newer, node_youtube in tool_checks): cr_readiness.preset() refuses only the videos that do."""
+    return tool_ready("node", "--version") or tool_ready("deno", "--version")
+
+
+def tool_checks():
+    """Setup's FFmpeg and Node rows, with what is wrong and the fix (setup's Fix it puts both in Studio's own folder,
+    cr_installs). node: a JavaScript runtime runs (a missing one blocks setup, as it always did); node_youtube: yt-dlp
+    can use it for YouTube (Deno, or Node.js 22 or newer). An older Node is a note in setup and stops only videos that
+    download from YouTube (cr_readiness.preset), never the rest."""
+    ffmpeg = "" if video_tools_ready() else (cr_installs.video_tools_problem() or "FFmpeg isn't ready.")
+    deno = tool_ready("deno", "--version")
+    node = {"ready": True, "version": "deno", "reason": ""} if deno else cr_installs.node_status()
+    return {"ffmpeg": not ffmpeg, "ffmpeg_reason": (ffmpeg + " " + cr_installs.fix_hint("ffmpeg")) if ffmpeg else "",
+            "node": deno or node["ready"] or node_ready(), "node_youtube": node["ready"], "node_version": node["version"],
+            "node_reason": (node["reason"] + " " + cr_installs.fix_hint("node")) if not node["ready"] else "",
+            "can_fix": {name: cr_installs.can_fix(name) for name in ("ffmpeg", "node", "claude")}}
+
+
+def fix_line():
+    """Diagnostics: the setup Fix its run since Studio started (what failed and why), '' when none ran."""
+    ran = [(name, cr_installs.status(name)) for name in cr_installs.LABEL]
+    ran = [(name, fix) for name, fix in ran if fix.get("state") not in ("idle", None)]
+    if not ran:
+        return ""
+    return "Fix it: " + "; ".join("%s %s%s" % (cr_installs.LABEL[name], fix["state"],
+                                               (" (" + str(fix.get("message") or "")[:200] + (" | " + str(
+                                                   fix.get("tail") or "")[-200:] if fix.get("tail") else "") + ")")
+                                               if fix["state"] == "failed" else "") for name, fix in ran)
 
 
 def configure_video_tools():
+    # Setup's Fix it installs FFmpeg and Node.js in Studio's own tools folder: first on PATH for Studio and its workers
+    cr_installs.use_studio_tools(HOME)
     if sys.platform != "darwin" or video_tools_ready():
         return
     # Homebrew's full build can coexist with a stale binary earlier on PATH.
@@ -676,8 +689,7 @@ def create_app():
                 and last_status.get("at", 0) > time.monotonic() - 300):
             return jsonify({**last_status["checks"], "cached": True})
         cfg = cr_bridge.load_settings()
-        checks = {"python": sys.version_info >= (3,10), "ffmpeg": video_tools_ready(),
-                  "node": tool_ready("node", "--version") or tool_ready("deno", "--version"),
+        checks = {"python": sys.version_info >= (3,10), **tool_checks(),
                   "connected": bool(cfg.get("key")), "costs_accepted": bool(cfg.get("costs_accepted"))}
         checks.update(graphics_ready())
         checks["speech_model"] = cr_whisper.status()
@@ -920,6 +932,45 @@ def create_app():
     def fix_browser_status():
         return jsonify(dict(BROWSER_FIX))
 
+    # Fix it for FFmpeg, Node.js and Claude Code (cr_installs): FFmpeg and Node.js into Studio's own folder, Claude
+    # Code with Anthropic's own installer. Each runs in the background; setup polls the GET for its progress line.
+    @studio.app.post("/cr-setup/fix-ffmpeg")
+    def fix_ffmpeg_route():
+        return jsonify(cr_installs.fix_ffmpeg(home=HOME)), 202
+
+    @studio.app.get("/cr-setup/fix-ffmpeg")
+    def fix_ffmpeg_status():
+        return jsonify(cr_installs.status("ffmpeg"))
+
+    @studio.app.post("/cr-setup/fix-node")
+    def fix_node_route():
+        return jsonify(cr_installs.fix_node(home=HOME)), 202
+
+    @studio.app.get("/cr-setup/fix-node")
+    def fix_node_status():
+        return jsonify(cr_installs.status("node"))
+
+    @studio.app.post("/cr-setup/fix-claude")
+    def fix_claude_route():
+        return jsonify(cr_installs.fix_claude()), 202
+
+    @studio.app.get("/cr-setup/fix-claude")
+    def fix_claude_status():
+        state = {**cr_installs.status("claude"), "installed": bool(cr_claude.find_executable())}
+        if request.args.get("signin") == "1" and state["installed"]:
+            state["signed_in"] = bool(cr_claude.status().get("authenticated"))    # after the sign-in window opened
+        return jsonify(state)
+
+    @studio.app.post("/cr-setup/claude-sign-in")
+    def claude_sign_in_route():
+        try:
+            return jsonify(cr_installs.open_sign_in(home=HOME))
+        except cr_installs.Stop as stop:
+            return jsonify(error=str(stop)), 409
+        except OSError as error:
+            return jsonify(error=f"Studio couldn't open the sign-in window ({type(error).__name__}). Open Terminal "
+                                 f"(PowerShell on Windows) and run: {cr_installs.sign_in_command(cr_claude.find_executable())}"), 409
+
     @studio.app.post("/cr-setup/fix-speech-model")
     def fix_speech_model_route():
         return jsonify(fix_speech_model()), 202
@@ -957,8 +1008,10 @@ def create_app():
             "Studio: %s" % checks.get("local_version", "unknown"),
             "Computer: %s %s (%s) · Python %s" % (platform.system(), platform.release(), platform.machine(),
                                                    platform.python_version()),
-            "Tools: Python %s · FFmpeg %s · graphics browser %s · Node %s" % (
-                tick(checks.get("python")), tick(checks.get("ffmpeg")), tick(checks.get("browser")), tick(checks.get("node"))),
+            "Tools: Python %s · FFmpeg %s · graphics browser %s · Node %s%s" % (
+                tick(checks.get("python")), tick(checks.get("ffmpeg")), tick(checks.get("browser")), tick(checks.get("node")),
+                (" " + str(checks["node_version"])) if checks.get("node_version") else ""),
+            fix_line(),
             "ChannelRecipe account connected: %s" % tick(checks.get("connected")),
             "Claude Code: installed %s%s · signed in %s · tools connected %s · models verified %s" % (
                 tick(cli.get("installed")), (" " + str(cli["version"])) if cli.get("version") else "",

@@ -61,3 +61,6 @@ assets/whop-gfx-pack.tgz
 assets/whop-gfx-pack-full.tgz
 assets/whop-gfx
 frontier-gfx-kit.tgz
+
+# Studio's own tools (setup's Fix it: FFmpeg, Node.js, the Claude sign-in script) in a dev Studio run from here
+local_runtime/tools/

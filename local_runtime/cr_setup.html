@@ -33,13 +33,13 @@ body.show-all .step.done .step-body{display:block}body.show-all #step-tools .too
 <div class="eyebrow">CHANNELRECIPE STUDIO · SETUP</div><h1>Three quick steps.<br>Then your first <em>video.</em></h1>
 <p>Each step below has one button. Do them in order and you’re ready. Stuck? Press <button type="button" class="link-button" id="copy-diagnostics">Copy diagnostics</button> and paste it in <a href="https://discord.gg/aUbazAAqw3" target="_blank" rel="noopener">Discord</a> #help.</p><button type="button" class="walk-open" id="walk-open"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a.5.5 0 0 0 .77.42l10-6.5a.5.5 0 0 0 0-.84l-10-6.5A.5.5 0 0 0 8 5.5z" fill="currentColor"/></svg>Watch the whole setup <small>3:10</small></button><dialog class="walk" id="walk" aria-labelledby="walk-title"><div class="walk-head"><h2 id="walk-title">The whole setup, start to finish</h2><button type="button" class="walk-close" id="walk-close">Close</button></div><video id="walk-video" controls playsinline preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/onboarding/studio-setup-walkthrough-v1.jpg"><source src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/onboarding/studio-setup-walkthrough-v1.mp4" type="video/mp4"></video><ol class="walk-chapters" id="walk-chapters"></ol></dialog><p id="diagnostics-status" class="note" role="status"></p><ol class="steps-nav" id="steps-nav" aria-label="Setup progress"><li data-step="account">1 · Your account</li><li data-step="claude">2 · Claude</li><li data-step="media">3 · Voice &amp; images</li><li data-step="ready">Make videos</li></ol><button type="button" class="link-button" id="show-all">Show all settings</button><p id="version" class="note"></p><p id="claude-allowance" class="blockers" hidden></p><p id="update" class="note" hidden>A newer Studio is available. <a href="/">Open Studio</a> to see what’s new and update in one click. Your projects and settings stay put, and your current version keeps working if you wait.</p><div id="notice" role="status" hidden></div>
 <section id="step-tools" class="tools-section"><p class="tools-ok" id="tools-ok-text">✓ Your computer is ready: Python, video tools, graphics browser and Node are installed.</p><div class="tools-detail"><div class="number">BEFORE YOU START</div><h2>Make sure the tools are ready</h2><div class="checks" id="checks"><p>Checking your setup…</p></div>
-<details><summary>A tool is missing or the network blocks something. How do I fix it?</summary><p class="note">Network: a blocked service is usually a firewall, antivirus, VPN or the internet provider. Allow the address shown, or try another network (a phone hotspot works), then press Check again. Where Studio has a way around a block it says so, and you can carry on.</p><p class="note">Open this downloaded folder in Claude Code and ask: “Help me complete the ChannelRecipe setup checks.” It will guide you through the missing free tools.</p><p class="note">On Mac with Homebrew: <code>brew install ffmpeg-full node</code>. FFmpeg must include subtitle support (libass), H.264 and audio encoders. On Windows: install a full FFmpeg build and Node, then close and reopen the launcher. Your system PATH needs to include FFmpeg.</p></details></div></section>
+<details><summary>A tool is missing or the network blocks something. How do I fix it?</summary><p class="note">Network: a blocked service is usually a firewall, antivirus, VPN or the internet provider. Allow the address shown, or try another network (a phone hotspot works), then press Check again. Where Studio has a way around a block it says so, and you can carry on.</p><p class="note">Open this downloaded folder in Claude Code and ask: “Help me complete the ChannelRecipe setup checks.” It will guide you through the missing free tools.</p><p class="note">Video tools (FFmpeg) or YouTube helper (Node.js) missing? Press <strong>Fix it</strong> next to it: Studio downloads a fixed version into its own folder, checks its fingerprint and that it works. No password, and any copy you already have stays as it is. Python is the one tool Studio can’t install: the launcher needs it first and says what to do.</p><p class="note">Prefer to install them yourself? On Mac with Homebrew: <code>brew install ffmpeg-full node</code> (FFmpeg must include subtitles, H.264 and audio encoders). On Windows: <code>winget install -e --id Gyan.FFmpeg</code> and <code>winget install -e --id OpenJS.NodeJS.LTS</code>. Then close and reopen the launcher.</p></details></div></section>
 <section class="step" data-step="account"><button type="button" class="step-change">Change</button><div class="number">STEP 1</div><h2>Connect your ChannelRecipe account<span class="step-state"></span></h2><div class="step-body"><button type="button" id="connect-oneclick" class="primary-cta">Connect my ChannelRecipe account</button><p class="hint">This opens channelrecipe.com. Sign in if asked and press <strong>Approve</strong>. You’ll come right back here, connected. No key to copy.</p><p class="hint">By connecting, you agree Studio uses your own Claude plan for writing, your media account’s balance for voice and images, and this computer for rendering. Each provider bills you directly.</p><details id="connect-paste"><summary>Paste a key instead</summary><p class="note">Open your <a href="https://channelrecipe.com/app#local-studio" target="_blank" rel="noopener">Studio page on channelrecipe.com ↗</a>, press <strong>Copy my ChannelRecipe key</strong>, then paste it here.</p><form id="connect"><label for="connect-key">ChannelRecipe key</label><input id="connect-key" type="password" placeholder="cr_mcp_…" autocomplete="off" required>
 <label class="costs"><input id="costs" type="checkbox" required><span>I understand Studio uses my own Claude account for writing and planning, my media account’s balance for voice and images, and this computer for rendering. Each provider bills me directly at its own prices.</span></label><button type="submit">Connect</button></form></details><p id="connection" class="note"></p></div></section>
-<section class="step" data-step="claude"><button type="button" class="step-change">Change</button><div class="number">STEP 2</div><h2>Set up Claude<span class="step-state"></span></h2><div class="step-body"><p>Claude researches, writes and directs your videos using your Claude Pro or Max plan.</p><button type="button" id="claude-quick" class="primary-cta">Set up Claude for videos</button><p id="claude-quick-status" class="hint" role="status">Connects Studio to Claude Code, picks the recommended models and runs a tiny check. About a minute.</p><details id="claude-details"><summary>Details and model choices</summary>
+<section class="step" data-step="claude"><button type="button" class="step-change">Change</button><div class="number">STEP 2</div><h2>Set up Claude<span class="step-state"></span></h2><div class="step-body"><p>Claude researches, writes and directs your videos using your Claude Pro or Max plan.</p><button type="button" id="claude-quick" class="primary-cta">Set up Claude for videos</button><p id="claude-quick-status" class="hint" role="status">Connects Studio to Claude Code, picks the recommended models and runs a tiny check. About a minute.</p><div class="actions" id="claude-fix" hidden><button type="button" id="claude-install" class="secondary" hidden>Install Claude Code</button><button type="button" id="claude-signin" class="secondary" hidden>Open the sign-in window</button></div><p id="claude-fix-status" class="hint" role="status" hidden></p><details id="claude-details"><summary>Details and model choices</summary>
 <div class="preferred"><span class="badge">RECOMMENDED</span><h3>Use Claude Code with your Claude plan</h3><p class="note">Videos use your plan’s included usage. Prefer pay-as-you-go API billing instead? Use the API option further down.</p>
-<ol class="setup-steps"><li><strong>Install Claude Code once.</strong>Follow the official guide for your computer. After installing, close and reopen the studio launcher so it can find the app.<div class="actions"><a class="button secondary" href="https://code.claude.com/docs/en/setup#install-claude-code" target="_blank" rel="noopener">Mac installation guide ↗</a><a class="button secondary" href="https://code.claude.com/docs/en/setup#set-up-on-windows" target="_blank" rel="noopener">Windows installation guide ↗</a></div></li>
-<li><strong>Sign in to your Claude account.</strong>Open Terminal on Mac or PowerShell on Windows, type <code>claude</code> and follow its browser login. Choose the Claude account you want charged. Then return to this page.<p><a href="https://code.claude.com/docs/en/authentication#log-in-to-claude-code" target="_blank" rel="noopener">Official login instructions ↗</a></p><button id="claude-check" type="button" class="secondary">Check my Claude Code login</button></li>
+<ol class="setup-steps"><li><strong>Install Claude Code once.</strong>Studio needs Claude Code’s command-line tool (the Claude desktop app alone isn’t enough). Press <b>Install Claude Code</b> above: Studio runs Anthropic’s official installer, no password needed. Or follow the official guide for your computer.<div class="actions"><a class="button secondary" href="https://code.claude.com/docs/en/setup#install-claude-code" target="_blank" rel="noopener">Mac installation guide ↗</a><a class="button secondary" href="https://code.claude.com/docs/en/setup#set-up-on-windows" target="_blank" rel="noopener">Windows installation guide ↗</a></div></li>
+<li><strong>Sign in to your Claude account.</strong>Press <b>Open the sign-in window</b> above and follow the browser login. Or open Terminal on Mac or PowerShell on Windows and run <code>claude auth login</code> (if it says the command isn’t found, run <code>~/.local/bin/claude auth login</code> instead). Choose the Claude account you want charged. Then return to this page.<p><a href="https://code.claude.com/docs/en/authentication#log-in-to-claude-code" target="_blank" rel="noopener">Official login instructions ↗</a></p><button id="claude-check" type="button" class="secondary">Check my Claude Code login</button></li>
 <li><strong>Connect Claude Code to ChannelRecipe.</strong>This adds CR’s tools to your downloaded studio. Your CR credential is saved privately on this computer.<div class="actions"><button id="claude-connect" type="button" disabled>Connect ChannelRecipe to Claude</button></div><p id="claude-connect-help" class="note">Connect your ChannelRecipe account and check your Claude login first.</p></li></ol>
 <div id="claude-checks" class="checks" aria-live="polite"></div><p id="claude-account" class="note"></p>
 <form id="claude-models"><label for="claude-general">Writing, research and planning</label><select id="claude-general" required></select><label for="claude-visual">Complex visuals and render review</label><select id="claude-visual" required></select><p class="note">The visual model handles demanding work such as 3D code and checking rendered scenes. Use either available model for each role.</p><button id="claude-select" type="submit" disabled>Use my Claude Code for videos</button></form><div class="actions"><button id="claude-verify" type="button" class="secondary" disabled>Verify both Claude models</button></div><p class="note">Verification makes one tiny text request to each selected model using your Claude Code account. It generates no images or video. Successful checks are reused; stopped checks are never repeated automatically.</p><p id="claude-status" class="note" role="status"></p></div></details>
@@ -117,7 +117,7 @@ function renderClaude(){
  $('claude-general').disabled=setupBusy;$('claude-visual').disabled=setupBusy;
  $('claude-check').disabled=setupBusy;$('claude-connect').disabled=setupBusy||!canConnect;
  $('claude-connect').textContent=cli.mcp_connected?'Reconnect ChannelRecipe to Claude':'Connect ChannelRecipe to Claude';
- $('claude-connect-help').textContent=!cli.installed?'Install Claude Code, reopen the studio launcher, then check your login.':!cli.authenticated?'Sign in to Claude Code, then press “Check my Claude Code login”.':!statusData.connected?'Connect your CR account in step 2.':!statusData.costs_accepted?'Confirm your account costs in step 2.':cli.mcp_connected?'ChannelRecipe is connected to Claude. Save your model choices to select this route.':'Your account is connected. Press “Connect ChannelRecipe to Claude” to finish the connection.';
+ $('claude-connect-help').textContent=!cli.installed?'Install Claude Code (the Install Claude Code button in step 2), then sign in.':!cli.authenticated?'Sign in to Claude Code, then press “Check my Claude Code login”.':!statusData.connected?'Connect your CR account in step 2.':!statusData.costs_accepted?'Confirm your account costs in step 2.':cli.mcp_connected?'ChannelRecipe is connected to Claude. Save your model choices to select this route.':'Your account is connected. Press “Connect ChannelRecipe to Claude” to finish the connection.';
  $('claude-select').disabled=setupBusy||!canConnect||cli.mcp_connected!==true||!models.length;
  $('claude-select').textContent=setupBusy&&setupAction==='select'?'Saving model choices…':'Use my Claude Code for videos';
  $('claude-verify').disabled=setupBusy||dirty||!canConnect||cli.mcp_connected!==true||cli.models_saved!==true||statusData.brain_mode!=='claudecode';
@@ -177,6 +177,60 @@ async function fixBrowser(button,note){
   }
  }catch(error){note.textContent='Refresh this page and press Fix it again.';button.disabled=false;}
 }
+// Fix it for FFmpeg and Node.js (and Claude Code below): Studio downloads a pinned version into its own folder,
+// checks its fingerprint and that it runs (cr_installs). These follow its progress line.
+const fixing={},fixFailed={},FIX_BUSY=['starting','downloading','checking','installing'];
+function toolFixRow(kind,data){
+ const row=$(kind+'-row');if(!row)return;row.classList.add('wide');
+ const text=document.createElement('span'),note=document.createElement('small');text.append(row.firstChild);row.prepend(text);
+ note.textContent=fixing[kind]||fixFailed[kind]||data[kind+'_reason']||'';text.append(note);
+ if(fixing[kind]||data.can_fix?.[kind]===false)return;
+ const fix=document.createElement('button');fix.type='button';fix.className='link-button';fix.id='fix-'+kind;fix.textContent='Fix it';
+ fix.onclick=()=>fixTool(kind,fix);text.append(fix);
+}
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+async function fixTool(kind,button){
+ const say=text=>{fixing[kind]=text;const live=document.querySelector('#'+kind+'-row small');if(live)live.textContent=text;};
+ delete fixFailed[kind];button.disabled=true;say('Starting…');
+ try{
+  await fetch('/cr-setup/fix-'+kind,{method:'POST',headers:{'X-CR-Local-Token':token}});
+  for(let i=0;i<900;i++){
+   await pause(2000);
+   const s=await (await fetch('/cr-setup/fix-'+kind,{headers:{'X-CR-Local-Token':token},cache:'no-store'})).json();
+   if(FIX_BUSY.includes(s.state)){say(s.message||'Working…');continue;}
+   if(s.state!=='done')fixFailed[kind]=(s.message||'It couldn’t finish.')+' Press Fix it to try again.';
+   break;
+  }
+ }catch(error){fixFailed[kind]='Refresh this page and press Fix it again.';}
+ delete fixing[kind];refresh();
+}
+async function claudeInstall(){
+ const button=$('claude-install'),note=$('claude-fix-status');button.disabled=true;note.hidden=false;note.textContent='Starting Anthropic’s installer…';
+ try{
+  await fetch('/cr-setup/fix-claude',{method:'POST',headers:{'X-CR-Local-Token':token}});
+  for(let i=0;i<600;i++){
+   await pause(3000);
+   const s=await (await fetch('/cr-setup/fix-claude',{headers:{'X-CR-Local-Token':token},cache:'no-store'})).json();
+   if(FIX_BUSY.includes(s.state)){note.textContent=s.message||'Installing…';continue;}
+   note.textContent=s.message||'';if(s.state==='done'||s.installed)await refresh();return;
+  }
+ }catch(error){note.textContent='Refresh this page and press Install Claude Code again.';}
+ finally{button.disabled=false;}
+}
+async function claudeSignIn(){
+ const button=$('claude-signin'),note=$('claude-fix-status');button.disabled=true;note.hidden=false;
+ try{
+  const opened=await request('/cr-setup/claude-sign-in',{});note.textContent=opened.message||'';
+  for(let i=0;i<200;i++){
+   await pause(5000);
+   const s=await (await fetch('/cr-setup/fix-claude?signin=1',{headers:{'X-CR-Local-Token':token},cache:'no-store'})).json();
+   if(s.signed_in){note.textContent='Signed in. Next: press Set up Claude for videos.';await refresh();return;}
+  }
+  note.textContent='Not signed in yet. Press Open the sign-in window to try again.';
+ }catch(error){note.textContent=error.message;}
+ finally{button.disabled=false;}
+}
+$('claude-install').onclick=claudeInstall;$('claude-signin').onclick=claudeSignIn;
 // The network and the speech-timing model, found here instead of halfway through a first video.
 function toolRow(label,ok,badge){const row=document.createElement('div'),text=document.createElement('span'),b=document.createElement('b');row.className='check'+(ok?' ok':'');text.textContent=label;b.textContent=badge||(ok?'Ready':'Needs attention');row.append(text,b);$('checks').append(row);return text;}
 function smallNote(parent,text){const note=document.createElement('small');note.textContent=text;parent.append(note);return note;}
@@ -227,7 +281,11 @@ async function fixSpeech(button,note){
 }
 async function refresh(){try{
  const data=await request('/cr-status'),labels={python:'Python',ffmpeg:'Video tools (FFmpeg)',browser:'Graphics browser',node:'YouTube helper (Node)'};statusData=data;if(claudeDraft&&!claudeModelsDirty())claudeDraft=null;
- $('checks').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="check '+(data[key]?'ok':'')+'">'+label+'<b>'+(data[key]?'Ready':'Needs attention')+'</b></div>').join('');
+ // the YouTube helper row follows node_youtube: a Node.js older than 22 is a note with Fix it (it stops only videos
+ // that download from YouTube); a missing one blocks setup as before
+ const ok=key=>key==='node'?(data.node_youtube??data.node):data[key];
+ $('checks').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="check '+(ok(key)?'ok':'')+'" id="'+key+'-row">'+label+'<b>'+(ok(key)?'Ready':'Needs attention')+'</b></div>').join('');
+ for(const kind of ['ffmpeg','node'])if(!ok(kind))toolFixRow(kind,data);
  if(!data.browser){const row=[...$('checks').querySelectorAll('.check')].find(r=>r.textContent.startsWith('Graphics browser'));if(row){const note=document.createElement('small');note.textContent=data.browser_reason||'The graphics browser needs installing.';const fix=document.createElement('button');fix.type='button';fix.className='link-button';fix.id='fix-browser';fix.textContent='Fix it';fix.onclick=()=>fixBrowser(fix,note);row.append(note,fix);}}
  renderSetupRows(data);
  const connected=!!data.account?.brain?.connected;accounts=data.model_accounts||{};savedProviders=data.providers||{};
@@ -342,11 +400,13 @@ function updateSteps(){
   const badge=sec.querySelector('.step-state');if(badge)badge.textContent=done&&k!=='ready'?'✓ Done':k===current&&k!=='ready'?'Next':'';
   if(stepSeen[k]!==done&&done)sec.classList.remove('open');stepSeen[k]=done;}
  for(const li of document.querySelectorAll('#steps-nav li')){const k=li.dataset.step;li.classList.toggle('done',k==='ready'?st.ready:!!st[k]);li.classList.toggle('current',k===current);}
- $('step-tools').classList.toggle('all-good',['python','ffmpeg','browser','node'].every(k=>statusData[k]===true)&&(!statusData.speech_model||statusData.speech_model.ready===true)&&statusData.network?.ready!==false&&!(statusData.network?.warnings||[]).length&&!(statusData.network?.checking&&!(statusData.network?.hosts||[]).length)&&!statusData.computer?.message);
+ $('step-tools').classList.toggle('all-good',['python','ffmpeg','browser','node'].every(k=>(k==='node'?(statusData.node_youtube??statusData.node):statusData[k])===true)&&(!statusData.speech_model||statusData.speech_model.ready===true)&&statusData.network?.ready!==false&&!(statusData.network?.warnings||[]).length&&!(statusData.network?.checking&&!(statusData.network?.hosts||[]).length)&&!statusData.computer?.message);
  const cli=statusData.claude_code||{},ready=cli.installed===true&&cli.authenticated===true;
  $('claude-quick').disabled=quickRunning||setupBusy||!st.account||!ready;
- if(!quickRunning)$('claude-quick-status').textContent=!st.account?'Connect your ChannelRecipe account first (step 1).':!cli.installed?'Claude Code isn’t installed yet. Open this folder in Claude Code and ask it to finish setup, or follow the steps under Details.':!cli.authenticated?'Sign in to Claude Code first: open Terminal (Mac) or PowerShell (Windows), type claude and follow the browser login. Then press Check my Claude Code login under Details.':st.claude?'Claude is set up for videos.':'Connects Studio to Claude Code, picks the recommended models and runs a tiny check. About a minute.';
+ if(!quickRunning)$('claude-quick-status').textContent=!st.account?'Connect your ChannelRecipe account first (step 1).':!cli.installed?(statusData.can_fix?.claude===false?'Claude Code isn’t installed yet. Follow the steps under Details.':'Studio needs Claude Code’s command-line tool (the Claude desktop app alone isn’t enough). Press Install Claude Code: Studio runs Anthropic’s official installer, no password needed.'):!cli.authenticated?'Sign in to Claude Code once: press Open the sign-in window and sign in in your browser with your Claude Pro or Max account. This page notices when you’re done.':st.claude?'Claude is set up for videos.':'Connects Studio to Claude Code, picks the recommended models and runs a tiny check. About a minute.';
  if(!ready&&!showAll&&st.account)$('claude-details').open=true;
+ const canInstall=st.account&&cli.installed!==true&&statusData.can_fix?.claude!==false,canSignIn=st.account&&cli.installed===true&&cli.authenticated!==true;
+ $('claude-install').hidden=!canInstall;$('claude-signin').hidden=!canSignIn;$('claude-fix').hidden=!(canInstall||canSignIn);
 }
 function pick(models,word){return models.find(m=>String(m.id+' '+(m.label||'')).toLowerCase().includes(word))?.id;}
 async function claudeQuick(){

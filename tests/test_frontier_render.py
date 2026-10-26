@@ -15,7 +15,7 @@ def test_version_only_ffmpeg_is_insufficient_and_full_build_is_selected(monkeypa
     monkeypatch.setattr(cr_studio.shutil, "which", lambda name: name)
     def run(args, **kwargs):
         full = "ffmpeg-full" in args[0]
-        stdout = " TS subtitles caption renderer" if args[-1] == "-filters" and full else ""
+        stdout = " T. ass V->V Render ASS subtitles\n TS subtitles caption renderer" if args[-1] == "-filters" and full else ""
         if args[-1] == "-encoders":
             stdout = " V libx264 H264\n A aac AAC\n A libmp3lame MP3"
         return SimpleNamespace(returncode=0, stdout=stdout)

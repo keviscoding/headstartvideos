@@ -19,6 +19,9 @@ import cr_network
 _accounts = {}
 
 
+YOUTUBE_NODE = "This video downloads from YouTube, which needs Node.js 22 or newer: press Fix it in Setup."
+
+
 def item(key, label, ready, why=""):
     return {"key": key, "label": label, "ready": bool(ready), "message": "" if ready else why}
 
@@ -36,9 +39,14 @@ def basic(checks, *, verify_mcp=True):
         item("release", "Current workflow installed", not account or checks.get("local_version") in (
             account.get("supported_versions") or [account.get("version")]),
              "A new Studio is out. Press Update now at the top of the studio page: it keeps your projects."),
-        item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), "Install FFmpeg with subtitles, H.264, AAC and MP3 support, then reopen the launcher."),
+        item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), checks.get("ffmpeg_reason") or
+             "Open Setup and press Fix it next to Video tools: Studio installs a full FFmpeg in its own folder."),
         item("browser", "Graphics browser", checks.get("browser"), checks.get("browser_reason") or "Open Setup and press Fix it next to Graphics browser."),
-        item("node", "JavaScript runtime", checks.get("node"), "Install Node.js LTS, then reopen the launcher.")]
+        item("node", "JavaScript runtime", checks.get("node"), checks.get("node_reason") or
+             "Open Setup and press Fix it next to YouTube helper: Studio installs Node.js in its own folder.")]
+    if checks.get("node") and checks.get("node_youtube") is False:
+        # a Node.js too old for YouTube downloads: a note here; preset() stops only the videos that use YouTube
+        results[-1]["message"] = checks.get("node_reason") or YOUTUBE_NODE
     results += setup_rows(checks)
     cli = cr_claude.status()
     cli.update(models=[{"id":m,"label":"Claude Opus 5.5" if "opus" in m else "Claude Sonnet 5.5"} for m in cr_claude.MODELS],
@@ -243,8 +251,13 @@ def preset(studio, checks, spec, ahead=0.0):
     # YouTube has no way around it: a recipe that uses it stops here on a network that can't reach it, not mid-video
     youtube = cr_network.youtube_problem(checks.get("network") or {})
     ranking = ((info or {}).get("shorts") or {}).get("pipeline") == "ranking"
-    if youtube and (ranking or wanted.get("youtube") and "video" in steps):
+    uses_youtube = ranking or wanted.get("youtube") and "video" in steps
+    if youtube and uses_youtube:
         results.append(item("youtube_network", "YouTube reachable", False, youtube))
+    # yt-dlp solves YouTube's challenge with Node.js 22 or newer (or Deno): an older Node stops only these videos,
+    # here, before anything is paid (cr_studio.tool_checks' node_youtube; absent: an older Studio check, never refused)
+    if uses_youtube and checks.get("node_youtube") is False:
+        results.append(item("youtube_node", "YouTube downloader ready", False, YOUTUBE_NODE))
     # Validate selected replacement accounts before the first voice/image job.
     checked = set()
     for task in ("narration","images","motion","avatars"):

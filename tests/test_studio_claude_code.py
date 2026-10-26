@@ -1076,3 +1076,54 @@ def test_carry_on_queue_goes_on_or_removes_only_when_asked_and_credits_only_for_
     settings = ccc.folder_settings({"permissions": {"allow": ["mcp__studio__carry_on_queue"]}})
     assert "mcp__studio__carry_on_queue" in settings["permissions"]["ask"]
     assert "mcp__studio__carry_on_queue" not in settings["permissions"]["allow"]
+
+
+def test_setup_check_offers_the_ffmpeg_node_and_claude_fixes_and_they_run_in_studio(studio, monkeypatch):
+    """A new customer's missing FFmpeg, too-old Node.js or missing claude command: Studio installs them itself
+    (cr_installs), never Claude Code's own shell (2026-10-26)."""
+    real_call = tools.call
+    calls = []
+    answers = {"/cr-setup/fix-ffmpeg": {"state": "starting"}, "/cr-setup/fix-node": {"state": "starting"},
+               "/cr-setup/fix-claude": {"state": "starting"}}
+
+    def call(method, path, body=None, **kw):
+        calls.append((method, path))
+        if path == "/cr-status":
+            return {"local_version": "5.3-admin.106", "readiness": {"ready": False, "blockers": ["x"]},
+                    "ffmpeg": False, "ffmpeg_reason": "This computer's FFmpeg can't burn captions. Press Fix it.",
+                    "node": True, "node_youtube": False,
+                    "node_reason": "Node.js 20.11.1 is too old for the YouTube downloader.",
+                    "can_fix": {"ffmpeg": True, "node": True, "claude": True},
+                    "claude_code": {"installed": False, "authenticated": False}}
+        if path in answers:
+            return answers[path]
+        return real_call(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", call)
+    out = ok("setup_check", {})
+    assert out["video_tools"]["ready"] is False and "burn captions" in out["video_tools"]["why"]
+    assert "Call fix_ffmpeg" in out["video_tools"]["fix"] and "Never install it from this shell" in out["video_tools"]["fix"]
+    assert "Call fix_node" in out["node"]["fix"] and "too old" in out["node"]["why"]
+    assert out["node"]["blocks_every_video"] is False and "Only videos that download from YouTube" in out["node"]["note"]
+    assert out["claude_code"]["installed"] is False and "Call fix_claude_cli" in out["claude_code"]["fix"]
+    for name, path in (("fix_ffmpeg", "/cr-setup/fix-ffmpeg"), ("fix_node", "/cr-setup/fix-node")):
+        fixed = ok(name, {})
+        assert fixed["state"] == "starting" and ("POST", path) in calls and "setup_check" in fixed["message"]
+    claude = ok("fix_claude_cli", {})
+    assert claude["state"] == "starting" and ("POST", "/cr-setup/fix-claude") in calls
+    assert "sign-in window" in claude["message"] and "never sign in for them" in claude["message"]
+    answers["/cr-setup/fix-node"] = {"state": "failed", "message": "Studio couldn't download Node.js 24.22.1."}
+    assert ok("fix_node", {}) == {"state": "failed", "message": "Studio couldn't download Node.js 24.22.1."}
+    for name in ("fix_ffmpeg", "fix_node", "fix_claude_cli"):
+        assert name in ccc.FREE_TOOLS and f"mcp__studio__{name}" in ccc.folder_settings({})["permissions"]["allow"]
+
+
+def test_setup_check_on_a_computer_studio_cant_fix_says_so(studio, monkeypatch):
+    real_call = tools.call
+    monkeypatch.setattr(tools, "call", lambda method, path, body=None, **kw: {
+        "local_version": "5.3-admin.106", "readiness": {"ready": False, "blockers": []}, "ffmpeg": False,
+        "node": True, "can_fix": {"ffmpeg": False, "node": False, "claude": True},
+        "claude_code": {"installed": True}} if path == "/cr-status" else real_call(method, path, body, **kw))
+    out = ok("setup_check", {})
+    assert "package manager" in out["video_tools"]["fix"]
+    assert out["node"] == {"ready": True, "why": "", "fix": "", "blocks_every_video": False, "note": ""}
+    assert out["claude_code"]["fix"] == ""
