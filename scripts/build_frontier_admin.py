@@ -370,10 +370,14 @@ ENGINE_PATCHES = {
     # (LaMa, which paints it out, is a model file fetched on first use). Pinned: 1.3+ caps Python below 3.13 and renamed
     # the detector (text_detector -> text_det), so Python 3.12 customers got another API than 3.13 ones; 1.2.3 is
     # pure Python and installs on 3.10-3.14 (checked on PyPI, 2026-10-21).
+    # truststore: Studio's Python checks certificates with the computer's own store, as the browser does (cr_trust),
+    # so an antivirus or company firewall that inspects secure connections no longer fails every download. 0.10.4 is
+    # the release Hugging Face's httpx2 already brings; pure Python, 3.10+ (checked on PyPI, 2026-10-24).
     "requirements.txt": [
         ('yt-dlp>=2025.10.22; python_version >= "3.10"',
          'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"\n'
-         'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove'),
+         'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove\n'
+         'truststore>=0.10.4; python_version >= "3.10"   # Studio trusts this computer\'s certificates, as the browser does'),
     ],
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',
@@ -559,6 +563,13 @@ ENGINE_PATCHES = {
         ("    if _num_env(\"YT_SLEEP\") > 0:\n",
          "    if _env(\"YT_FORCE_IPV4\") not in (\"\", \"0\", \"no\", \"off\", \"false\"):\n"
          "        cmd += [\"--force-ipv4\"]\n    if _num_env(\"YT_SLEEP\") > 0:\n"),
+        # yt-dlp runs as a process of its own: Studio's copy goes through cr_ytdlp so it trusts this computer's
+        # certificates too (an antivirus that scans secure connections failed every YouTube search and download)
+        ("        except ImportError:\n            return []\n    if not shutil.which(\"deno\"):\n",
+         "        except ImportError:\n            return []\n"
+         "    try:\n        import cr_trust\n        cmd = cr_trust.ytdlp_command(cmd)\n"
+         "    except Exception:\n        pass\n"
+         "    if not shutil.which(\"deno\"):\n"),
         ("        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n",
          "        except subprocess.TimeoutExpired:\n            return []\n        if p.returncode:\n"
          "            _note_err(p.stderr)\n        for line in p.stdout.splitlines():\n"),

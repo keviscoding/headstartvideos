@@ -108,7 +108,10 @@ Studio through its own checks, so nothing needs the Studio web page.
   `goes_around` ones need nothing (Studio reaches them through channelrecipe.com); `youtube_only` ones stop only
   recipes that use YouTube. When `network.on_this_computer.suspected`, an antivirus or firewall on the computer is
   blocking Studio itself (their browser still works): help them allow `allow_programs` and 127.0.0.1:7860 in the
-  antivirus it names, step by step. Never suggest switching the antivirus off.
+  antivirus it names, step by step. Never suggest switching the antivirus off. Studio trusts the certificates the
+  computer trusts, as the browser does, so an antivirus or company firewall that scans secure connections needs no
+  change; a host that still reads "inspects its secure connections" means the computer itself doesn't trust that
+  inspection.
 - `setup_check`'s `computer` says what this computer has (memory, processor cores, free space on the disk its videos
   go on) and, in `notes`, where it's short of what Studio uses. Tell them before a long video. `make_videos` refuses a
   video the disk can't hold and says how much to free; `quote`'s `disk.warning` says when it fits with little to spare

@@ -33,6 +33,11 @@ _lock = threading.Lock()
 
 DOWNLOAD = r"""
 import sys
+try:                                    # this computer's certificates, as the browser trusts them (cr_trust)
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
 from huggingface_hub import snapshot_download
 path = snapshot_download(sys.argv[1], allow_patterns=sys.argv[3].split("|"), force_download=sys.argv[2] == "1")
 print("CR-MODEL-PATH " + path, flush=True)

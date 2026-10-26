@@ -373,6 +373,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Look at approved reference videos before a style study.")
     parser.add_argument("--look", required=True)
     args = parser.parse_args(argv)
+    import cr_trust
+    cr_trust.install()
     import cr_bridge
     run(HOME, args.look, call=cr_bridge.call)
     return 0

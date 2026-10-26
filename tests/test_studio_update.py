@@ -237,8 +237,17 @@ def test_certificate_failures_explain_the_fix(studio):
         cr_update.update(studio, get=get, running=lambda: False)
 
 
-def test_https_uses_certifi_when_available():
+def test_https_uses_certifi_when_available(monkeypatch):
+    """Without cr_trust (truststore), certifi's bundle as before; tests/test_studio_trust.py covers the computer's
+    own store."""
     import certifi
+    import ssl
+    try:
+        from truststore._ssl_constants import _original_SSLContext
+        monkeypatch.setattr(ssl, "SSLContext", _original_SSLContext)
+    except ImportError:
+        pass
+    monkeypatch.setitem(sys.modules, "cr_trust", None)
     context = cr_update.tls_context()
     assert context.verify_mode.name == "CERT_REQUIRED"
     assert context.cert_store_stats()["x509_ca"] > 0 or certifi.where()
@@ -356,7 +365,9 @@ def test_youtube_listing_explains_failures_and_heals_an_outdated_helper(monkeypa
     rows = clone.list_videos("https://www.youtube.com/@YourPOVtales/videos", 12, run=run)
     assert rows[0]["id"] == "Pv-xbgsglGE"
     assert any("pip" in c and "yt-dlp" in c for c in calls), "an outdated helper is updated once, then retried"
-    assert calls[0][1:3] == ["-m", "yt_dlp"], "Studio's own yt-dlp is used, not an older one on PATH"
+    import cr_trust                                    # Studio's own yt-dlp, through cr_ytdlp when it can trust the
+    own = cr_trust.ytdlp_command([sys.executable, "-m", "yt_dlp"])           # computer's certificates
+    assert calls[0][:len(own)] == own, "Studio's own yt-dlp is used, not an older one on PATH"
 
     def bot(command, **kwargs):
         return Done(stderr="ERROR: Sign in to confirm you're not a bot")
@@ -378,7 +389,8 @@ def test_finding_studios_youtube_helper_never_imports_it(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: original(*a, **k))
     for name in [n for n in sys.modules if n == "yt_dlp" or n.startswith("yt_dlp.")]:
         monkeypatch.delitem(sys.modules, name)
-    assert clone._ytdlp_command()[1:] == ["-m", "yt_dlp"]
+    import cr_trust
+    assert clone._ytdlp_command() == cr_trust.ytdlp_command([sys.executable, "-m", "yt_dlp"])
     assert "yt_dlp" not in sys.modules
 
 

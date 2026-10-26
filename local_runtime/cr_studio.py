@@ -1958,6 +1958,8 @@ def session_stopped(how: str, home=HOME):
 
 def main():
     import logging
+    import cr_trust
+    cr_trust.install()                                           # check certificates as the browser does (cr_trust)
     if not isinstance(sys.stdout, _RecentOutput):
         sys.stdout, sys.stderr = _RecentOutput(sys.stdout), _RecentOutput(sys.stderr)
     # Every page poll printed a line; keep the window for what matters.

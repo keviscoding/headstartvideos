@@ -31,6 +31,8 @@ def main():
     if args.operation is not None and not re.fullmatch(r"op_[a-f0-9]{24}",args.operation):
         parser.error("Use a valid explicitly created 3D operation ID.")
     command=args.command[1:] if args.command[:1]==["--"] else args.command
+    import cr_trust
+    cr_trust.install()
     import cr_workers,cr_bridge,cr_claude,cr_media,cr_render,cr_studio,cr_readiness
     if not command:parser.error("Use an original studio worker command.")
     target=Path(command[0]).resolve()

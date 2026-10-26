@@ -1,0 +1,37 @@
+name: Studio trusts the computer's certificates
+# An antivirus or company firewall that inspects secure connections adds its own root to the computer's certificate
+# store. This job does the same with a stand-in root on real Windows, then checks Studio's Python (requests, setup's
+# Network check, Studio's yt-dlp) passes where certifi alone fails (tests/test_studio_trust.py). macOS runners refuse
+# to trust a root without a person at the keyboard (authorizationdb write: NO -60005), so the Mac keychain path is
+# checked by hand: after cr_trust.install() requests reports macOS's own verdict on an untrusted root.
+on:
+  pull_request:
+    paths:
+      - 'local_runtime/cr_trust.py'
+      - 'local_runtime/cr_ytdlp.py'
+      - 'local_runtime/cr_network.py'
+      - 'tests/test_studio_trust.py'
+      - 'tests/studio_trust_lab.py'
+      - '.github/workflows/studio-trust.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspected:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python -m pip install pytest requests certifi cryptography "truststore>=0.10.4" "yt-dlp[default]"
+      - name: Make a stand-in antivirus root
+        run: python tests/studio_trust_lab.py make "${{ runner.temp }}/web-shield"
+      - name: Add it to the Windows certificate store, as an antivirus does
+        shell: pwsh
+        run: Import-Certificate -FilePath "${{ runner.temp }}\web-shield\ca.cer" -CertStoreLocation Cert:\LocalMachine\Root
+      - name: Studio passes behind it
+        env:
+          CR_TEST_OS_TRUSTED_CA: ${{ runner.temp }}/web-shield
+        run: python -m pytest -q -rs tests/test_studio_trust.py
