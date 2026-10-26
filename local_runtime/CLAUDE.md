@@ -61,7 +61,7 @@ where the team answers setup questions.
 Never download a new ZIP into a second folder: that hides their projects and
 settings. Update in place instead:
 
-1. Make sure no video is running, then ask the customer to close the Studio
+1. Make sure no video is running or waiting in Studio's queue, then ask the customer to close the Studio
    launcher window (or confirm it's closed: nothing should answer on
    http://127.0.0.1:7860).
 2. From this folder run the studio's own Python: Mac
@@ -114,6 +114,16 @@ Studio through its own checks, so nothing needs the Studio web page.
   $0.02). Shorts keep their own host, and 3D scenes follow the words as closely as the 3D figures allow.
 - `make_videos` returns ids at once. Check `progress` now and then, never in a tight loop; Studio shows a desktop
   notification when a video is done. `list_videos` has each finished video's file and watch link.
+- The queue: this computer makes one video at a time, and every video joins Studio's queue, even while another is
+  being made (any style, any options; the Create page says Add to queue). `make_videos` and `resume_video` return
+  each one's place in line (`position`, `videos_before_it`); they start by themselves, so the creator can walk away.
+  `queue` shows the line. When something every video needs stops (Claude's usage limit, Claude Code signed out, a
+  key refused, a Kie.ai or ElevenLabs balance run out, the disk full, out of memory), the videos waiting go on hold
+  with nothing of theirs spent, instead of each failing the same way: `on_hold_because` says why and what to do,
+  and a video added then joins the hold. Tell the creator; once they've fixed it and ask, `carry_on_queue` carries on
+  (Studio checks each one's setup again; one still blocked stays on hold, saying why) or `remove=true` takes them out.
+  Claude Code asks them to approve it. Never carry on for them. A stop of one video's own (a title, a picture
+  refused, a timeout) never holds the rest. Account and setup changes wait until Studio has finished.
 - A video that stopped (a provider hiccup, a closed Studio): `progress()` lists it under `stopped`; tell them what
   stopped it (`progress(id)`), then `resume_video(id)` carries it on and reuses everything already made.
 - Deleting, only when the creator asks: `delete_video(id, title)` (a finished or stopped video) and
@@ -232,11 +242,12 @@ most-viewed ranking Shorts on it (one clip watch each) and leads its search with
 so a topic like robot fails finds this year's humanoid robots rather than clips from a decade ago. To remake a
 particular Short, paste its YouTube link in Ranking's "Make it like this Short".
 
-To make several at once, put up to 15 topics in Create's "Create several videos" box (each topic once): they are
-made one at a time. If something would stop every one of them the same way (the month's clip watches used up, YouTube
-or Claude limits), the Shorts still waiting go on hold with nothing spent, and the Create and Projects pages offer
-Carry on or Remove. A Studio closed in the middle of a batch keeps the waiting Shorts on hold too; it never starts them
-again on its own.
+To make several at once, put up to 15 topics in Create's "Create several videos" box (each topic once), or press
+Create again while one is made (Add to queue): they are made one at a time. If something would stop every one of them
+the same way (the month's clip watches used up, YouTube limits), the Shorts still waiting go on hold with nothing
+spent, and the Create and Projects pages offer Carry on or Remove; Claude's limits hold every video waiting, not only
+the Shorts. A Studio closed in the middle of a queue keeps the waiting videos on hold too; it never starts them again
+on its own.
 
 A finished Ranking Short can be edited: open it from Projects and press Edit countdown. Change any narrator line
 (or pick one of the writer's other takes), swap any clip for the next best one the search already found (one clip

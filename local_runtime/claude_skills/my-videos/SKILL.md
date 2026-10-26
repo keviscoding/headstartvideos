@@ -9,7 +9,9 @@ argument-hint: "[video title]"
 Use ChannelRecipe Studio's tools (the `studio` server: `mcp__studio__…` in a Studio folder, `mcp__plugin_channelrecipe_studio__…` from the ChannelRecipe plugin). Free, except carrying on a stopped video (step 4); deleting (step 5) is asked too.
 
 1. `progress()` shows what is being made right now (this computer, Studio Cloud and style studies), with percent and
-   the last step. Say it in one or two lines a video.
+   the last step, and the videos waiting in Studio's queue with their place in line. Say it in one or two lines a
+   video. Videos on hold say why (`on_hold_because`, also in `queue`): tell them what to do, and call
+   `carry_on_queue` only when they ask (it's asked too).
 2. `list_videos()` lists finished videos, newest first: title, style, date, size, file path and `watch_url`;
    Studio Cloud videos have a `download_url`.
 3. To watch one ($ARGUMENTS, or the newest): open its `watch_url`. In the Claude desktop app, open it in the
