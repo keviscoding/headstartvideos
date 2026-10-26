@@ -309,7 +309,10 @@
     text('crw-summary-recipe', r?.label || 'Choose a recipe');
     text('crw-summary-duration', isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : `${number('crw-minutes',10,1,60)} minutes`);
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
-    text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
+    // a cloned style reads with its own narrator (the kind of voice its channel has), else the account's voice
+    const narrator = state.selected?.narrator || state.setup?.narration?.voice;
+    if (narrator) text('crw-narration-name', state.selected?.narrator ? `${narrator} · this style's narrator` : narrator);
+    text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : narrator || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
     footageNote(); threedNote();
   }
@@ -1212,9 +1215,10 @@
   async function chooseVoice(name, button) {
     button.disabled = true;
     try {
-      const result = await api('/cr-voices/select', {method: 'POST', body: {voice: name}});
-      voices.data.voice = name; if (state.setup?.narration) state.setup.narration.voice = name;
-      text('crw-narration-name', name); text('crw-voices-status', result.message); renderVoices(); summary();
+      const own = voices.data.style_voice && state.selected?.narrator;
+      const result = await api('/cr-voices/select', {method: 'POST', body: own ? {voice: name, style: state.selected.name} : {voice: name}});
+      voices.data.voice = name; if (own) state.selected.narrator = name; else if (state.setup?.narration) state.setup.narration.voice = name;
+      text('crw-voices-status', result.message); renderVoices(); summary();
     } catch (e) {text('crw-voices-status', e.message); button.disabled = false;}
   }
   $('crw-voice-open').addEventListener('click', openVoices);

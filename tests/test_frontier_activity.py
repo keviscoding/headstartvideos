@@ -999,3 +999,28 @@ def test_studio_opens_setup_until_it_is_connected_then_the_workspace():
     assert cr_studio.start_page({"key": "k"}) == "/cr-setup", "connected, but no voice account yet"
     assert cr_studio.start_page({"key": "k", "narration": {"provider": "kie"}}) == "/"
     assert cr_studio.start_page({"key": "k", "media_hub": {"provider": "atlas"}}) == "/"
+
+
+def test_choose_voice_keeps_a_cloned_styles_own_narrator_for_that_style(runtime, monkeypatch):
+    """The owner's Windows test (2026-10-26): a cloned style's narrator was never used. Choose voice on such a style
+    shows its narrator and keeps the pick for that style; the account's voice and other recipes stay as they were."""
+    import cr_media
+    r = runtime
+    monkeypatch.setenv("KIE_API_KEY", "k" * 30)
+    r.cfg.update(narration={"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "Kore"})
+    real = cr_media.kie_narration
+    monkeypatch.setattr(cr_studio.cr_media, "profile",
+                        lambda task=None: real({**r.cfg["narration"], "tasks": ["narration"]}) if task == "narration" else {})
+    monkeypatch.setattr(cr_studio.cr_media, "active", lambda task: task == "narration")
+    r.studio.styles.STYLES.update(cr_clone_survival={"label": "2d Survival Stories",
+                                                     "cr_style_clone": {"suggested_voice": "Zubenelgenubi"}},
+                                  documentary={"label": "Documentary"})
+    listed = r.client.get("/cr-voices?style=cr_clone_survival", headers=r.headers).json
+    assert listed["voice"] == "Zubenelgenubi" and listed["style_voice"] is True
+    assert r.client.get("/cr-voices?style=documentary", headers=r.headers).json["voice"] == "Kore"
+    chosen = r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Puck", "style": "cr_clone_survival"})
+    assert chosen.status_code == 200 and chosen.json["message"] == "Your next 2d Survival Stories videos use the Puck voice."
+    assert r.cfg["style_voices"] == {"cr_clone_survival": "Puck"} and r.cfg["narration"]["voice"] == "Kore"
+    assert r.client.get("/cr-voices?style=cr_clone_survival", headers=r.headers).json["voice"] == "Puck"
+    r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Charon", "style": "documentary"})
+    assert r.cfg["narration"]["voice"] == "Charon", "a recipe without its own narrator changes the account's voice"

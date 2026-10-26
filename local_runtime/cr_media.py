@@ -1062,8 +1062,37 @@ def _voice_failed(job, provider, model, failed) -> None:
         pass
 
 
+STYLE_VOICES = "style_voices"            # settings: {style: Gemini voice} chosen in Create for a cloned style
+
+
+def style_voice(style: str, info: dict = None) -> dict:
+    """The narrator a cloned style was learned with (its study's suggested_voice, a Gemini voice like the channel's
+    own), or the voice chosen for that style in Create, as a Kie choice; {} when Kie doesn't narrate this account, the
+    style has none, or the voice isn't one Kie has. Before 109 nothing read the suggestion: a deadpan male channel's
+    clone was read by the account's Kore (the owner's Windows test, 2026-10-26)."""
+    try:
+        cfg = profile("narration")
+    except AccountStop:
+        return {}
+    if not style or cfg.get("provider") != "kie":
+        return {}
+    picked = (cr_bridge.load_settings().get(STYLE_VOICES) or {}).get(style)
+    suggested = ((info or {}).get("cr_style_clone") or {}).get("suggested_voice")
+    voice = str(picked or suggested or "")
+    try:
+        model = narration_model("kie", cfg.get("model"))
+    except AccountStop:
+        return {}
+    if not voice or voice not in (model.get("voice_names") or []):
+        return {}
+    return {"provider": "kie", "model": model["id"], "voice": voice, "tasks": ["narration"]}
+
+
 def narrate(engine, text, mp3, srt, voice_id="", style=""):
     chosen = job_voice(Path(mp3).parent)
+    started = any((Path(mp3).parent / (Path(mp3).stem + "-hub-voice")).glob("part-*.*"))
+    if not chosen and not started:                   # a video carried on keeps the one voice it started with
+        chosen = style_voice(style, (getattr(engine, "STYLE_INFO", {}) or {}).get(style))
     chosen = chosen if chosen.get("provider") == "kie" else None
     cfg = chosen or profile("narration")
     provider = cfg["provider"]
