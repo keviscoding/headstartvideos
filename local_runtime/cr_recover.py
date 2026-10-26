@@ -46,6 +46,8 @@ RETRY_BACKOFF = 600                    # an automatic resume Studio refused is t
 RUN_FILE = "cr-run.json"               # {"started", "studio_pid", "run_id", "ended"?, "state"?, "category"?, ...}
 AUTO_FILE = "cr-auto-resume.json"      # {"count", "runs": [{"at", "why"}], "last_try"?, "refused"?}
 CARRY_ON = "cr-carry-on.json"          # {"after_usage_reset": true, "at"}: the creator's up-front choice
+CANCELLED = "cr-cancelled.json"        # {"at", "why"}: the creator cancelled it (running or queued) or removed it from a
+                                       # hold; Studio never carries it on by itself until the creator starts it again
 # a stop on this computer that a second run can get past (cr_failure categories)
 LOCAL_CATEGORIES = ("crash", "out_of_memory", "tool_error", "studio_closed")
 
@@ -204,6 +206,7 @@ def run_started(job, spec) -> None:
     try:
         _write(Path(job) / RUN_FILE, {"started": time.time(), "studio_pid": os.getpid(),
                                       "run_id": str((spec or {}).get("cr_video_run_id") or "")})
+        (Path(job) / CANCELLED).unlink(missing_ok=True)       # started again (Resume, Carry on): no longer cancelled
         if (spec or {}).get("cr_carry_on_after_reset") is True:
             _write(Path(job) / CARRY_ON, {"after_usage_reset": True, "at": time.time()})
     except OSError:
@@ -382,7 +385,8 @@ def receipts(job):
             if path.name.startswith("up-") or ".uncertain-" in path.name or ".failed-" in path.name:
                 continue
             data = _read(path)
-            if data.get("status"):
+            # cr_media's paid tasks (each names its provider); cr_score's music cues skip a cue they can't settle
+            if data.get("status") and data.get("provider"):
                 yield path, data
 
 
@@ -554,6 +558,9 @@ def set_aside(job, receipt_rel, kind) -> str:
 def approve(bridge, job, diag, *, key=None) -> dict:
     """Allow exactly the retries in diag (one more attempt per stuck Claude step on ChannelRecipe; the media receipts
     that need a yes set aside). Never resumes by itself: the caller does, so the whole action is one decision."""
+    if diag.get("needs_approval") and not key:
+        raise Refused("Check what stopped this video first: approving needs the recovery key it shows, so only what "
+                      "you were told is tried again.", {"recovery": diag})
     if key and key != diag.get("key"):
         raise Refused("What stopped this video changed since you looked. Check it again before approving.",
                       {"recovery": diag})
@@ -583,6 +590,83 @@ def approve(bridge, job, diag, *, key=None) -> dict:
 
 UNCHECKED = "its saved Claude steps can't be checked right now"
 
+def mark_cancelled(job, why) -> None:
+    """The creator cancelled this video (Cancel while it was made or waited, or Remove from a hold)."""
+    try:
+        if job is not None and Path(job).is_dir():
+            _write(Path(job) / CANCELLED, {"at": time.time(), "why": str(why)[:120]})
+    except OSError:
+        pass
+
+
+def cancelled(job, home=None, *, since=0.0) -> bool:
+    """Whether the creator cancelled this video after its last run started: its own cancel mark, or the video
+    worker's cancelled.json for this folder (a cancel made while it waited in the queue writes only that)."""
+    job = Path(job)
+    if (job / CANCELLED).is_file():
+        return True
+    if home is None:
+        return False
+    try:
+        marks = list((Path(home) / "output" / "cr-video-workers").glob("video_*/cancelled.json"))
+    except OSError:
+        return False
+    for mark in marks:
+        data = _read(mark)
+        if data.get("slug") == job.name and float(data.get("stopped_at") or _mtime(mark)) >= since - 5:
+            return True
+    return False
+
+
+def engine_voice(job, saved) -> bool:
+    """Whether this video's voice is made by the engine on the creator's own account (ElevenLabs on their key, or
+    another voice service the engine calls itself): no receipts there, so nothing tells which parts were already paid
+    for. cr_media's Kie voices keep receipts; the creator's own recording pays nothing."""
+    import cr_media
+    spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
+    if spec.get("byo_audio"):
+        return False
+    if str(spec.get("style") or saved.get("style") or "").startswith("cr-shorts"):
+        # Shorts read their lines on the creator's ElevenLabs key when one is set (shorts/ranking/voice.py)
+        return bool(os.getenv("ELEVENLABS_API_KEY", "").strip())
+    chosen = cr_media.job_voice(job)
+    if chosen.get("provider") in ("own", "kie"):
+        return False
+    if chosen.get("provider") == "original":
+        return True
+    try:
+        return not cr_media.active("narration")
+    except Exception:                                          # noqa: BLE001 - unknown: treated as the engine's
+        return True
+
+
+def voice_unfinished(job, saved) -> bool:
+    """Its voice may be part-way made: no finished narration yet, and its script (or, for a Short, its folder) is
+    there."""
+    job = Path(job)
+    spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
+    if str(spec.get("style") or saved.get("style") or "").startswith("cr-shorts"):
+        return True                                            # a Short's voice files are its pipeline's own
+    if (job / "audio.mp3").is_file() and (job / "subs.srt").is_file():
+        return False
+    return (job / "script.txt").is_file()
+
+
+def queue_on_hold(studio) -> str:
+    """Why Studio's queue (cr_queue) holds its videos for a stop every video would hit (no balance, the disk full,
+    Claude's limit), or "": Studio starts nothing by itself while it does."""
+    keeper = getattr(studio, "_cr_queue", None)
+    if keeper is None:
+        return ""
+    try:
+        state = keeper.status()
+    except Exception:                                          # noqa: BLE001
+        return ""
+    if state.get("held") or state.get("reason"):
+        return str(state.get("reason") or "the queue is on hold")
+    return ""
+
+
 def _auto_plan(job, *, home=None, server_stages=None, allowance=None, live="", now=None, studio_pid=None) -> dict:
     """{"safe", "why", "approve": [stage ids the creator's up-front choice covers]} for carrying this video on now."""
     home = Path(home or HOME)
@@ -602,13 +686,18 @@ def _auto_plan(job, *, home=None, server_stages=None, allowance=None, live="", n
     stop = last_stop(job, home, studio_pid=studio_pid)
     if stop["kind"] in ("unknown", "done", "interrupted_here"):
         return no("there's no record of a stop on this computer")
-    if stop["kind"] == "cancelled":
+    run = _read(job / RUN_FILE)
+    if stop["kind"] == "cancelled" or cancelled(job, home, since=float(run.get("started") or 0)):
         return no("it was cancelled")
-    if stop["at"] and now - stop["at"] > AUTO_WINDOW:
-        return no("it stopped more than a day ago")
     usage_stop = stop["category"] == "usage_limit"
+    if stop["at"] and now - stop["at"] > AUTO_WINDOW and not usage_stop:
+        return no("it stopped more than a day ago")
     if stop["kind"] != "local" and not usage_stop:
         return no(f"it stopped on something that needs you ({stop['category'] or 'unknown'})")
+    if voice_unfinished(job, saved) and engine_voice(job, saved):
+        # the coordinator, 2026-10-26: until the engine is proven safe here, a voice on the creator's own account
+        # (no receipts) is carried on only by the creator's Resume
+        return no("its voice was being made on your own voice account, which keeps no receipts: press Resume yourself")
     import cr_media
     for path, r in receipts(job):
         if r.get("status") == "submitting" and not r.get("id"):
@@ -640,6 +729,8 @@ def _auto_plan(job, *, home=None, server_stages=None, allowance=None, live="", n
             return no("Claude didn't say when its usage resets")
         if now < float(reset) + USAGE_MARGIN:
             return no("Claude's usage hasn't reset yet")
+        if now - float(reset) > AUTO_WINDOW:
+            return no("Claude's usage reset more than a day ago")
         if any(s["fix_first"] for s in usage):
             return no(next(s["fix_first"] for s in usage if s["fix_first"]))
         return {"safe": True, "why": "Claude's usage reset, as you chose",
@@ -832,9 +923,9 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
                         or any(m.get("needs_approval") for m in diag["media"]):
                     return jsonify(error="Only a video Claude's usage limit stopped can wait for the reset.",
                                    recovery=diag), 409
-                if data.get("key") and data["key"] != diag["key"]:
-                    raise Refused("What stopped this video changed since you looked. Check it again.",
-                                  {"recovery": diag})
+                if data.get("key") != diag["key"]:
+                    raise Refused("What stopped this video changed since you looked, or you didn't see it: check it "
+                                  "again, then choose.", {"recovery": diag})
                 _write(job / CARRY_ON, {"after_usage_reset": True, "at": time.time()})
                 when_said = diag.get("reset_label") or "Claude's usage resets"
                 return jsonify(scheduled=True, recovery=look(job),
@@ -880,11 +971,53 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
         return jsonify(matches=matches, others=[t for t in titles if str(t).strip()
                                                 and title_key(t) not in {title_key(m["title"]) for m in matches}])
 
+    watch_cancels(studio)
     watcher = Watcher(studio, activity, home, bridge, resume)
     studio._cr_recover = watcher
     if start_watcher:
         watcher.start()
     return watcher
+
+
+def watch_cancels(studio) -> None:
+    """A cancel the creator makes marks the video's folder (CANCELLED): Cancel while it is made or waits in the queue
+    (cr_video_cancel), and Remove on the queue's hold (cr_queue.drop, also carry_on_queue(remove=true)). Wrapped
+    here, so neither module changes; each wrapper runs the original first and never fails because of the mark."""
+    def folder(slug):
+        try:
+            found = studio.mv.find_job(slug) if hasattr(studio.mv, "find_job") else None
+            return Path(found) if found is not None else None
+        except Exception:                                      # noqa: BLE001
+            return None
+
+    workers = getattr(studio, "_cr_video_workers", None)
+    if workers is not None and not getattr(workers.cancel, "_cr_recover", False):
+        original_cancel = workers.cancel
+
+        def cancel(slug, run_id):
+            result = original_cancel(slug, run_id)
+            if isinstance(result, dict) and result.get("cancelled"):
+                mark_cancelled(folder(slug), "cancelled")
+            return result
+        cancel._cr_recover = True
+        workers.cancel = cancel
+    keeper = getattr(studio, "_cr_queue", None)
+    if keeper is not None and not getattr(keeper.drop, "_cr_recover", False):
+        original_drop = keeper.drop
+
+        def drop(*args, **kwargs):
+            try:
+                with keeper.lock:
+                    slugs = [str(spec.get("slug") or "") for spec in list(keeper.held) if isinstance(spec, dict)]
+            except Exception:                                  # noqa: BLE001
+                slugs = []
+            removed = original_drop(*args, **kwargs)
+            for slug in slugs:
+                if slug:
+                    mark_cancelled(folder(slug), "removed from the queue")
+            return removed
+        drop._cr_recover = True
+        keeper.drop = drop
 
 
 class Watcher:
@@ -916,8 +1049,9 @@ class Watcher:
     def tick(self, now=None):
         """One look: returns (slug, why) for the video it carried on, else None."""
         try:
-            if self.activity.busy() or getattr(self.studio, "_cr_restart_for_update", False):
-                return None
+            if (self.activity.busy() or getattr(self.studio, "_cr_restart_for_update", False)
+                    or queue_on_hold(self.studio)):
+                return None                                    # the queue's holds start nothing unasked (cr_queue)
         except Exception:                                      # noqa: BLE001
             return None
         now = time.time() if now is None else now
@@ -942,6 +1076,9 @@ class Watcher:
                               live=live, now=now)
             if not plan["safe"]:
                 continue
+            started = float(_read(job / RUN_FILE).get("started") or 0)
+            if cancelled(job, self.home, since=started) or live_state(self.studio, job.name, saved["id"]):
+                continue                                       # the last look before acting: cancelled, or on its way
             try:
                 for sid in plan["approve"]:
                     # the creator chose this before the stop (CARRY_ON): one more attempt for a usage-limit refusal

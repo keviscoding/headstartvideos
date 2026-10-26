@@ -25,8 +25,9 @@ Use ChannelRecipe Studio's tools (the `studio` server: `mcp__studio__…` in a S
      read them `what_to_tell_them` and each stuck item's reason, and whether their Claude usage or money may already
      have gone on it. Only after they say yes, `recover_video(id, key=recovery_key)`: it allows exactly those
      attempts and carries the video on, reusing everything else. Do the `fix_first` items first (signing Claude Code
-     in, for one). When `usage_resets` is still ahead, offer `recover_video(id, when='after_reset')`: Studio carries
-     it on by itself after the reset. Never approve for them.
+     in, for one). When `usage_resets` is still ahead, offer
+     `recover_video(id, key=recovery_key, when='after_reset')`: Studio carries it on by itself after the reset. Never
+     approve for them.
    - `carries_on_by_itself.would` true: Studio carries it on by itself within a minute or so (a closed Studio or a
      crash on this computer, nothing uncertain): nothing to do.
 5. To delete a video they ask to delete: say which one goes (its title from `list_videos` or `progress()`) and that

@@ -997,8 +997,9 @@ RECOVERY_NOTE = ("Tell the creator in plain words what stopped it: what_to_tell_
                  "whether their Claude usage or money may already have gone on it. Never approve for them. When they "
                  "say yes, recover_video(id, key=recovery_key) allows exactly these attempts and carries the video on, "
                  "reusing everything else (Claude Code asks them to approve too). When usage_resets is still ahead: "
-                 "recover_video(id, when='after_reset') has Studio carry it on by itself after the reset; when='now' "
-                 "with added_usage=true only if they added Claude usage. Do the fix_first items first. When "
+                 "recover_video(id, key=recovery_key, when='after_reset') has Studio carry it on by itself after the "
+                 "reset; when='now' with added_usage=true only if they added Claude usage. Do the fix_first items "
+                 "first. When "
                  "free_to_resume is true, resume_video(id) carries it on and nothing is paid twice.")
 
 
@@ -1161,9 +1162,9 @@ def tool_recover_video(args):
     when = str(args.get("when") or "now")
     if when not in ("now", "after_reset"):
         raise Refused("Choose when='now' or when='after_reset'.")
-    body = {"acknowledge_costs": True, "when": when, "added_usage": args.get("added_usage") is True}
-    if args.get("key"):
-        body["key"] = str(args["key"])
+    # the recovery key progress(id) showed: only what the creator was told is approved (cr_recover refuses without it)
+    body = {"acknowledge_costs": True, "when": when, "added_usage": args.get("added_usage") is True,
+            "key": str(args.get("key") or "")}
     try:
         result = call("POST", "/cr-workspace/recovery/" + _quote_path(slug), body, timeout=240)
     except Refused as error:
@@ -1829,9 +1830,11 @@ TOOLS = {
                       "Studio carries it on by itself after Claude's reported reset. added_usage=true: they added "
                       "Claude usage, so trying before the reported reset makes sense.",
                       _schema({"id": {"type": "string", "description": "video:<slug> from progress()."},
-                               "key": {"type": "string", "description": "recovery_key from progress(id)."},
+                               "key": {"type": "string", "description": "recovery_key from progress(id), so only what "
+                                                                        "the creator was told is approved (\"\" "
+                                                                        "when progress showed none)."},
                                "when": {"type": "string", "enum": ["now", "after_reset"]},
-                               "added_usage": {"type": "boolean"}}, ["id"]),
+                               "added_usage": {"type": "boolean"}}, ["id", "key"]),
                       {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "edit_style": (tool_edit_style, "Show or change one of the creator's learned styles (from clone_style): its name, "
                    "tagline, description, creative direction for the script (script_notes) and for the pictures and "

@@ -473,12 +473,14 @@ def test_a_yes_while_studio_is_busy_joins_the_queue_and_waits_its_turn(studio_en
     env = studio_env
     env.busy["on"] = True
     env.place = {"position": 2, "ahead": 1}
-    answer = post(env, env.job.name, {"acknowledge_costs": True}).get_json()
+    key = env.client.get("/cr-workspace/recovery/" + env.job.name, base_url=BASE).get_json()["key"]
+    answer = post(env, env.job.name, {"acknowledge_costs": True, "key": key}).get_json()
     assert answer["resumed"] and answer["waiting"] and env.submitted == [PROJECT]
     assert answer["queued"][0]["ahead"] == 1 and "joins the queue" in answer["message"]
     assert [c[1]["stage_id"] for c in env.bridge.calls] == [S1]
     env.place = {"held": "Your Kie.ai balance ran out."}
-    held = post(env, env.job.name, {"acknowledge_costs": True}).get_json()
+    env.bridge.stages[0].update(status="failed", can_retry=True)
+    held = post(env, env.job.name, {"acknowledge_costs": True, "key": key}).get_json()
     assert "on hold" in held["message"] and "Carry on" in held["message"]
 
 
@@ -505,11 +507,14 @@ def test_a_usage_limit_stop_can_wait_for_the_reset_by_the_creators_choice(studio
     env.bridge.stages[:] = [stage(S1, "failed", "usage_limit"), stage(S2)]
     ahead = {"reset_at": time.time() + 3600, "reset_label": "4 PM"}
     monkeypatch.setattr(cr_claude, "status", lambda *a, **k: {"ready": True, "allowance": ahead})
-    early = post(env, env.job.name, {"acknowledge_costs": True})
+    key = env.client.get("/cr-workspace/recovery/" + env.job.name, base_url=BASE).get_json()["key"]
+    early = post(env, env.job.name, {"acknowledge_costs": True, "key": key})
     assert early.status_code == 409 and "4 PM" in early.get_json()["error"] and env.bridge.calls == []
-    later = post(env, env.job.name, {"acknowledge_costs": True, "when": "after_reset"}).get_json()
+    unseen = post(env, env.job.name, {"acknowledge_costs": True, "when": "after_reset"})
+    assert unseen.status_code == 409 and not recover.carry_on(env.job), "waiting for the reset needs the key too"
+    later = post(env, env.job.name, {"acknowledge_costs": True, "when": "after_reset", "key": key}).get_json()
     assert later["scheduled"] and recover.carry_on(env.job) and env.bridge.calls == [] and env.submitted == []
-    now = post(env, env.job.name, {"acknowledge_costs": True, "added_usage": True})
+    now = post(env, env.job.name, {"acknowledge_costs": True, "added_usage": True, "key": key})
     assert now.status_code == 200 and env.submitted == [PROJECT]
 
 
@@ -549,3 +554,152 @@ def test_the_watcher_approves_a_usage_limit_refusal_only_by_choice_after_the_res
     (env.job / recover.CARRY_ON).write_text(json.dumps({"after_usage_reset": True}))
     assert env.watcher.tick() == (env.job.name, "Claude's usage reset, as you chose")
     assert [c[1]["stage_id"] for c in env.bridge.calls] == [S1] and env.submitted == [PROJECT]
+
+
+# ── the coordinator's review, 2026-10-26: cancels, the queue's holds, the key, voices on the creator's own account ──
+
+def worker_cancel(home, slug, *, ago=0, queued=True):
+    """What cr_video_cancel writes for a cancel: only this, when the video was cancelled while it waited."""
+    folder = Path(home) / "output" / "cr-video-workers" / ("video_" + "c" * 24)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "cancelled.json").write_text(json.dumps({"run_id": folder.name, "slug": slug, "status": "cancelled",
+                                                       "queued": queued, "stopped_at": time.time() - ago}))
+
+
+def test_a_video_cut_off_then_requeued_and_cancelled_is_never_carried_on(studio_env):
+    """The review's BLOCKER: Studio closed mid-video, the creator queued it again and cancelled it while it waited
+    (cr_video_cancel writes only the worker's cancelled.json); the old run still read "Studio closed"."""
+    env = studio_env
+    env.bridge.stages[:] = [stage(S1), stage(S2)]
+    closed_run(env.job)
+    worker_cancel(env.home, env.job.name)
+    assert recover.safe_to_resume(env.job, home=env.home, server_stages=[stage(S1)]) == (False, "it was cancelled")
+    assert env.watcher.tick() is None and env.submitted == [] and env.bridge.calls == []
+    # a cancel from before this run started is an old one
+    (env.home / "output" / "cr-video-workers").rename(env.home / "old-workers")
+    worker_cancel(env.home, env.job.name, ago=3600)
+    assert recover.safe_to_resume(env.job, home=env.home, server_stages=[stage(S1)])[0]
+
+
+def test_a_cancelled_usage_limit_stop_is_never_approved_by_itself(studio_env, monkeypatch):
+    env = studio_env
+    ended_run(env.job, category="usage_limit", provider="claude")
+    env.bridge.stages[:] = [stage(S1, "failed", "usage_limit"), stage(S2)]
+    (env.job / recover.CARRY_ON).write_text(json.dumps({"after_usage_reset": True}))
+    past = {"reset_at": time.time() - recover.USAGE_MARGIN - 5, "reset_label": "earlier"}
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **k: {"ready": True, "allowance": past})
+    recover.mark_cancelled(env.job, "removed from the queue")
+    assert env.watcher.tick() is None and env.bridge.calls == [] and env.submitted == []
+    recover.run_started(env.job, {})                           # the creator started it again: no longer cancelled
+    assert not (env.job / recover.CANCELLED).exists()
+
+
+def test_cancel_and_remove_from_a_hold_mark_the_video_cancelled(tmp_path):
+    job = make_job(tmp_path)
+    other = make_job(tmp_path, slug="other--abcd1234", title="Other")
+
+    class Workers:
+        def cancel(self, slug, run_id):
+            return {"cancelled": slug == job.name, "message": "x"}
+
+    class Keeper:
+        lock = threading.RLock()
+
+        def __init__(self):
+            self.held = [{"slug": other.name, "title": "Other"}, {"slug": "new-video--abcd1234", "title": "New"}]
+
+        def drop(self):
+            n, self.held = len(self.held), []
+            return n
+
+        def status(self):
+            return {"held": self.held, "reason": ""}
+    studio = SimpleNamespace(mv=engine_for(job, other), _cr_video_workers=Workers(), _cr_queue=Keeper())
+    recover.watch_cancels(studio)
+    recover.watch_cancels(studio)                              # wrapped once only
+    assert studio._cr_video_workers.cancel(job.name, "video_" + "1" * 24)["cancelled"]
+    assert (job / recover.CANCELLED).is_file() and not (other / recover.CANCELLED).exists()
+    assert studio._cr_queue.drop() == 2
+    assert json.loads((other / recover.CANCELLED).read_text())["why"] == "removed from the queue"
+
+
+def test_nothing_carries_on_by_itself_while_the_queue_holds_its_videos(studio_env):
+    env = studio_env
+    env.bridge.stages[:] = [stage(S1), stage(S2)]
+    closed_run(env.job)
+
+    class Keeper:
+        reason = "Your Kie.ai balance ran out. Top it up, then Carry on."
+
+        def status(self):
+            return {"held": [{"slug": "x--abc"}], "reason": self.reason}
+
+        def has_project(self, project_id):
+            return False
+    env.studio._cr_queue = Keeper()
+    assert env.watcher.tick() is None and env.submitted == []
+    env.studio._cr_queue.status = lambda: {"held": [], "reason": ""}
+    assert env.watcher.tick() == (env.job.name, "Studio closed while it was being made")
+
+
+def test_a_yes_needs_the_key_whenever_something_needs_approval(studio_env):
+    env = studio_env
+    answer = post(env, env.job.name, {"acknowledge_costs": True})
+    assert answer.status_code == 409 and "recovery key" in answer.get_json()["error"]
+    assert env.bridge.calls == [] and env.submitted == []
+    d = recover.diagnose(env.home, env.job, server_stages=env.bridge.stages)
+    with pytest.raises(recover.Refused, match="recovery key"):
+        recover.approve(env.bridge, env.job, d)
+    env.bridge.stages[:] = [stage(S1), stage(S2)]               # nothing to approve: a free Resume needs no key
+    assert post(env, env.job.name, {"only_if_free": True}).status_code == 200 and env.submitted == [PROJECT]
+
+
+@pytest.mark.parametrize("voice,finished,safe", [("original", False, False), ("original", True, True),
+                                                 ("kie", False, True), ("own", False, True)])
+def test_a_voice_on_the_creators_own_account_is_carried_on_only_by_their_resume(tmp_path, voice, finished, safe):
+    """The coordinator's call: the engine's own voices (ElevenLabs on the creator's key) keep no receipts, so a video
+    stopped while its voice was being made is never carried on by itself."""
+    import cr_media
+    job = make_job(tmp_path)
+    closed_run(job)
+    (job / "script.txt").write_text("The vault opened.", encoding="utf-8")
+    choice = {"original": {"provider": "original"}, "own": {"provider": "own", "file": "take.mp3"},
+              "kie": {"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "Kore"}}[voice]
+    (job / cr_media.VOICE_CHOICE).write_text(json.dumps(choice), encoding="utf-8")
+    if finished:
+        (job / "audio.mp3").write_bytes(b"voice")
+        (job / "subs.srt").write_text("1\n", encoding="utf-8")
+    ok, why = recover.safe_to_resume(job, home=tmp_path, server_stages=[stage(S1)])
+    assert ok is safe and (safe or "own voice account" in why)
+
+
+def test_a_short_read_on_the_creators_elevenlabs_key_waits_for_their_resume(tmp_path, monkeypatch):
+    job = make_job(tmp_path, style="cr-shorts-ranking", minutes=1)
+    closed_run(job)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "creator-test-key")
+    assert recover.safe_to_resume(job, home=tmp_path, server_stages=[])[0] is False
+    monkeypatch.delenv("ELEVENLABS_API_KEY")
+    assert recover.safe_to_resume(job, home=tmp_path, server_stages=[])[0]
+
+
+def test_a_weekly_reset_is_measured_from_the_reset_not_the_stop(tmp_path):
+    job = make_job(tmp_path)
+    ended_run(job, category="usage_limit", provider="claude", ago=3 * 24 * 3600)
+    (job / recover.CARRY_ON).write_text(json.dumps({"after_usage_reset": True}))
+    stages = [stage(S1, "failed", "usage_limit")]
+    just = {"reset_at": time.time() - recover.USAGE_MARGIN - 60, "reset_label": "this morning"}
+    assert recover.safe_to_resume(job, home=tmp_path, server_stages=stages, allowance=just)[0]
+    long_ago = {"reset_at": time.time() - recover.AUTO_WINDOW - 60, "reset_label": "two days ago"}
+    assert not recover.safe_to_resume(job, home=tmp_path, server_stages=stages, allowance=long_ago)[0]
+
+
+def test_a_music_cues_own_receipt_never_holds_up_a_free_resume(tmp_path):
+    """cr_score's Suno cues keep receipts of their own (no provider) and skip a cue they can't settle."""
+    job = make_job(tmp_path)
+    closed_run(job)
+    tasks = job / "music" / ".cr-tasks"
+    tasks.mkdir(parents=True)
+    (tasks / ("cue_01-" + "f" * 24 + ".json")).write_text(json.dumps({"status": "submitting", "model": "V4_5"}))
+    d = recover.diagnose(tmp_path, job, server_stages=[])
+    assert d["media"] == [] and d["free_to_resume"]
+    assert recover.safe_to_resume(job, home=tmp_path, server_stages=[])[0]

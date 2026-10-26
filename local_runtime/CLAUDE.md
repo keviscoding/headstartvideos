@@ -153,8 +153,9 @@ Studio through its own checks, so nothing needs the Studio web page.
   `media`): read them `what_to_tell_them`, each stuck item's reason and whether their Claude usage or money may
   already have gone on it. Only after they say yes, `recover_video(id, key=recovery_key)` allows exactly those
   attempts and carries the video on, reusing everything else (Claude Code asks them too). `fix_first` items come
-  first. When `usage_resets` is still ahead, `recover_video(id, when='after_reset')` has Studio carry it on by itself
-  after the reset. Never approve for them.
+  first. When `usage_resets` is still ahead, `recover_video(id, key=recovery_key, when='after_reset')` has Studio
+  carry it on by itself after the reset. Never approve for them. A video whose voice was being made on their own
+  voice account (no receipts) is never carried on by itself: offer `resume_video(id)`.
 - `make_videos` answering `resume_first`: those titles already stopped with their work saved. Offer to carry them on;
   `new_attempt=true` (a brand-new video that pays again for every step) only when they insist.
 - Deleting, only when the creator asks: `delete_video(id, title)` (a finished or stopped video) and
