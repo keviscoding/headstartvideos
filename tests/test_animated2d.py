@@ -433,9 +433,11 @@ def test_the_renderer_is_saved_versioned_with_the_style_and_never_used_changed(h
     assert "Use pictures instead" in a2d.renderer_problem(failed, home)
 
 
-def test_a_renderer_saved_on_windows_is_not_changed_on_disk(home, tmp_path):
+def test_a_renderer_saved_on_windows_is_not_changed_on_disk(kit, tmp_path):
     """The owner's Windows test (2026-10-26): before 109, Windows wrote a saved renderer with \\r\\n line ends and the
-    readiness check hashed its bytes, so every coded style read "changed on disk" right after its study."""
+    readiness check hashed its bytes, so every coded style read "changed on disk" right after its study. Needs no
+    private kit or browser, so Windows CI runs it."""
+    home = tmp_path / "studio"
     code = BEAN
     assert "\n" in code
     digest = hashlib.sha256(code.encode()).hexdigest()
