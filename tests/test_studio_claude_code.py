@@ -564,6 +564,7 @@ def test_windows_notification_starts_powershell_without_powershell_7s_module_pat
     (args, kw), = runs
     assert args[0] == "powershell" and "''s done" in args[-1]
     assert not any(k.upper() == "PSMODULEPATH" for k in kw["env"])
+    assert "System.Drawing.Icon('" in args[-1] and "ChannelRecipe Studio" in args[-1], "its own icon and name"
 
 
 def test_configure_tells_the_plugin_where_studio_is(tmp_path, pointer):

@@ -162,7 +162,9 @@
     setInput(d.input === 'script' ? 'script' : 'idea', false);
     return d;
   }
-  function setInput(mode, persist = true) {state.input = mode; chooseGroup('[data-input-mode]', 'inputMode', mode); hide('crw-script-panel', mode !== 'script'); if (persist) save();}
+  function setInput(mode, persist = true) {state.input = mode; chooseGroup('[data-input-mode]', 'inputMode', mode); hide('crw-script-panel', mode !== 'script');
+    text('crw-title-help', mode === 'script' ? 'Write it like a YouTube title. Your script below is what the video says.' : 'Write it like a YouTube title. Studio researches and writes the video from it.');
+    if (persist) save();}
   async function setNarration(mode) {
     state.narration = mode; chooseGroup('[data-narration-mode]', 'narrationMode', mode);
     hide('crw-narration-ai', mode !== 'ai'); hide('crw-narration-own', mode !== 'own');
@@ -307,7 +309,7 @@
   function summary() {
     const r = state.selected; text('crw-summary-title', $('crw-title').value.trim() || 'Your next video');
     text('crw-summary-recipe', r?.label || 'Choose a recipe');
-    text('crw-summary-duration', isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : `${number('crw-minutes',10,1,60)} minutes`);
+    text('crw-summary-duration', isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     // a cloned style reads with its own narrator (the kind of voice its channel has), else the account's voice
     const narrator = state.selected?.narrator || state.setup?.narration?.voice;
@@ -553,7 +555,8 @@
           } stats.hidden=!stats.childElementCount;
         } catch(_) {/* Overall job progress remains available if GPU metrics are missing. */}
       }
-      text('crw-progress-log',lines.join('\n')); text('crw-progress-note',data.error || (data.done ? 'Saved work remains with this project. Starting another video creates a fresh attempt.' : 'Your studio is working. Completed steps and elapsed time come from the live job.'));
+      text('crw-progress-log',lines.join('\n')); text('crw-progress-label', data.state === 'done' ? 'READY' : data.done ? 'STOPPED' : 'IN PRODUCTION');
+      text('crw-progress-note',data.error || (data.state === 'done' ? 'Your video is ready. Open it to watch, download or change it.' : data.done ? 'Saved work remains with this project. Starting another video creates a fresh attempt.' : 'Your studio is working. Completed steps and elapsed time come from the live job.'));
       const cancel = data.cr_cancel || {}; $('crw-progress-cancel').disabled = cancel.can_cancel !== true; hide('crw-progress-cancel',cancel.can_cancel !== true); $('crw-progress-cancel').dataset.run = cancel.run_id || '';
       if (data.done && !$('crw-progress-actions').childElementCount) {
         const another = el('button','crw-secondary-button','Create another video'); another.type='button'; another.addEventListener('click',()=>showPage('create')); $('crw-progress-actions').append(another);
@@ -775,7 +778,8 @@
       try {const rk = await api(`/cr-ranking/edit/${encoded(job.slug)}`); if (rk && rk.slots) {$('crw-output-editor').href = `/cr-ranking-edit?job=${encoded(job.slug)}`; text('crw-output-editor-label', 'Edit countdown'); $('crw-output-editor').hidden = false; hide('crw-output-timing', true);}} catch (_) {}
       const exports = [['audio','Narration','audio'],['script','Script','script'],['srt','Subtitles','srt'],['desc','Description','desc']];
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
-      for (const name of data.thumbs || data.thumbnails || []) {const filename=typeof name==='string'?name:name.name; if (!filename) continue;const a=el('a','crw-export-link','Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
+      const thumbs = (data.thumbs || data.thumbnails || []).map(name => typeof name === 'string' ? name : name?.name).filter(Boolean);
+      for (const [i, filename] of thumbs.entries()) {const a=el('a','crw-export-link',thumbs.length > 1 ? `Thumbnail ${i + 1}` : 'Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
       try {const saved = await api(`/cr-workspace/project/${encoded(job.slug)}`); const lines = (saved.sound_check || []).map(r => (r.state === 'ok' ? '✓ ' : '• ') + r.text); text('crw-output-message', lines.length ? 'Sound check: ' + lines.join(' · ') : '');} catch (_) {/* the sound check is optional */}
       $('crw-output').showModal();
     } catch (e) {toast(e.message);}
