@@ -1072,7 +1072,7 @@ def renderer_verdict(style) -> dict:
                       f"{score}/10 against the channel's own frames, reaching this channel's bar of {bar}. Every video "
                       "is drawn with it.")
     elif r.get("state") == "below_bar":
-        out["verdict"] = "Not as close as the channel yet"
+        out["verdict"] = "Not that close yet"
         out["say"] = (f"Your style is saved. Claude wrote this channel's animation in code: its test shots scored "
                       f"{score}/10 against the channel's own frames, under this channel's bar of {bar}. Your videos "
                       "will be drawn with it as it is. You can improve it below; if you'd rather have pictures in the "
