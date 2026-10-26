@@ -104,8 +104,8 @@ def _unbox(src: Path, dest: Path):
     im = Image.open(src).convert("RGB")
     grey = im.convert("L")
     w, h = grey.size
-    cols = list(grey.resize((w, 1), Image.BOX).getdata())
-    rows = list(grey.resize((1, h), Image.BOX).getdata())
+    flat = lambda im: list(im.get_flattened_data() if hasattr(im, "get_flattened_data") else im.getdata())
+    cols, rows = flat(grey.resize((w, 1), Image.BOX)), flat(grey.resize((1, h), Image.BOX))
     lit_c = [i for i, v in enumerate(cols) if v > 10]
     lit_r = [i for i, v in enumerate(rows) if v > 10]
     box = [0, 0, w, h]
@@ -288,11 +288,13 @@ def status(home, style: str) -> dict:
 # ── preview: the contract checks, the shots, 5 seconds of video, the stress sweep ───────────────────────────────
 
 def _diff(a: bytes, b: bytes) -> float:
-    """Mean absolute difference (0-255) between two screenshots of the same frame."""
+    """The share (%) of pixels that differ visibly between two screenshots of the same frame: a pure renderer draws
+    it identically (0), however small the part that would have changed."""
     import io
-    from PIL import Image, ImageChops, ImageStat
-    x, y = (Image.open(io.BytesIO(v)).convert("L").resize((270, 480)) for v in (a, b))
-    return float(ImageStat.Stat(ImageChops.difference(x, y)).mean[0])
+    from PIL import Image, ImageChops
+    x, y = (Image.open(io.BytesIO(v)).convert("L") for v in (a, b))
+    hist = ImageChops.difference(x, y).histogram()
+    return round(100.0 * sum(hist[17:]) / max(1, sum(hist)), 3)
 
 
 def _probe(spec: dict, code: str, home, times: list) -> dict:
@@ -358,10 +360,10 @@ def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
                 problems.append("every test shot came out as one flat colour: nothing was drawn")
             info = _probe(test, code, home, [min(1.0, test["duration"] * 0.2), test["duration"] * 0.5,
                                             min(3.0, test["duration"] * 0.8)])
-            if info["drift"] > 1.0:
-                problems.append(f"frame {test['stills'][0] if test['stills'] else 1:g} s looked different when drawn "
-                                f"again after a later frame (difference {info['drift']}): frame(t) must set everything "
-                                "from t alone, never keep state between frames (several pages draw frames in any order)")
+            if info["drift"] > 0.02:
+                problems.append(f"a frame looked different when drawn again after a later frame ({info['drift']}% of "
+                                "its pixels changed): frame(t) must be a pure function of t, setting everything "
+                                "from t alone and keeping no state between frames (several pages draw frames in any order)")
             if info["frame_ms"] > FRAME_MS:
                 problems.append(f"a frame takes {info['frame_ms']} ms to draw: keep it under {FRAME_MS} ms (build meshes, "
                                 "materials and textures once in prepare, only move them in frame)")
