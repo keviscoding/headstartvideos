@@ -433,6 +433,7 @@ class Child:
 @pytest.mark.parametrize("windows", [False, True])
 def test_fix_claude_runs_the_installer_in_a_clean_environment_then_finds_claude(monkeypatch, windows):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-never-passed")
+    monkeypatch.setenv("PSModulePath", r"C:\Program Files\PowerShell\7\Modules")   # Studio started from pwsh
     found = []
     ran = []
 
@@ -448,6 +449,8 @@ def test_fix_claude_runs_the_installer_in_a_clean_environment_then_finds_claude(
     assert command == cr_installs.claude_install_command(windows)
     assert kw["stdin"] is subprocess.DEVNULL and kw["encoding"] == "utf-8" and kw["stderr"] is subprocess.STDOUT
     assert "ANTHROPIC_API_KEY" not in kw["env"], "the installer never sees a key"
+    # Windows PowerShell 5.1 started with PowerShell 7's module path can't load Get-FileHash (Windows CI, 2026-10-26)
+    assert ("PSModulePath" in kw["env"]) is (not windows)
     # its own process group (Mac, Linux) or tree root (Windows): a timeout stops all of it
     assert kw.get("start_new_session") is True if os.name != "nt" else "creationflags" in kw
 
@@ -484,6 +487,7 @@ def test_the_sign_in_window_runs_claude_by_its_full_path(tmp_path, monkeypatch):
     assert command[1:4] == ["-NoExit", "-NoProfile", "-Command"]
     assert command[4].endswith(r"& 'C:\Users\Zoé O''Neil\.local\bin\claude.exe' auth login --claudeai")
     assert kw["creationflags"] == getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10)
+    assert not any(k.upper() == "PSMODULEPATH" for k in kw["env"]), "Windows PowerShell builds its own module path"
     with pytest.raises(cr_installs.Stop, match="Install Claude Code first"):
         cr_installs.open_sign_in(find=lambda: None, popen=popen, home=tmp_path)
 

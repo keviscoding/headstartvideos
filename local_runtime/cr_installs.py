@@ -680,6 +680,16 @@ def powershell() -> str:
                                                      "powershell.exe")
 
 
+def powershell_env(env: dict, windows: bool | None = None) -> dict:
+    """The environment for a Windows PowerShell 5.1 child. Started from PowerShell 7 (a pwsh terminal, or a Claude Code
+    chat running in one), Studio inherits PS7's PSModulePath, and 5.1 then can't load its own core modules: Anthropic's
+    installer stopped on "Get-FileHash ... CommandNotFoundException" (Windows CI, 2026-10-26). Without the variable,
+    5.1 builds its own default module path."""
+    if not (WINDOWS if windows is None else windows):
+        return env
+    return {k: v for k, v in env.items() if k.upper() != "PSMODULEPATH"}
+
+
 def claude_install_command(windows: bool | None = None) -> list:
     """Anthropic's documented installer for this computer. On a Mac (and Linux) the script is downloaded whole to a
     temporary file first and only then run: piped straight into bash, a script cut off mid-download could run half
@@ -774,7 +784,8 @@ def fix_claude(*, find=None, popen=None, kill=None, background: bool = True, win
         fix.update(state="installing", message="Running Anthropic's official Claude Code installer (a minute or two; it "
                                                "downloads about 200 MB)…")
         try:
-            _, output = run_installer(claude_install_command(windows), env=cr_claude.clean_environment(),
+            _, output = run_installer(claude_install_command(windows),
+                                      env=powershell_env(cr_claude.clean_environment(), windows),
                                       timeout=CLAUDE_SECONDS, popen=popen, kill=kill)
         except subprocess.TimeoutExpired:
             raise Stop("Claude Code's installer didn't finish within 15 minutes. Check the internet connection, then "
@@ -807,7 +818,8 @@ def open_sign_in(*, find=None, popen=None, home: Path = HOME, windows: bool | No
         quoted = "'" + executable.replace("'", "''") + "'"
         popen([powershell(), "-NoExit", "-NoProfile", "-Command",
                "Write-Host 'Sign in to Claude Code for ChannelRecipe Studio: your browser opens.'; & " + quoted +
-               " auth login --claudeai"], creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10))
+               " auth login --claudeai"], creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10),
+              env=powershell_env(dict(os.environ), True))
     elif mac:
         script = Path(home) / "tools" / "claude-sign-in.command"
         script.parent.mkdir(parents=True, exist_ok=True)
