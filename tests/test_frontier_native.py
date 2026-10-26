@@ -568,3 +568,13 @@ def test_a_slow_claude_code_never_reads_as_signed_out(monkeypatch):
     clock["now"] += cr_claude.STATUS_TRUST_SECONDS
     gone = cr_claude.status("/fake/claude")
     assert not gone["ready"] and "minute and a half" in gone["message"] and "timed_out" not in gone
+
+
+def test_three_stages_of_one_project_run_at_once_and_a_fourth_waits(native):
+    """The 3D engine directs and reviews three sections side by side."""
+    for suffix in "abc":
+        assert studio.native_authorize(native.owner, stage(native, suffix))["execute"] is True
+    with pytest.raises(studio.HTTPException) as waited:
+        studio.native_authorize(native.owner, stage(native, "d"))
+    assert waited.value.status_code == 429 and waited.value.headers.get("Retry-After") == "5"
+
