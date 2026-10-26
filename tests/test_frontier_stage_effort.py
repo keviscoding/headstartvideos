@@ -138,3 +138,10 @@ def test_a_stage_that_never_gets_a_slot_stops_saying_why(tmp_path, monkeypatch):
 
 def test_studio_runs_three_claude_stages_at_once():
     assert cr_claude._slots._initial_value == 3
+
+
+def test_a_caller_can_keep_the_clis_own_effort_for_one_call(tmp_path, monkeypatch):
+    invoke, calls = cli()
+    runtime(tmp_path, monkeypatch, invoke).run(OPUS + ["--effort", "default"], input="Write the renderer", text=True)
+    (command, env), = stages(calls)
+    assert "--effort" not in command and "default" not in command

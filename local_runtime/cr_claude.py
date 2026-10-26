@@ -253,8 +253,9 @@ def _option(args, name, default=""):
 
 # How hard Claude thinks on Studio's own stages. Left to the CLI, an Opus stage thought at length on every call: a 3D
 # review round took 10-24 minutes and a 2-minute 3D video 84 minutes of Opus (customer runs, 2026-10-25). Folio's
-# reviews already ask for "low". Opus stages ask for "medium"; Sonnet stages keep the CLI's own. CR_CLAUDE_EFFORT set
-# to a level applies it to every stage, "default" leaves every stage to the CLI.
+# reviews already ask for "low". Opus stages ask for "medium"; Sonnet stages keep the CLI's own. A caller's own --effort
+# wins ("--effort default": the CLI's own for that call only). CR_CLAUDE_EFFORT set to a level applies it to every stage,
+# "default" leaves every stage to the CLI.
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 VISUAL_EFFORT = "medium"
 _effort_flag: dict = {}
@@ -282,6 +283,21 @@ def supports_effort(exe, *, run=None, environment=None) -> bool:
         except (OSError, subprocess.SubprocessError):
             return False                                   # not remembered: the next stage asks again
     return _effort_flag[key]
+
+
+def _drop_option(args, name):
+    result, skip = [], False
+    for i, entry in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if entry == name and i + 1 < len(args):
+            skip = True
+            continue
+        if isinstance(entry, str) and entry.startswith(name + "="):
+            continue
+        result.append(entry)
+    return result
 
 
 def _replace_option(args, name, value):
@@ -524,7 +540,10 @@ class Runtime:
         # Source helpers use --strict-mcp-config and deliberately expose no MCP
         # tools. The runner calls the authenticated CR MCP before/after them.
         command = _replace_option(command, "--settings", '{"apiKeyHelper":""}')
-        effort = "" if _option(args, "--effort", "") else stage_effort(role)
+        asked = _option(args, "--effort", "")
+        if asked == "default":                             # a caller that wants the CLI's own effort for this call
+            command = _drop_option(command, "--effort")
+        effort = "" if asked else stage_effort(role)
         if effort and supports_effort(self.executable, environment=kwargs.get("env")):
             command = _replace_option(command, "--effort", effort)
         env = clean_environment(kwargs.get("env"))
