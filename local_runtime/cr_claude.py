@@ -55,6 +55,9 @@ class ClaudeStageStopped(BaseException):
 def failure_info(stdout="",stderr=""):
     """Classify failures without displaying upstream bodies or credentials."""
     diagnostic=(str(stdout)+" "+str(stderr)).lower()
+    if "went to sleep mid-response" in diagnostic:
+        # Claude Code: "API Error: Your computer went to sleep mid-response." (sweep, 2026-10-26: a closed lid)
+        return "network_interrupted","This computer went to sleep while Claude was answering. Keep it awake (plugged in, lid open) while a video is made, then resume: your work is saved."
     if any(x in diagnostic for x in ("usage limit","session limit","weekly limit","rate limit","limit reached","out of extra usage","hit your limit","usage exceeded","rate_limit","too many requests")):
         return "usage_limit","Your Claude account reached its usage limit. Check its reset or usage allowance, then review this saved stage in setup."
     if any(x in diagnostic for x in ("authentication","oauth","not logged in","invalid token","please log in")):

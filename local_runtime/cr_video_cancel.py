@@ -181,10 +181,15 @@ def worker_options(home) -> dict:
 
 
 class VideoWorkers:
-    def __init__(self, studio, home, *, popen=None, stop=None):
+    def __init__(self, studio, home, *, popen=None, stop=None, awake=None):
         self.studio, self.home = studio, Path(home)
         self.popen = popen or subprocess.Popen
         self.stop_process = stop or self._stop_process
+        # the computer stays awake while a real worker runs (cr_awake); a stand-in worker (tests) needs nothing
+        if awake is None and popen is None:
+            import cr_awake
+            awake = cr_awake.hold
+        self.awake = awake
         self.lock = threading.RLock()
         self.current = None
 
@@ -233,6 +238,7 @@ class VideoWorkers:
                     return
                 active = {"slug": slug, "run_id": run_id, "process": process, "cancel_requested": False}
                 self.current = active
+            keep = self.awake(process) if self.awake else None
             try:
                 while process.poll() is None:
                     self._follow(active, progress, state, project_id)
@@ -249,6 +255,8 @@ class VideoWorkers:
                     state.update(state="error", done=True, error=crash_message(log_path, process.returncode))
                     state.setdefault("lines", []).append(state["error"])
             finally:
+                if keep is not None:
+                    keep.release()
                 # Never free the account/project reservation while a worker lives.
                 if process.poll() is not None:
                     with self.lock:
