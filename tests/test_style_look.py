@@ -741,3 +741,18 @@ def test_a_section_is_copied_as_youtube_sends_it_never_re_encoded(home, monkeypa
     (home / "media" / "x_0_180.mp4").write_bytes(b"0" * 60_000)
     assert look._download("abcdefghijk", 0, 180, dest) == dest
     assert "--force-keyframes-at-cuts" not in ran[0] and "*0-180" in ran[0]
+
+
+def test_a_finished_look_offers_example_titles_built_from_the_channels_own_titles_without_claude(home):
+    """The owner's Windows test: "An example video you want to make" was required, with a generic placeholder and no
+    ideas; the owner left Studio for two minutes to ask Claude Code. A look now offers ideas from the channel's titles."""
+    ideas = look.title_ideas(["100 Strangers, 1 Bunker: Who Survives 30 Days #shorts",
+                              "The Kid Who Lived In A Mall For 7 Years | Nobody Gets In"])
+    assert 3 <= len(ideas) <= 5 and len(set(i.lower() for i in ideas)) == len(ideas)
+    assert ideas[0] != "100 Strangers, 1 Bunker: Who Survives 30 Days", "a new take first, the channel's own after"
+    assert all("#" not in i and "|" not in i for i in ideas)
+    assert any("In An Island" in i or "In A " in i for i in ideas) and not any("In A Island" in i for i in ideas)
+    assert look.title_ideas(["Born In 1945"]) == ["Born In 1945"], "a year is kept"
+    assert look.title_ideas([]) == []
+    _, done, calls = run_look(home)
+    assert done["title_ideas"] and calls and all(c.startswith("style/watch") for c in calls), "no model is asked"

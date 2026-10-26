@@ -93,6 +93,7 @@ def start(home, preview_id, reference_ids, *, spawn=None) -> dict:
     """Start looking (or return the look already made for these references)."""
     refs = _references(home, preview_id, reference_ids)
     look_id = "lk_" + hashlib.sha256(json.dumps(sorted(r["id"] for r in refs)).encode()).hexdigest()[:24]
+    titles = _listed_titles(home, preview_id, refs)
     path = folder(home, look_id)
     saved = _read(path / "look.json")
     fresh = saved.get("state") == "done" and time.time() - saved.get("finished_at", 0) < 30 * 86400 \
@@ -100,9 +101,20 @@ def start(home, preview_id, reference_ids, *, spawn=None) -> dict:
     running = saved.get("state") == "running" and time.time() - saved.get("updated_at", 0) < 900
     if not (fresh or running):
         _write(path / "look.json", {"schema": SCHEMA, "look_id": look_id, "state": "running", "phase": "queued",
-                                    "references": refs, "started_at": time.time(), "updated_at": time.time()})
+                                    "references": refs, "titles": titles, "started_at": time.time(),
+                                    "updated_at": time.time()})
         (spawn or _spawn)(home, look_id)
     return status(home, look_id)
+
+
+def _listed_titles(home, preview_id, refs) -> list:
+    """The titles of the videos the preview listed (the chosen ones first): material for the example-title ideas."""
+    import cr_style_clone
+    saved = cr_style_clone._read(cr_style_clone._folder(home) / ".previews" / (preview_id + ".json"))
+    chosen = [str(r.get("title") or "") for r in refs]
+    others = [str(r.get("title") or "") for r in saved.get("candidates") or [] if r.get("id") not in
+              {x["id"] for x in refs}]
+    return [t[:300] for t in dict.fromkeys(chosen + others) if t][:10]
 
 
 def _unjudged_3d(profile: dict) -> bool:
@@ -154,6 +166,9 @@ def status(home, look_id) -> dict:
         out.update(profile=saved.get("profile"), mapping=mapping, sheets=saved.get("sheets", []),
                    not_watched=saved.get("not_watched", []), not_measured=saved.get("not_measured", []),
                    shorts=bool(saved.get("references")) and all(r.get("short") for r in saved["references"]))
+        # ideas for the study's example title, from the channel's own titles (no model call): the page offers them
+        out["title_ideas"] = title_ideas(saved.get("titles") or [r.get("title") for r in saved.get("references") or []],
+                                         shorts=out["shorts"])
         try:
             out["similar"] = similar(home, look_id, saved.get("profile") or {}, base=mapping.get("base") or "",
                                      shorts=out["shorts"])
@@ -188,6 +203,97 @@ def similar(home, look_id, profile, *, base="", shorts=False) -> list:
                     "use_url": "/?cr-preset=" + quote(row["id"], safe=""),
                     "sample": cr_style_sample.offer(style, name=row["id"], profile=profiles.get(row["id"]))})
     return out
+
+
+# Ideas for the study's example title, built from the channel's own titles with no model call: a place, a group of
+# people or an animal swapped for another of its kind and the numbers changed, so each idea keeps the channel's title
+# formula with a new subject. The creator picks one and changes it as they like.
+_SWAPS = (
+    ("bunker", "island", "prison", "mansion", "desert", "jungle", "spaceship", "submarine", "castle", "school",
+     "hospital", "volcano", "cave", "hotel", "mall", "forest", "city", "village", "maze", "vault", "tower", "train",
+     "plane", "farm", "zoo", "museum", "casino", "stadium", "lighthouse", "skyscraper"),
+    ("strangers", "kids", "soldiers", "billionaires", "twins", "prisoners", "students", "doctors", "survivors",
+     "hackers", "gamers", "scientists", "spies", "pirates", "ninjas", "zombies", "robots", "aliens", "athletes",
+     "chefs", "kings", "knights", "astronauts", "players", "people"),
+    ("lion", "shark", "bear", "wolf", "tiger", "gorilla", "crocodile", "eagle", "snake", "elephant", "whale", "dragon"),
+)
+_LADDER = (2, 3, 5, 7, 10, 20, 24, 30, 50, 100, 1000, 10000, 1000000)
+_WORD = re.compile(r"[A-Za-z]+|\d[\d,]*")
+
+
+def _clean_title(title: str) -> str:
+    """A video title as an idea: no hashtags, emoji, '| channel' tails or bracketed labels."""
+    t = re.sub(r"#\w+", " ", str(title or ""))
+    t = re.sub(r"\s[|\u2022]\s.*$", "", t)
+    t = re.sub(r"[\(\[](?:animated|animation|official|full|hd|4k|shorts?)[^\)\]]*[\)\]]", " ", t, flags=re.I)
+    t = "".join(c for c in t if ord(c) < 0x2600 or 0x2E80 <= ord(c) < 0x1F000)
+    return re.sub(r"\s+", " ", t).strip(" -\u2013\u2014:,")[:120]
+
+
+def _number(text: str, up: bool) -> str:
+    value = int(text.replace(",", ""))
+    if value <= 1 or 1900 <= value <= 2100:               # one of something, or a year: kept
+        return text
+    bigger = [n for n in _LADDER if n > value]
+    smaller = [n for n in _LADDER if n < value]
+    pick = (bigger[0] if bigger else smaller[-1]) if up else (smaller[-1] if smaller else bigger[0])
+    return f"{pick:,}" if pick >= 1000 or "," in text else str(pick)
+
+
+def _swap(word: str, salt: int):
+    """Another word of the same kind as `word`, in its case, or None."""
+    low = word.lower()
+    for group in _SWAPS:
+        stem, plural = (low, False) if low in group else (low[:-1], True) if low.endswith("s") and low[:-1] in group \
+            else (None, False)
+        if stem:
+            others = [w for w in group if w != stem]
+            new = others[salt % len(others)] + ("s" if plural else "")
+            return new.upper() if word.isupper() and len(word) > 1 else new.capitalize() if word[0].isupper() else new
+    return None
+
+
+def title_ideas(titles, *, shorts=False, limit=5) -> list:
+    """3 to 5 example titles for the study, from the reference videos' own titles (see _SWAPS): two new takes on each
+    title where its words allow, then the cleaned titles themselves to make up three. No model is asked."""
+    cleaned = [c for c in dict.fromkeys(_clean_title(t) for t in titles or []) if c]
+    ideas = []
+    for title in cleaned[:6]:
+        salt = int(hashlib.sha256(title.encode("utf-8")).hexdigest()[:6], 16)
+        parts = list(_WORD.finditer(title))
+        swappable = [m for m in parts if not m.group().replace(",", "").isdigit() and _swap(m.group(), 0)]
+        numbered = [m for m in parts if m.group().replace(",", "").isdigit()]
+        for take in range(2):
+            if not swappable and not numbered:
+                break
+            changes = {}
+            if swappable:
+                m = swappable[take % len(swappable)]
+                changes[m.span()] = _swap(m.group(), salt + take * 7)
+            for m in numbered:
+                changes[m.span()] = _number(m.group(), up=take == 0)
+            out, at = "", 0
+            for (a, b), new in sorted(changes.items()):
+                before = title[at:a]
+                said = re.search(r"\b(an?|An?|AN?) $", before)
+                if said and new[:1].isalpha():               # "a mall" -> "an island", "an igloo" -> "a cave"
+                    article = "an" if new[0].lower() in "aeiou" else "a"
+                    article = article.upper() if said.group(1).isupper() and len(said.group(1)) > 1 else \
+                        article.capitalize() if said.group(1)[0].isupper() else article
+                    before = before[:said.start(1)] + article + " "
+                out += before + new
+                at = b
+            out += title[at:]
+            if out.lower() != title.lower():
+                ideas.append(out)
+    ideas += cleaned                                        # the channel's own titles work as examples too
+    seen, kept = set(), []
+    for idea in ideas:
+        idea = idea[:70].rsplit(" ", 1)[0] if shorts and len(idea) > 70 else idea
+        if idea.lower() not in seen:
+            seen.add(idea.lower())
+            kept.append(idea)
+    return kept[:limit]
 
 
 def learned_profile(home, style) -> dict:
