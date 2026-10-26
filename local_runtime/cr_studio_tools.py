@@ -295,7 +295,10 @@ def media_estimate(cat: dict, row: dict, minutes: int, features: dict) -> dict:
     per = prices.get("features") or {}
     voice = float(((prices.get("voice") or {}).get("per_min")) or 0)
     total = voice + sum(float((per.get(k) or {}).get("per_min") or 0) for k, on in features.items() if on)
-    return {"per_video_usd": round(total * minutes, 2), "recipe_note": one_line(row.get("cost"), 260),
+    each = total * minutes
+    if kind(row) == "short" and isinstance(row.get("short_cost_usd"), (int, float)):
+        each = float(row["short_cost_usd"])                        # the recipe's own estimate for one Short
+    return {"per_video_usd": round(each, 2), "recipe_note": one_line(row.get("cost"), 260),
             "note": "Media runs on your own accounts (pictures, voice, footage watching). Claude's writing and "
                     "directing run on your Claude Code plan, not billed per video."}
 

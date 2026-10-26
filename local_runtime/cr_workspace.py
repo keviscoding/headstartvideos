@@ -143,6 +143,10 @@ def install(studio, activity, *, token, home=None):
             shorts = info.get("shorts") if isinstance(info, dict) and info.get("format") == "short" else None
             row["short_seconds"] = int(shorts.get("seconds") or 25) if isinstance(shorts, dict) else None
             row["ranking"] = bool(isinstance(shorts, dict) and shorts.get("pipeline") == "ranking")
+            # what one Short of this recipe costs on the creator's accounts (voice, music, effects), for quotes
+            cost = shorts.get("cost_usd") if isinstance(shorts, dict) else None
+            row["short_cost_usd"] = (float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool)
+                                     and 0 <= cost < 100 else None)
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,

@@ -119,3 +119,9 @@ def test_the_narration_check_knows_elevenlabs_and_ranking_shorts(monkeypatch):
     assert ok is False and "ElevenLabs or Kie.ai" in why
     monkeypatch.setenv("KIE_API_KEY", "kie_" + "b" * 30)
     assert cr_readiness.own_narration(studio, "cr-shorts-ranking", ranking, "old") == (True, "")
+    roblox = {"shorts": {"pipeline": "roblox"}}                   # Roblox Story Shorts narrate themselves too
+    assert cr_readiness.own_narration(studio, "cr-shorts-roblox", roblox, "old") == (True, "")
+    monkeypatch.setenv("KIE_API_KEY", "")
+    assert cr_readiness.own_narration(studio, "cr-shorts-roblox", roblox, "old")[0] is False
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "sk_" + "a" * 40)
+    assert cr_readiness.own_narration(studio, "cr-shorts-roblox", roblox, "old") == (True, ""), "no voice pick needed"

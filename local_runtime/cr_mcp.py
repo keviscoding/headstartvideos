@@ -96,15 +96,30 @@ def request_with_connect_retry(send, *, sleep=None):
     return send()
 
 
+class TransportError(RuntimeError):
+    """The answer was lost on the way: a gateway's error page (502, 521...), a busy gateway (429), a dropped or cut
+    response, or a session the server no longer knows. Nothing here is the workflow's own answer, so a call that the
+    server records by its own id (cr_bridge.RETRY_TOOLS) can be sent again; nothing else is retried."""
+
+
+# What a gateway or proxy in front of ChannelRecipe answers when it, not ChannelRecipe, cut the request: Cloudflare's
+# 520-524 ("web server is down", 521, stopped a FOLIO stage on 2026-10-26), the host's 502-504, a busy 429.
+GATEWAY_STATUSES = {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+
+
 def _message(url, headers, payload):
-    # No retries once a request may have reached the server: stage reservations
+    # No retries here once a request may have reached the server: stage reservations
     # must never create duplicate work. Connections that never got there are
-    # retried with back-off, which cannot duplicate anything.
+    # retried with back-off, which cannot duplicate anything. A lost answer raises
+    # TransportError, which cr_bridge sends again only for calls the server dedups.
     try:
         with request_with_connect_retry(lambda: requests.post(url, headers=headers, json=payload, stream=True,
                                                               timeout=(10, 45), allow_redirects=False)) as response:
             if response.status_code in {401, 403}:
                 raise RuntimeError("Reconnect your ChannelRecipe account in Setup & accounts.")
+            if response.status_code in GATEWAY_STATUSES or (response.status_code == 404 and "Mcp-Session-Id" in headers):
+                forget_session()           # an unknown session (404) is started again on the next call
+                raise TransportError("ChannelRecipe's workflow connection needs attention. Check setup and try again.")
             if response.status_code not in {200, 202}:
                 raise RuntimeError("ChannelRecipe's workflow connection needs attention. Check setup and try again.")
             session = response.headers.get("Mcp-Session-Id")
@@ -129,15 +144,26 @@ def _message(url, headers, payload):
                     data = json.loads("\n".join(event))
                     if data.get("id") == payload["id"]:
                         return data, session
-                raise RuntimeError("ChannelRecipe's workflow response was interrupted. Your work is saved.")
+                raise TransportError("ChannelRecipe's workflow response was interrupted. Your work is saved.")
             data = bytearray()
             for chunk in response.iter_content(65536):
                 data.extend(chunk)
                 if len(data) > 2_000_000:
                     raise RuntimeError("ChannelRecipe returned an oversized workflow response.")
             return json.loads(data), session
-    except (requests.RequestException, ValueError, UnicodeError):
+    except requests.RequestException as error:
+        if never_reached_server(error):
+            # the connection retry above already waited out about 90 s of a deploy or a network drop: give up now
+            raise RuntimeError("Could not connect to ChannelRecipe's workflow tools. Check setup and your connection.") from None
+        # a read timeout, a reset or a cut stream after the request went out: the answer was lost
+        raise TransportError("Could not connect to ChannelRecipe's workflow tools. Check setup and your connection.") from None
+    except (ValueError, UnicodeError):
         raise RuntimeError("Could not connect to ChannelRecipe's workflow tools. Check setup and your connection.") from None
+
+
+def forget_session():
+    """Start a new MCP session on this thread's next call."""
+    _state.identity = None
 
 
 def _session(settings):
