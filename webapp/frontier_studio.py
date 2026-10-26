@@ -58,6 +58,11 @@ SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cad
 # waited for a slot (about 20 of a customer's 116-minute 2-minute 3D video, 2026-10-25). Studios up to 105 cap
 # themselves at 2, so raising this changes nothing for them; Studio 106 asks for 3.
 NATIVE_STAGE_LIMIT = 3
+# How many times one Claude stage may run: its first run, then one more for each recovery the creator explicitly
+# approves (acknowledge_costs). It was one recovery: a stage that stopped twice (a usage limit met again before
+# its reset) left the whole video unfinishable, and creators remade it from scratch, paying for every stage and
+# picture again (6 of 26 failed videos, 2026-10-26). Never more without a new approval for each attempt.
+MAX_STAGE_ATTEMPTS = 3
 # A Studio update reads the release in many byte ranges with one link, and storage is in San Francisco: from Europe
 # a slow connection outlived a 10-minute link and every retry was refused ("the update keeps getting interrupted").
 DOWNLOAD_LINK_SECONDS = 3600
@@ -1025,7 +1030,8 @@ def native_progress(user, project_id):
     for row in rows:
         stage = dict(row)
         stage["usage"] = json.loads(stage.pop("usage_json"))
-        stage["can_retry"] = stage["status"] in {"failed","authorized"} and stage["attempts"] == 1
+        stage["can_retry"] = stage["status"] in {"failed","authorized"} and 1 <= stage["attempts"] < MAX_STAGE_ATTEMPTS
+        stage["attempts_left"] = max(0, MAX_STAGE_ATTEMPTS - stage["attempts"])
         stages.append(stage)
     p["receipt_note"] = "Locally reported Claude Code usage; your Claude and media accounts determine actual charges."
     purpose = json.loads(session["setup_json"]).get("purpose", "video")
@@ -1109,10 +1115,10 @@ def native_finish_stage(user, req: NativeFinishStage):
                              (req.project_id, req.stage_id)).fetchone()
         if not stage or not secrets.compare_digest(stage["authorization_hash"], token_hash):
             raise HTTPException(409, "This stage result has no matching execution authorization.")
-        late_receipt = stage["status"] == "retry_allowed" and stage["attempts"] == 1
+        late_receipt = stage["status"] == "retry_allowed" and stage["attempts"] >= 1
         if late_receipt and req.status == "failed":
-            # A delayed first-attempt failure must not revoke an approved retry
-            # or account for the same execution again.
+            # A delayed failure of the attempt before must not revoke an approved
+            # retry or account for the same execution again.
             return {"saved": True, "reused": True, "status": "retry_allowed", "stage_id": req.stage_id}
         if stage["status"] != "authorized" and not late_receipt:
             if (stage["status"] == req.status and stage["result_fingerprint"] == req.result_fingerprint
@@ -1195,7 +1201,8 @@ def native_retry_stage(user,req:NativeRetryStage):
         lock=" FOR UPDATE" if db.IS_PG else ""
         p=conn.execute(db._q("SELECT * FROM frontier_projects WHERE id=? AND user_id=?")+lock,(req.project_id,user["id"])).fetchone()
         stage=conn.execute(db._q("SELECT * FROM frontier_native_stages WHERE project_id=? AND stage_id=?"),(req.project_id,req.stage_id)).fetchone()
-        if not stage or stage["status"] not in {"authorized","failed"} or stage["attempts"] != 1 or p["status"] == "done" or p["calls"] >= p["max_calls"]:
+        if (not stage or stage["status"] not in {"authorized","failed"} or not 1 <= stage["attempts"] < MAX_STAGE_ATTEMPTS
+                or p["status"] == "done" or p["calls"] >= p["max_calls"]):
             raise HTTPException(409,"This stage has no additional recovery attempt available.")
         now=time.time()
         conn.execute(db._q("UPDATE frontier_native_stages SET status='retry_allowed',updated_at=? WHERE project_id=? AND stage_id=?"),(now,req.project_id,req.stage_id))

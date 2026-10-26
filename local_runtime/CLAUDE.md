@@ -146,7 +146,18 @@ Studio through its own checks, so nothing needs the Studio web page.
   Claude Code asks them to approve it. Never carry on for them. A stop of one video's own (a title, a picture
   refused, a timeout) never holds the rest. Account and setup changes wait until Studio has finished.
 - A video that stopped (a provider hiccup, a closed Studio): `progress()` lists it under `stopped`; tell them what
-  stopped it (`progress(id)`), then `resume_video(id)` carries it on and reuses everything already made.
+  stopped it (`progress(id)`), then `resume_video(id)` carries it on and reuses everything already made. A video
+  Studio closed or a crash on this computer stopped, with nothing uncertain, carries on by itself (at most twice;
+  `carries_on_by_itself`).
+- A video that stopped on a Claude step or a paid media task (`progress(id)` shows `stopped_on` `claude_stage` or
+  `media`): read them `what_to_tell_them`, each stuck item's reason and whether their Claude usage or money may
+  already have gone on it. Only after they say yes, `recover_video(id, key=recovery_key)` allows exactly those
+  attempts and carries the video on, reusing everything else (Claude Code asks them too). `fix_first` items come
+  first. When `usage_resets` is still ahead, `recover_video(id, key=recovery_key, when='after_reset')` has Studio
+  carry it on by itself after the reset. Never approve for them. A video whose voice was being made on their own
+  voice account (no receipts) is never carried on by itself: offer `resume_video(id)`.
+- `make_videos` answering `resume_first`: those titles already stopped with their work saved. Offer to carry them on;
+  `new_attempt=true` (a brand-new video that pays again for every step) only when they insist.
 - Deleting, only when the creator asks: `delete_video(id, title)` (a finished or stopped video) and
   `delete_style(id, name)` (a style they cloned; Studio's own recipes can't be deleted) move it into Studio's trash,
   never delete it at once. Recently deleted on the Studio page (Projects, or the Style library) restores it for 30
@@ -243,9 +254,11 @@ subscription.
 ## Saved work, retries and reviews
 
 Completed stage outputs and media tasks resume from caches. Do not delete
-receipts or rerun uncertain work. The setup page's recovery section offers one
-further attempt after the customer checks usage, confirms no job is running and
-explicitly accepts additional usage. Never approve retries automatically.
+receipts or rerun uncertain work. A stopped Claude step or uncertain paid task
+needs the customer's explicit yes for each further attempt: recover_video in
+Claude Code, or the stopped video's card in Projects (Review issue), after they
+read what it may use. The setup page's recovery section still works too. Never
+approve retries automatically.
 
 Help review the final video, timeline, thumbnails and exports. Model identity
 alone does not guarantee equal quality; inspect actual output when judging it.

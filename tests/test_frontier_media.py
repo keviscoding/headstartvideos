@@ -162,7 +162,7 @@ def test_kie_motion_cost_choice_and_pending_task_are_preserved_on_resume(hub, mo
     monkeypatch.setattr(media.requests, "post", lambda *a, **k: creates.append(k["json"]) or
                         response({"code": 200, "data": {"taskId": "motion-task"}}))
     monkeypatch.setattr(media.requests, "get", lambda *a, **k: (_ for _ in ()).throw(media.requests.ReadTimeout()))
-    clock = iter(range(0, 12000, 2000))
+    clock = iter(range(0, 10 ** 7, 2000))                    # Studio checks an accepted task for 2 hours, then stops
     monkeypatch.setattr(media.time, "monotonic", lambda: next(clock))
     for _ in range(2):
         with pytest.raises(media.AccountStop, match="pending"):

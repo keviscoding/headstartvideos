@@ -19,6 +19,7 @@ import cr_bridge
 import cr_favicon
 import cr_presentation
 import cr_preview
+import cr_recover
 import cr_style_clone
 import cr_trash
 
@@ -498,7 +499,6 @@ def install(studio, activity, *, token, home=None):
         try:
             local_access()
             import cr_media
-            live = getattr(studio, "JOBS", {}) or {}
             rows = []
             for job in (studio.mv.list_jobs() if hasattr(studio.mv, "list_jobs") else []):
                 try:
@@ -512,9 +512,10 @@ def install(studio, activity, *, token, home=None):
                     saved = _read(marker)
                     project_id = saved.get("id")
                     # the same rule as the project's Resume button (cr_workspace_project), so every card can resume
+                    # a saved "running" with no live job is stale: that video's Studio closed mid-run (cr_recover)
                     if (not isinstance(project_id, str) or not _PROJECT.fullmatch(project_id)
                             or saved.get("brain_mode") != "claudecode" or saved.get("purpose", "video") != "video"
-                            or ((live.get(slug) or {}).get("state") or saved.get("status")) in {"done", "queued", "running", "held"}):
+                            or cr_recover.effective_state(studio, slug, saved) in {"done", "queued", "running", "held"}):
                         continue
                     spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
                     title_file = job / "title.txt"
@@ -781,7 +782,8 @@ def install(studio, activity, *, token, home=None):
             project_id = saved.get("id")
             valid = isinstance(project_id, str) and bool(_PROJECT.fullmatch(project_id))
             live = getattr(studio, "JOBS", {}).get(slug) or {}
-            state = _text(live.get("state") or saved.get("status"), 32)
+            # a saved "running" with no live job is stale: that video's Studio closed mid-run, so it can resume
+            state = _text(cr_recover.effective_state(studio, slug, saved), 32)
             spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
             available = (valid and saved.get("brain_mode") == "claudecode"
                          and saved.get("purpose", "video") == "video"

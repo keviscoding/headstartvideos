@@ -549,9 +549,10 @@
         if (data.state === 'done') {const open = el('button','crw-primary-button','Open video');open.type='button';open.addEventListener('click',()=>openOutput({slug:state.openJob,title:$('crw-progress-title').textContent,editable:true}));$('crw-progress-actions').append(open);}
         else {
           const saved = await api(`/cr-workspace/project/${encoded(state.openJob)}`);
-          if (saved.available_for_resume) {const resume=el('button','crw-text-button','Resume saved project'); resume.type='button'; resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/cr-submit-project',{method:'POST',body:{project_id:saved.project_id}});toast('Saved project submitted. Completed assets will be reused.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}finally{resume.disabled=false;}});$('crw-progress-actions').append(resume);}
+          if (saved.available_for_resume) {const resume=el('button','crw-text-button crw-resume-saved','Resume saved project'); resume.type='button'; resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/cr-submit-project',{method:'POST',body:{project_id:saved.project_id}});toast('Saved project submitted. Completed assets will be reused.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}finally{resume.disabled=false;}});$('crw-progress-actions').append(resume);}
           if (saved.available_for_resume) {try {const voice=await api(`/cr-workspace/voice/${encoded(state.openJob)}`); if ((voice.stopped_on_voice || /narration (task|service)/i.test(data.error || '')) && !voice.has_voice) voiceChoices(voice, saved);} catch (_) {/* Resume stays available */}}
           if (saved.available_for_resume) {try {const presenter=await api(`/cr-workspace/presenter-choice/${encoded(state.openJob)}`); if (presenter.stopped_on_presenter) presenterChoices(presenter, saved);} catch (_) {/* Resume stays available */}}
+          if (saved.available_for_resume) {try {const rec=await api(`/cr-workspace/recovery/${encoded(state.openJob)}`); if (rec.needs_approval || (rec.fix_first||[]).length || (rec.do_first||[]).length || rec.auto?.safe || (rec.carry_on_after_reset && rec.reset_label)) recoveryChoices(rec);} catch (_) {/* Resume stays available */}}
         }
       }
     } catch (e) {text('crw-progress-note',e.message);}
@@ -592,6 +593,64 @@
       box.append(row);
     }
     $('crw-progress-actions').append(box);
+  }
+  // A video that stopped on a Claude step or a paid media task (cr_recover): what stopped it, what trying again may
+  // cost, and one yes that allows exactly those attempts and carries it on. Nothing runs again without it.
+  function recoveryChoices(rec) {
+    const slug = state.openJob, box = el('div', 'crw-voice-choices crw-recovery');
+    const plain = $('crw-progress-actions').querySelector('.crw-resume-saved');
+    box.append(el('p', 'crw-voice-title', rec.needs_approval ? 'Try the stopped steps again?' : 'Why this video stopped'));
+    const list = el('ul', 'crw-recovery-list');
+    for (const s of rec.claude_stages || []) list.append(el('li', '', `${s.step.charAt(0).toUpperCase()}${s.step.slice(1)}: ${s.reason} ${s.spent_note}${s.reset_label ? ` Claude said your usage resets at ${s.reset_label}.` : ''}`));
+    for (const m of rec.media || []) list.append(el('li', '', m.reason));
+    if (list.childElementCount) box.append(list);
+    for (const f of [...new Set([...(rec.fix_first || []), ...(rec.do_first || [])])]) box.append(el('p', 'crw-field-help crw-recovery-fix', f));
+    if (rec.auto?.safe) box.append(el('p', 'crw-field-help', `Studio carries this on by itself in a minute or so (${rec.auto.why}). Everything already made is reused.`));
+    if (rec.carry_on_after_reset && rec.reset_label && !rec.reset_passed) box.append(el('p', 'crw-field-help', `Studio carries it on by itself after ${rec.reset_label}, as you chose.`));
+    if (rec.needs_approval) {
+      if (plain) plain.hidden = true;             // a plain Resume would stop at the same step again
+      if (/Resume saved project/.test($('crw-progress-note').textContent)) text('crw-progress-note', 'Its saved work is kept. Below: what stopped it, and how to carry it on.');
+      const claude = (rec.claude_stages || []).some(s => s.needs_approval), money = (rec.media || []).some(m => m.needs_approval && m.pays_twice);
+      const label = el('label', 'crw-inline-check crw-recovery-ok'), check = el('input'); check.type = 'checkbox';
+      label.append(check, document.createTextNode(` I understand: trying again ${claude ? 'uses more of my Claude usage' : ''}${claude && money ? ' and ' : ''}${money ? 'can pay twice for a task that may already have been charged' : claude ? '' : 'sends it again'}. Everything else already made is reused.`));
+      box.append(label);
+      const ahead = !!rec.reset_label && !rec.reset_passed, row = el('div', 'crw-voice-choice');
+      const go = el('button', 'crw-primary-button', ahead ? 'Try now: I added Claude usage' : 'Try again and carry on'); go.type = 'button'; go.disabled = true;
+      const later = ahead ? el('button', 'crw-secondary-button', `Carry on by itself after ${rec.reset_label}`) : null;
+      if (later) {later.type = 'button'; later.disabled = true;}
+      check.addEventListener('change', () => {go.disabled = !check.checked; if (later) later.disabled = !check.checked;});
+      const send = async (body, button) => {
+        button.disabled = true;
+        try {
+          const r = await api(`/cr-workspace/recovery/${encoded(slug)}`, {method: 'POST', body: {acknowledge_costs: true, key: rec.key, ...body}});
+          toast(r.message || 'Carrying on. Everything already made is reused.'); $('crw-progress-actions').replaceChildren(); await refreshActivity();
+        } catch (e) {text('crw-progress-note', e.message); button.disabled = !check.checked;}
+      };
+      go.addEventListener('click', () => send(ahead ? {added_usage: true} : {}, go));
+      if (later) later.addEventListener('click', () => send({when: 'after_reset'}, later));
+      row.append(go); if (later) row.append(later); box.append(row);
+    }
+    $('crw-progress-actions').append(box);
+  }
+  // Create met a title that already stopped with its work saved: resuming reuses it; starting again pays again.
+  async function resumeFirst(e, p) {
+    const found = e.details.resume_first || [], others = e.details.others || [];
+    const names = found.map(m => `“${m.title}”`).join(', ');
+    if (confirm(`${names} stopped earlier with ${found.length === 1 ? 'its' : 'their'} work saved (script, voice, pictures). Carry ${found.length === 1 ? 'it' : 'them'} on from where ${found.length === 1 ? 'it' : 'they'} stopped? Everything already made is reused.\n\nOK: carry on. Cancel: other choices.`)) {
+      for (const m of found) {
+        // a free resume only: one that needs a yes (a stopped Claude step) waits for it in Projects
+        try {const r = await api(`/cr-workspace/recovery/${encoded(m.slug)}`, {method: 'POST', body: {only_if_free: true}}); toast(r.waiting ? `“${m.title}” joins the queue and carries on in its turn. Completed work is reused.` : `Carrying on “${m.title}”. Completed work is reused.`);}
+        catch (err) {error(`“${m.title}”: ${err.message}`); showPage('projects'); await refreshActivity(true); return;}
+      }
+      if (others.length) toast(`Carried on from saved work. Create the other title${others.length === 1 ? '' : 's'} on its own: ${others.join(', ')}.`);
+      save(); showPage('projects'); await refreshActivity(true);
+      const first = found[0]; if (first) await openProgress({slug: first.slug, title: first.title});
+      return;
+    }
+    if (!confirm(`Start ${found.length === 1 ? 'it' : 'them'} again as brand-new video${found.length === 1 ? '' : 's'} instead? That pays again for every step, and the stopped ${found.length === 1 ? 'one stays' : 'ones stay'} in Projects.`)) return;
+    const result = await api('/api/run', {method: 'POST', body: {...p, new_attempt: true}});
+    save(); showPage('projects'); toast(['Your new video project has started.', ...(result.warnings || [])].join(' ')); await refreshActivity(true);
+    const first = (result.queued || [])[0]; if (first) await openProgress(typeof first === 'string' ? {slug: first, title: p.title.split('\n')[0]} : first);
   }
   // Delete a finished or stopped video, or a learned style (thatguygab, 2026-10-25). Studio says what goes and what is
   // kept, then moves it into its trash (cr_trash): Undo, or Restore in Recently deleted for 30 days. Never at once.
@@ -822,7 +881,8 @@
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
-      threed_look:threedLook(features), threed_quick:!!(features.threed && !strict() && checked('crw-threed-quick'))};
+      threed_look:threedLook(features), threed_quick:!!(features.threed && !strict() && checked('crw-threed-quick')),
+      carry_on_after_reset:checked('crw-carry-on')};
     if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
       // A Short to remake: any YouTube link form (Shorts, watch, youtu.be, m., any case), sent as one plain link, for one topic
       const pasted=$('crw-rank-reference').value.trim(), refId=(/(?:youtu\.be\/|youtube\.com\/(?:shorts\/|watch\?(?:[^#]*&)?v=|live\/|embed\/))([A-Za-z0-9_-]{11})/i.exec(pasted)||[])[1]||'';
@@ -921,14 +981,18 @@
     try {
       // /api/run performs the authoritative option, account and renderer checks
       // before creating work; a second preflight would repeat those requests.
-      const result=await api('/api/run',{method:'POST',body:p});$('crw-rank-reference').value='';save();showPage('projects');   // a Short to remake goes with that video only
+      const result=await api('/api/run',{method:'POST',body:p});$('crw-rank-reference').value='';$('crw-carry-on').checked=false;save();showPage('projects');   // a Short to remake and carrying on by itself go with that video only
       const first=(result.queued||[])[0], n=(result.queued||[]).length, many=n>1?`These ${n} videos`:'It';
       const said=first?.held?`Added to the queue, on hold with the others: ${first.held}`
         :first&&first.ahead>0?`Added to the queue. ${many} ${n>1?'start':'starts'} by ${n>1?'themselves':'itself'} when the ${first.ahead===1?'video':`${first.ahead} videos`} before ${n>1?'them':'it'} ${first.ahead===1?'finishes':'finish'}. You don't need to stay.`
         :n>1?`Your ${n} videos are queued. Studio makes them one at a time.`:'Your new video project has started.';
       toast([said, ...(result.warnings || [])].join(' '));await refreshActivity(true);
       if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
-    } catch(e){error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}finally{state.submitting=false;gate();}
+    } catch(e){
+      // a title that already stopped with its work saved (cr_recover): carry that one on first
+      if(e.details?.resume_first){try{await resumeFirst(e,p);}catch(err){error((err.details?.blockers||[]).join(' ')||err.message);showPage('create');}}
+      else{error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}
+    }finally{state.submitting=false;gate();}
   }
   async function optionalAccounts() {
     if(state.optionalLoaded)return;state.optionalLoaded=true;

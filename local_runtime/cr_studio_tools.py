@@ -831,6 +831,16 @@ def tool_make_videos(args):
     minutes = 1 if kind(row) == "short" else max(1, min(int(args.get("minutes") or 10), 60))
     features = features_for(row, options.get("features"))
     words, picture = character_choice(row, options, where)
+    if where == "this_computer" and args.get("new_attempt") is not True:
+        early = video_payload(row, titles, minutes, features, options)
+        try:
+            found = call("POST", "/cr-workspace/resume-first", {"titles": titles, "style": row["name"],
+                                                                 "minutes": early["minutes"], "extra": early["extra"]},
+                         timeout=30)
+        except Refused:
+            found = {}                                   # /api/run asks the same again before anything starts
+        if found.get("matches"):
+            return resume_first_answer(found["matches"], found.get("others") or [])
     issued = _read(STATE / "quotes.json").get(str(args.get("quote_id") or ""))
     q = quote_for(cat, row, titles=len(titles), minutes=minutes, where=where, features=features)
     if character_note(row, options):
@@ -844,6 +854,10 @@ def tool_make_videos(args):
                       f"${q['most_reserved_usd']:.2f}. Top up at {q['cloud']['topup_url']}, or make them on this "
                       "computer.")
     payload = apply_character(video_payload(row, titles, minutes, features, options), words, picture)
+    if args.get("new_attempt") is True:
+        payload["new_attempt"] = True                    # the creator insisted on a brand-new video
+    if options.get("carry_on_after_usage_reset") is True:
+        payload["carry_on_after_reset"] = True           # their up-front choice: on by itself after Claude's reset
     record = _read(STATE / "jobs.json")
     if where == "studio_cloud":
         call("POST", "/cr-cloud/start", payload, timeout=60)
@@ -858,6 +872,8 @@ def tool_make_videos(args):
         result = call("POST", "/api/run", payload, timeout=120)
     except Refused as error:
         blockers = (error.data or {}).get("blockers") or []
+        if (error.data or {}).get("resume_first"):
+            return resume_first_answer(error.data["resume_first"], error.data.get("others") or [])
         if blockers and all("Verify both Claude models" in b for b in blockers):
             call("POST", "/cr-claude/setup", {"action": "verify"}, timeout=180)
             result = call("POST", "/api/run", payload, timeout=120)
@@ -891,8 +907,28 @@ def queued_video(q_) -> dict:
     return out
 
 
+def resume_first_answer(matches: list, others: list) -> dict:
+    """make_videos met titles that already stopped with their work saved: resuming reuses it, starting over pays again."""
+    return {"started": False,
+            "resume_first": [{k: m.get(k) for k in ("id", "title", "stopped")} for m in matches],
+            **({"other_titles": others} if others else {}),
+            "next": "Nothing started. These titles already have a stopped video with its work saved (script, voice, "
+                    "pictures). Tell the creator and offer to carry each on instead: check progress(id) (a stopped "
+                    "Claude step or uncertain paid task needs recover_video), then resume_video(id), which reuses "
+                    "everything already made. Only if they insist on starting over, call make_videos again with "
+                    "new_attempt=true: that is a brand-new video and pays again for every step."
+                    + (" The other titles have no stopped video: make them with make_videos as usual." if others
+                       else "")}
+
+
 def _job_status(slug: str) -> dict:
-    status = call("GET", "/api/status/" + _quote_path(slug), timeout=20)
+    try:
+        status = call("GET", "/api/status/" + _quote_path(slug), timeout=20)
+    except Refused as error:
+        if error.status != 404:
+            raise
+        # Studio restarted since this video stopped: its live job is gone, its saved folder says what happened
+        status = {"state": "stopped", "done": True, "error": "", "lines": []}
     out = {"id": "video:" + slug, "state": status.get("state"), "done": bool(status.get("done")),
            "percent": round(100 * float(status.get("progress") or 0)), "error": status.get("error") or "",
            "last_lines": [line for line in (status.get("lines") or [])[-6:] if line.strip()]}
@@ -955,7 +991,68 @@ def _job_status(slug: str) -> dict:
                                      "is finished and saved. Ask the creator: finish it without the presenter, or try "
                                      "the presenter again in a few minutes (read them the choice's note, which says "
                                      "whether that could pay twice). Then resume_video(id, presenter=<choice id>).")
+        if not _recovery(slug, out) and status.get("state") == "stopped" and not out.get("stopped_on"):
+            raise Refused("There's no video with that id. Check progress() for the ids.", 404)
     return out
+
+
+RECOVERY_NOTE = ("Tell the creator in plain words what stopped it: what_to_tell_them, each stuck item's reason, and "
+                 "whether their Claude usage or money may already have gone on it. Never approve for them. When they "
+                 "say yes, recover_video(id, key=recovery_key) allows exactly these attempts and carries the video on, "
+                 "reusing everything else (Claude Code asks them to approve too). When usage_resets is still ahead: "
+                 "recover_video(id, key=recovery_key, when='after_reset') has Studio carry it on by itself after the "
+                 "reset; when='now' with added_usage=true only if they added Claude usage. Do the fix_first items "
+                 "first. When "
+                 "free_to_resume is true, resume_video(id) carries it on and nothing is paid twice.")
+
+
+def _recovery(slug: str, out: dict) -> bool:
+    """A stopped video's Claude steps and paid media tasks that need the creator's yes (cr_recover.diagnose)."""
+    try:
+        r = call("GET", "/cr-workspace/recovery/" + _quote_path(slug), timeout=60)
+    except Refused:
+        return False
+    if r.get("finished"):
+        # Studio restarted since it finished: done, with its links
+        out.update(state="done", done=True, watch_url=link("/f/video/" + _quote_path(slug)),
+                   project_url=link("/editor/" + _quote_path(slug)))
+        return True
+    steps = [{"step": s.get("step"), "error_code": s.get("error_code") or s.get("status"), "reason": s.get("reason"),
+              "claude_usage_already_used": s.get("spent"), "note": s.get("spent_note"),
+              "needs_approval": bool(s.get("needs_approval")),
+              **({"usage_resets": s["reset_label"]} if s.get("reset_label") else {}),
+              **({"fix_first": s["fix_first"]} if s.get("fix_first") else {})}
+             for s in r.get("claude_stages") or []]
+    media = [{"task": m.get("task"), "provider": m.get("provider"), "state": m.get("state"), "reason": m.get("reason"),
+              "trying_again_can_pay_twice": bool(m.get("pays_twice")), "free": bool(m.get("free")),
+              "needs_approval": bool(m.get("needs_approval")), **({"do_first": m["do_first"]} if m.get("do_first")
+                                                                  else {})}
+             for m in r.get("media") or []]
+    if r.get("stopped_on") in ("claude_stage", "media") and not out.get("stopped_on"):
+        out["stopped_on"] = r["stopped_on"]
+    if steps:
+        out["stuck_claude_steps"] = steps
+    if media:
+        out["stuck_media"] = media
+    out.update(needs_approval=bool(r.get("needs_approval")), free_to_resume=bool(r.get("free_to_resume")),
+               what_to_tell_them=r.get("what_to_tell_them") or "",
+               carry_on_after_usage_reset=bool(r.get("carry_on_after_reset")))
+    if r.get("key"):
+        out["recovery_key"] = r["key"]
+    if r.get("fix_first"):
+        out["fix_first"] = list(dict.fromkeys(r["fix_first"]))       # nothing carries it on until these are done
+    if r.get("do_first"):
+        out["do_first"] = list(r["do_first"])                         # then resume_video carries it on, free
+    if r.get("reset_label"):
+        out.update(usage_resets=r["reset_label"], usage_reset_passed=bool(r.get("reset_passed")))
+    if r.get("stopped_at") and not out.get("error"):
+        out["stopped"] = r["stopped_at"]
+    auto = r.get("auto") or {}
+    out["carries_on_by_itself"] = {"would": bool(auto.get("safe")), "why": auto.get("why") or "",
+                                   "times_so_far": auto.get("count", 0), "at_most": auto.get("limit", 2)}
+    if out.get("stopped_on") in ("claude_stage", "media") or steps or media:
+        out["recovery_note"] = RECOVERY_NOTE
+    return True
 
 
 def tool_progress(args):
@@ -1024,18 +1121,81 @@ def tool_resume_video(args):
     presenter = str(args.get("presenter") or "").strip()
     if presenter:
         call("POST", "/cr-workspace/presenter-choice/" + _quote_path(slug), {"choice": presenter}, timeout=60)
-    result = call("POST", "/cr-submit-project", {"project_id": saved["project_id"]}, timeout=120)
-    placed = [queued_video(q) for q in result.get("queued") or []]
-    first = placed[0] if placed else {}
-    where = {k: first[k] for k in ("position", "videos_before_it", "on_hold_because") if k in first}
+    try:
+        # a free resume only (cr_recover): one that would stop again at a step needing the creator's yes is refused;
+        # while another video is made it joins Studio's queue like any Resume (cr_queue) and starts in its turn
+        result = call("POST", "/cr-workspace/recovery/" + _quote_path(slug), {"only_if_free": True}, timeout=180)
+    except Refused as error:
+        if error.status == 404:                                    # an older Studio: the plain resume
+            result = call("POST", "/cr-submit-project", {"project_id": saved["project_id"]}, timeout=120)
+        elif (error.data or {}).get("recovery"):
+            return {"resumed": False, "id": "video:" + slug, "title": saved.get("title"), "why": str(error),
+                    "next": "Check progress(id): it lists the stopped steps and what trying them again involves. Tell "
+                            "the creator, and only after they say yes call recover_video(id, key=recovery_key)."}
+        else:
+            raise
+    where = queue_place(result)
     return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
             **({"presenter": presenter} if presenter else {}), **where,
             "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
-            "next": (HOLD_NOTE + " " if where.get("on_hold_because") else
-                     "It waits in Studio's queue and starts by itself when the videos before it finish. "
-                     if where.get("videos_before_it") else "") +
+            "next": queue_next(where) +
                     "It carries on from where it stopped and reuses everything already made (script, pictures, "
                     "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
+
+
+def queue_place(result: dict) -> dict:
+    """A resumed video's place in Studio's queue (cr_queue): position and videos before it, or why it's on hold."""
+    placed = [queued_video(q) for q in (result or {}).get("queued") or []]
+    first = placed[0] if placed else {}
+    return {k: first[k] for k in ("position", "videos_before_it", "on_hold_because") if k in first}
+
+
+def queue_next(where: dict) -> str:
+    return (HOLD_NOTE + " " if where.get("on_hold_because") else
+            "It waits in Studio's queue and starts by itself when the videos before it finish. "
+            if where.get("videos_before_it") else "")
+
+
+def tool_recover_video(args):
+    """The creator's one yes for a stopped video's stuck Claude steps and uncertain paid media tasks."""
+    same_studio()
+    slug = str(args.get("id") or "").strip().removeprefix("video:")
+    if not _SLUG.fullmatch(slug):
+        raise Refused("Give the stopped video's id from progress().")
+    when = str(args.get("when") or "now")
+    if when not in ("now", "after_reset"):
+        raise Refused("Choose when='now' or when='after_reset'.")
+    # the recovery key progress(id) showed: only what the creator was told is approved (cr_recover refuses without it)
+    body = {"acknowledge_costs": True, "when": when, "added_usage": args.get("added_usage") is True,
+            "key": str(args.get("key") or "")}
+    try:
+        result = call("POST", "/cr-workspace/recovery/" + _quote_path(slug), body, timeout=240)
+    except Refused as error:
+        data = error.data or {}
+        recovery = data.get("recovery") or {}
+        out = {"recovered": False, "id": "video:" + slug, "why": str(error)}
+        if recovery:
+            out["what_to_tell_them"] = recovery.get("what_to_tell_them") or ""
+            if recovery.get("key"):
+                out["recovery_key"] = recovery["key"]
+        if data.get("approved"):
+            out["approved_before_it_stopped"] = data["approved"]
+        out["next"] = ("Nothing more was approved. Tell the creator why, check progress(id) again, and ask before "
+                       "trying again.")
+        return out
+    approved = result.get("approved") or {}
+    where = queue_place(result)
+    out = {"recovered": True, "id": "video:" + slug, "message": result.get("message") or "",
+           "approved_claude_steps": len(approved.get("approved_stages") or []),
+           "media_tasks_sent_again": len(approved.get("set_aside") or []), **where}
+    if result.get("scheduled"):
+        out.update(recovered=False, scheduled=True,
+                   next="Studio carries it on by itself after Claude's usage resets. Keep Studio open; check "
+                        "progress(id) after the reset.")
+    else:
+        out["next"] = (queue_next(where) + "It carries on from where it stopped and reuses everything already made. "
+                       "Check progress(id) now and then; Studio shows a notification when it's done.")
+    return out
 
 
 def cloud_progress() -> dict:
@@ -1521,7 +1681,9 @@ _OPTIONS = {"type": "object", "description": (
     "character_picture: the path of a picture of the character on this computer (PNG, JPG or WebP); it replaces the "
     "style's character picture. To change how a style's character looks, use these rather than extra_instructions: "
     "they replace the style's picture of its old character, which otherwise goes with every image, so the new "
-    "character looks the same in every picture.")}
+    "character looks the same in every picture. carry_on_after_usage_reset (default false, only when the creator "
+    "chooses it): if Claude's usage limit stops a video, Studio carries it on by itself after the reset Claude "
+    "reported, trying that step once more on their Claude plan.")}
 _WHERE = {"type": "string", "enum": ["this_computer", "studio_cloud"],
           "description": "this_computer (free machine, one video at a time: more wait in Studio's queue and start by "
                          "themselves) or studio_cloud (a ChannelRecipe machine renders it, paid from the cloud balance; "
@@ -1571,14 +1733,19 @@ TOOLS = {
                     "On this computer they join Studio's queue (even while another video is being made) and start "
                     "by themselves, one at a time; call it again for more, in other styles too. Returns ids and each "
                     "one's place in line at once and never waits for a render. Spends money: first get the cost with "
-                    "quote (or call without quote_id to get it), tell the creator, then call with quote_id.",
+                    "quote (or call without quote_id to get it), tell the creator, then call with quote_id. A title "
+                    "that already stopped with its work saved comes back as resume_first: offer to carry it on instead.",
                     _schema({"titles": {"type": "array", "items": {"type": "string"}, "minItems": 1,
                                         "maxItems": MAX_TITLES},
                              "style": {"type": "string", "description": "A style id from list_styles."},
                              "minutes": {"type": "integer", "minimum": 1, "maximum": 60,
                                          "description": "Length of each video (Shorts use options.short_seconds)."},
                              "where": _WHERE, "options": _OPTIONS,
-                             "quote_id": {"type": "string", "description": "From quote, for these same choices."}},
+                             "quote_id": {"type": "string", "description": "From quote, for these same choices."},
+                             "new_attempt": {"type": "boolean", "description": (
+                                 "Only when the creator insists on starting a title over that already stopped "
+                                 "with its work saved (make_videos returns resume_first for those): a brand-new "
+                                 "video that pays again for every step. Offer resume_video first.")}},
                             ["titles", "style", "where"]),
                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "queue": (tool_queue, "Studio's queue on this computer: the video being made, the ones waiting in order (position, "
@@ -1593,7 +1760,8 @@ TOOLS = {
                        {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "progress": (tool_progress, "How the creator's videos and style clones are coming along. id: video:<slug>, "
                  "cloud, lk_… (a style look) or op_… (a style study); none for everything. Free. Check every few "
-                 "minutes, not in a tight loop.", _schema({"id": {"type": "string"}}), _FREE),
+                 "minutes, not in a tight loop. A stopped video says what stopped it (stopped_on: voice, presenter, "
+                 "claude_stage, media) and what carrying it on involves.", _schema({"id": {"type": "string"}}), _FREE),
     "list_videos": (tool_list_videos, "Finished videos: on this computer (file path, watch link, project link) and on "
                     "Studio Cloud (download link). Free.",
                     _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 60},
@@ -1655,6 +1823,22 @@ TOOLS = {
                               "recording": {"type": "string", "description": "voice=own: the path of the creator's "
                                                                              "recording on this computer."}}, ["id"]),
                      {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
+    "recover_video": (tool_recover_video, "The creator's one yes for a video that stopped on a Claude step or a paid "
+                      "media task (progress(id) shows stopped_on claude_stage or media, with recovery_key): allows "
+                      "exactly the attempts progress listed (each stuck Claude step once more on their Claude plan; a "
+                      "paid task that got no clear answer sent again, which can pay twice) and carries the video on, "
+                      "reusing every finished step, picture and voice. Tell them what stopped it and what it may "
+                      "cost first (what_to_tell_them), and call this only after they say yes. key: recovery_key from "
+                      "progress(id), so only what they were told is approved. when='after_reset' (a usage-limit stop): "
+                      "Studio carries it on by itself after Claude's reported reset. added_usage=true: they added "
+                      "Claude usage, so trying before the reported reset makes sense.",
+                      _schema({"id": {"type": "string", "description": "video:<slug> from progress()."},
+                               "key": {"type": "string", "description": "recovery_key from progress(id), so only what "
+                                                                        "the creator was told is approved (\"\" "
+                                                                        "when progress showed none)."},
+                               "when": {"type": "string", "enum": ["now", "after_reset"]},
+                               "added_usage": {"type": "boolean"}}, ["id", "key"]),
+                      {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "edit_style": (tool_edit_style, "Show or change one of the creator's learned styles (from clone_style): its name, "
                    "tagline, description, creative direction for the script (script_notes) and for the pictures and "
                    "edit (director_notes), its recurring character, which options are on (features_on), pictures a "

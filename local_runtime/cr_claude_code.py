@@ -2,9 +2,9 @@
 
 - configure(home) registers the `studio` tool server (cr_studio_tools.py, run by Studio's own Python) in .mcp.json next
   to the ChannelRecipe server, and merges .claude/settings.json: both servers approved, the free tools allowed, the
-  paid ones (make_videos, clone_style) and the deletes (delete_video, delete_style) always asked, and the key files
-  never read. Studio runs it on every start and cr_update after every update. It never copies a key anywhere;
-  .mcp.json keeps its other entries untouched.
+  paid ones (make_videos, clone_style, recover_video...) and the deletes (delete_video, delete_style) always asked,
+  and the key files never read. Studio runs it on every start and cr_update after every update. It never copies a key
+  anywhere; .mcp.json keeps its other entries untouched.
 - install(studio, ...) adds the style gallery (/cr-gallery), whose "Use this style" records a pick that Claude reads
   back with get_style_pick, plus the read-only routes the tools need (finished videos with their files, a cloud quote).
 - Watcher sends a desktop notification when a video (on this computer or Studio Cloud) or a style study finishes.
@@ -27,8 +27,10 @@ SERVER = "studio"
 FREE_TOOLS = ("setup_check", "fix_graphics_browser", "fix_speech_model", "fix_ffmpeg", "fix_node", "fix_claude_cli",
               "list_styles", "get_style_pick", "quote", "progress", "list_videos", "open_in_studio",
               "cloud_balance", "clone_style_look", "product_ideas", "products", "edit_style", "style_lab", "queue")
-# carry_on_queue starts held videos again (paid work), or removes them: always asked
-PAID_TOOLS = ("make_videos", "clone_style", "build_product", "resume_video", "style_sample", "carry_on_queue")
+# carry_on_queue starts held videos again (paid work), or removes them: always asked. recover_video allows a stopped
+# video's stuck Claude steps and uncertain paid tasks one more attempt (cr_recover): always asked
+PAID_TOOLS = ("make_videos", "clone_style", "build_product", "resume_video", "style_sample", "carry_on_queue",
+              "recover_video")
 # a video or a learned style moved into Studio's trash (cr_trash): the creator approves each one
 DESTRUCTIVE_TOOLS = ("delete_video", "delete_style")
 # ChannelRecipe's hosted niche database (the account's `channelrecipe` server beside `studio`): reading it is free
