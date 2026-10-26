@@ -117,27 +117,23 @@ Studio through its own checks, so nothing needs the Studio web page.
   Offer only the ready ones (an ElevenLabs key goes in Setup & accounts, never in chat) and never pick for them. For
   their own recording, show them the script (`script_file`) to read, then `resume_video(id, voice="own",
   recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.
-- Cloning a style (/clone-style): the look's questions come first, and two of them decide how the videos are MADE, so
-  ask them before anything else, in plain words, with Studio's guess as the first option: `medium` (a 3D channel: how
-  its 3D is made) and `animation` (a channel that animates its drawn characters, like stick-figure fights or animated
-  shorts: animated in code, or pictures in their look with some AI-animated clips). Animated in code means the study
-  has their Claude Code write this channel's own animation renderer (its characters, moves, effects and camera) and
-  check its test shots against the channel's frames: usually 3 to 10 more minutes of Claude usage (at most 25), no
-  money. Every video then reuses it: Claude directs the characters to the narration and Studio draws them on this
-  computer, so a video costs its voice, plus a background picture for each place (about $0.02) only when its animation
-  asks for them. A 3D channel whose characters have faces (cartoon, game or toy-like, Roblox-style, a designed cast)
-  works the same way in real 3D: the study has their Claude Code write the channel's own three.js renderer (usually 5
-  to 15 more minutes of Claude usage) and every video is rendered in 3D on their computer, vertical with the channel's
-  captions for a Shorts channel; pictures with AI clips in place of 3D only when they choose that answer. Say this
-  before they choose. When the study is done, `progress(op_…)` has `animation`: its score against the channel's own
-  bar; read `what_to_tell_them` to the creator, and if they would rather have pictures, they press Use pictures
-  instead on the style's page (never choose for them). If `look_progress` or `clone_style` returns a `medium_gap`,
-  Studio can't make that medium yet: read it to the creator and call `clone_style` with `accept_medium=true` only
-  after they accept it. Never accept it for them, and never call a stopgap the real thing. Every channel is also
-  offered `made`: Studio's usual way, or written in code (their Claude Code writes the channel's own renderer for
-  any kind of channel: explainers, graphics, maps, 3D without characters). Say what each means before they choose.
-- Improving a style's renderer (an animated or code-written style): the `style_lab` tool and the /clone-style
-  skill's Style Lab section. Edit its workspace files, preview, check against the channel, save. Free.
+- Cloning a style (/clone-style): any channel is cloned in code by default. The look's `made` question comes first:
+  ask it before anything else, in plain words. Written in code (Studio's recommendation, first) means the study has
+  their Claude Code write this channel's own renderer from its frames, whatever they show (characters, graphics, maps,
+  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames: usually 5
+  to 15 more minutes of Claude usage (at most 25), no money. Every video then reuses it: Claude directs it to the
+  narration and Studio draws every frame on their computer, so a video costs its voice (plus about $0.02 for each
+  background picture a 2D renderer asks for), vertical with the channel's captions for a Shorts channel. Instead of
+  code means Studio's ready-made pictures (AI pictures in their look, some AI-animated clips) or its fixed 3D engine:
+  ready at once, but it won't look or move exactly like the channel; only when they choose it. When the study is
+  done, `progress(op_…)` has `animation`: its score against the channel's own bar; read `what_to_tell_them` to the
+  creator. If they want it closer, improve it with them in Style Lab (below); if they would rather have pictures,
+  they press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style`
+  returns a `medium_gap`, Studio can't make that yet: read it to the creator and call `clone_style` with
+  `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
+- Improving a style after it's saved (any style written in code): the `style_lab` tool and the /clone-style
+  skill's Style Lab section. They can prompt it like any code: edit its workspace files, preview, check against the
+  channel, save. Free.
 
 ## Making videos through ChannelRecipe tools
 

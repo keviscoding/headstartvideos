@@ -769,13 +769,14 @@ def look_progress(look_id: str) -> dict:
                    medium_gap=route.get("medium_gap") or "", cost_note=m.get("cost") if isinstance(m.get("cost"), str)
                    else "", not_watched=d.get("not_watched") or [],
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
-                        "with look_id, a style name, an example title and their answers. The 'medium' (3D) and "
-                        "'animation' (animated 2D characters) questions decide how the videos are made: ask them "
-                        "first, in plain words. A medium_gap (for Studio's guess; another answer can change it) is "
-                        "something Studio can't make yet: read it to the creator before anything is paid. Animated "
-                        "in code adds a few minutes of their Claude Code usage to the study (usually 3 to 10, at "
-                        "most 25: Claude writes and checks the channel's animation); its videos then cost their voice and at most a few "
-                        "background pictures. Say so before they choose.")
+                        "with look_id, a style name, an example title and their answers. The 'made' question decides "
+                        "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
+                        "their Claude Code write the channel's own renderer during the study (usually 5 to 15 more "
+                        "minutes of their Claude usage, at most 25). Its videos then cost their voice, plus at most a "
+                        "few background pictures, and the renderer can be improved later with style_lab. Instead of "
+                        "code gives Studio's ready-made pictures or 3D engine, which won't look or move exactly like the "
+                        "channel. Say both before they choose. A medium_gap is something Studio can't make yet: read it "
+                        "to the creator before anything is paid.")
     return out
 
 

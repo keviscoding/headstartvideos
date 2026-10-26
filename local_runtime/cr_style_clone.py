@@ -402,6 +402,10 @@ def _graphics_kit(folder, record, *, renders: bool) -> dict:
     held the browser). Anything else stops the study; no plain preset is ever swapped in."""
     if record and record.get("kit") and record.get("browser") is True:
         return record
+    if renders and not (record and record.get("kit")):
+        # the owner (2026-10-26): the renderer never depends on the motion-graphics learner; the style is saved without
+        # a graphics kit and its renderer draws everything
+        return {**(record or {}), "kit": None, "no_kit": "the graphics learner wrote no kit"}
     why = _no_browser_why(folder) if record and record.get("kit") else ""
     if why and renders:
         return {**record, "browser_skipped": why}
@@ -611,7 +615,7 @@ def use_pictures(home, operation_id, bridge):
         return status(home, operation_id, bridge)
     looked = _read(cr_style_look.folder(home, spec.get("look_id") or "") / "look.json") if spec.get("look_id") else {}
     # the "pictures" answer, for a 2D channel's animation and a 3D channel's medium alike
-    answers = {**(spec.get("answers") or {}), "animation": cr_style_map.ANIMATED_PICTURES,
+    answers = {**(spec.get("answers") or {}), "made": cr_style_map.MADE_OTHER, "animation": cr_style_map.ANIMATED_PICTURES,
                **({"medium": cr_style_map.MEDIUM_PICTURES} if look.get("visuals") == "cr_animated3d" else {})}
     mapping = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=spec["base_style"],
                                       answers=answers)
@@ -850,9 +854,9 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     record = learned(engine, spec["title"], folder, genome, genome.get("analysis") or {},
                      clock, work, spec["base_style"], spec["minutes"])
     record = _graphics_kit(folder, record, renders=bool(spec.get("renderer")) and bool(looked))
-    if record.get("browser_skipped"):
-        log(f"  graphics: checked in a stand-in browser ({record['browser_skipped']}); this style's own renderer "
-            "draws its pictures, so the study carries on")
+    if record.get("browser_skipped") or record.get("no_kit"):
+        log(f"  graphics: {record.get('no_kit') or 'checked in a stand-in browser (' + record['browser_skipped'] + ')'}; "
+            "this style's own renderer draws its pictures, so the study carries on")
     score = (record.get("critique") or {}).get("score")
     if spec.get("visual_mode") == "reference_only" and (isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score)):
         raise StudyStopped("The reference animation kit has not completed its visual comparison. It is saved, but it is not ready to use; no unreviewed preset was substituted.")
@@ -1084,7 +1088,9 @@ def _apply_learned(folder, spec, style, log):
 
 
 def _validated_assets(folder, record):
-    """Bind a completed learner record to its actual installed browser kit."""
+    """Bind a completed learner record to its actual installed browser kit ({} for a renderer style saved without one)."""
+    if record.get("no_kit") and not record.get("kit"):
+        return {}
     folder = Path(folder).resolve()
     manifest = _read(folder / "genkit/kit.json")
     if ((record.get("browser") is not True and not record.get("browser_skipped")) or not record.get("kit")
@@ -1119,7 +1125,9 @@ def finish_original(engine, folder, spec, design, record, progress, *, learner=N
     saved_style = designer.save(folder, style)
     if saved_style is not None:
         Path(saved_style).chmod(0o600)
-    if not designer.genkit(style, folder, log, invalidate=True):
+    if record.get("no_kit"):
+        (log or print)("  graphics: no graphics kit; the style's own renderer draws its pictures")
+    elif not designer.genkit(style, folder, log, invalidate=True):
         raise StudyStopped("The validated kit could not attach to this style. No default graphics were substituted.")
     # Original auto looks are hidden variants; make this an explicit selectable
     # style while retaining their actual look, prompts and durable kit manifest.

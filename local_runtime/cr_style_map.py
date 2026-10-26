@@ -20,7 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 104         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: any channel can be written in code); older saved plans are made again
+ROUTER = 104         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: every clone is written in code unless the creator chooses Studio's ready-made pictures); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
@@ -56,10 +56,11 @@ ANIMATION_GAP_KIND = ("Studio rigs and animates stick-figure characters, and thi
 DRAWN_2D = ("stick_figure", "drawing", "cutout", "painting")
 MOVES_ANYWAY = ("live_footage", "archival_footage", "stock_footage", "news_clip", "bodycam_cctv", "interview", "ai_video",
                 "motion_graphic", "presenter", "avatar")
-# any channel's pictures can be written in code (the owner, 2026-10-25: Studio must never limit what Claude can build)
-MADE_USUAL = "Studio's usual way for this channel (above)"
-MADE_CODE = "Written in code: your Claude Code writes this channel's own renderer"
-MADES = (MADE_USUAL, MADE_CODE)
+# every clone is written in code by default (the owner, 2026-10-26: "we're promising them that they can clone anything...
+# it shouldn't just resort to image video AI generation tools... remove the AI pictures route, unless they choose so")
+MADE_CODE = "Written in code: your Claude Code writes this channel's own renderer (recommended)"
+MADE_OTHER = "Instead of code: Studio's ready-made pictures (AI pictures, some AI clips) or its fixed 3D engine"
+MADES = (MADE_CODE, MADE_OTHER)
 ANIMATED_SHARE = 0.6         # of the drawn pictures' time, measured moving: their characters are animated
 ANIMATED_SURE = 0.8          # above this (or with no narrator carrying the story) Studio's guess is to animate them
 
@@ -818,21 +819,31 @@ def coded_route(profile) -> dict:
                    + ("in real 3D with three.js" if three else "drawn in 2D") + ") from its frames, whatever they show "
                    "(characters, graphics, maps, text, effects, camera), and checks its test shots against the "
                    "channel's own frames (usually 5 to 15 more minutes of Claude usage, at most 25). Every video then "
-                   "reuses it: Claude directs it to the narration and Studio draws every frame on this computer"
-                   + (", vertical with its captions like the channel's Shorts" if vertical(profile) else "") + "."}
+                   "reuses it: Claude directs it to the narration and Studio draws every frame on this computer, so a "
+                   "video costs its voice" + (" and nothing else" if three else ", plus about $0.02 for each background "
+                   "picture when its renderer asks for them")
+                   + (". Your videos are vertical Shorts with its captions, like the channel's" if vertical(profile) else "")
+                   + "."}
 
 
-def made_question(profile, usual: dict) -> dict:
-    """Every channel is offered its pictures written in code beside Studio's usual way for it (usual: the route without
-    that answer); {} where the usual way already is code, or no kit is here."""
-    if usual.get("engine") in ("animated2d", "animated3d"):
-        return {}
+def made_question(profile, other: dict) -> dict:
+    """How the videos are made, asked of every channel: written in code (Studio's recommendation, first) or, instead,
+    Studio's ready-made way for it (other), said honestly; {} where this Studio has no kit to write code on."""
     coded = coded_route(profile)
     if not coded:
         return {}
-    said = str(usual.get("why") or "").strip().rstrip(".")
-    return {"id": "made", "ask": "How should Studio make this channel's pictures? Studio's usual way"
-            + (f": {said[0].lower() + said[1:]}." if said else ".") + " Or " + coded["why"] + " Studio's guess is first.",
+    fam = _families(profile)
+    footage = fam.get("footage", 0) + fam.get("photo", 0) + fam.get("document", 0) >= 0.3
+    instead = {"drawn": "AI pictures drawn in their 3D look, some animated by AI",
+               "designed": "Studio's designed-cast 3D engine (round-headed characters)",
+               "threed": "Studio's own 3D engine (faceless mannequin figures)"}.get(
+        other.get("engine"), "AI pictures in their look, some animated by AI"
+        + (", with real clips where the script asks for them" if footage else ""))
+    said = coded["why"][0].upper() + coded["why"][1:]
+    return {"id": "made", "ask": "How should your videos be made? Studio recommends code, first. " + said
+            + (" Its renderer draws every scene: real footage isn't part of a style written in code." if footage else "")
+            + f" Or, instead of code: {instead}. That's ready at once, but the videos won't look or move exactly like "
+            "the channel's.",
             "options": list(MADES)}
 
 
@@ -1261,14 +1272,27 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     pictures = medium == MEDIUM_PICTURES and _families(profile).get("3d", 0) >= 0.2
     if pictures:
         designed, looked = 0.0, _families(profile).get("3d", 0)
+    animation = str((answers or {}).get("animation") or "")
     way = route(profile, base or "", drawn=looked, told=told, designed=designed, by_hand=by_hand,
-                animation=str((answers or {}).get("animation") or ""), rendered=rendered, pictures=pictures)
-    usual = way
-    if str((answers or {}).get("made") or "") == MADE_CODE and way.get("engine") not in ("animated2d", "animated3d"):
-        way = coded_route(original) or way                # the creator chose code for a channel Studio would draw
-        rendered = rendered or way.get("engine") == "animated3d"
-        if way.get("coded"):
-            designed, looked = 0.0, 0.0
+                animation=animation, rendered=rendered, pictures=pictures)
+    # written in code unless the creator chose otherwise (or picked a 3D recipe by hand): no prediction of what Claude
+    # can't build. Studio's ready-made way (other) is what they get instead, never a silent fallback.
+    share = _families(profile).get("3d", 0)
+    drawn_instead = share >= 0.2 and not designed and bool(looked)
+    other = way if way.get("engine") not in ("animated2d", "animated3d") else \
+        route(profile, base or "", drawn=looked, told=told, designed=designed, by_hand=by_hand,
+              animation=ANIMATED_PICTURES, rendered=False, pictures=pictures or drawn_instead)
+    instead = (str((answers or {}).get("made") or "") == MADE_OTHER or medium == MEDIUM_PICTURES
+               or animation == ANIMATED_PICTURES)
+    coded = {} if base in ("3d", "nocturne") else coded_route(original)
+    offered = bool(coded)
+    if coded and instead:
+        way, rendered = other, False
+        if pictures or drawn_instead:
+            designed, looked = 0.0, share
+    elif coded:
+        way, rendered = coded, coded["engine"] == "animated3d"
+        designed, looked = 0.0, 0.0
     if rendered:                                  # Claude's renderer draws the 3D: neither the kit's cast nor pictures
         designed, looked = 0.0, 0.0
     if answers:
@@ -1311,8 +1335,8 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
             "overrides": plan.overrides, "remove": plan.remove, "settings": plan.settings,
             "needs": list(dict.fromkeys(plan.needs)), "notes": plan.notes,
             "cost": cost(plan.overrides, chosen),
-            "questions": [q for q in [medium_question(original), animation_question(original),
-                                      made_question(original, usual)] if q]
+            "questions": [q for q in ([made_question(original, other)] if offered else
+                                      [medium_question(original), animation_question(original)]) if q]
                          + list(original.get("questions") or [])}
 
 

@@ -150,9 +150,9 @@ def test_a_3d_channel_with_characters_is_rendered_by_its_own_renderer_not_drawn(
     assert (look["animated2d"]["width"], look["animated2d"]["height"]) == (1920, 1080) and "aspect" not in look
     assert plan["overrides"]["pacing"]["clips_per_min"] == 0.0 and plan["cost"]["usd_per_min"] == 0.0
     assert "style_image" not in plan["needs"] and "threed" not in (look.get("threed") or {})
-    question = next(q for q in plan["questions"] if q["id"] == "medium")
-    assert question["options"][0] == cm.MEDIUM_DESIGNED and cm.MEDIUM_PICTURES in question["options"]
-    assert "writes this channel's own 3D renderer" in question["ask"]
+    question = next(q for q in plan["questions"] if q["id"] == "made")
+    assert question["options"] == [cm.MADE_CODE, cm.MADE_OTHER] and "writes this channel's own renderer" in question["ask"]
+    assert "AI pictures drawn in their 3D look" in question["ask"], "what they'd get instead, said honestly"
     ifology = cm.plan_style(tsm.profile({"3d": 0.85, "graphic": 0.15}, {"3d_render": 0.85}, **tsm.IFOLOGY), tsm.STYLES)
     assert ifology["route"]["engine"] == "animated3d", "a designed cast too: the kit is the renderer's helper now"
 
@@ -167,47 +167,50 @@ def test_a_3d_shorts_channel_is_rendered_vertical_with_its_captions_at_its_own_p
 
 
 def test_pictures_in_place_of_3d_are_only_the_creators_choice_and_a_hand_picked_3d_recipe_is_kept(kit3d):
-    chose = cm.plan_style(_blocky(), tsm.STYLES, answers={"medium": cm.MEDIUM_PICTURES})
-    assert chose["route"]["engine"] == "drawn" and "you chose pictures" in chose["route"]["why"]
-    assert "medium_gap" not in chose["route"] and chose["overrides"]["look"].get("visuals") != a2d.VISUALS3D
-    mannequins = cm.plan_style(tsm.profile({"3d": 0.85}, {"3d_render": 0.85}, pictures__art_style=tsm.RECONSTRUCTION),
-                               tsm.STYLES)
-    assert mannequins["route"]["engine"] == "threed", "faceless reconstructions stay on Studio's 3D engine"
+    for answers in ({"made": cm.MADE_OTHER}, {"medium": cm.MEDIUM_PICTURES}):      # (and a look answered before 106)
+        chose = cm.plan_style(_blocky(), tsm.STYLES, answers=answers)
+        assert chose["route"]["engine"] == "drawn" and "you chose pictures" in chose["route"]["why"]
+        assert "medium_gap" not in chose["route"] and chose["overrides"]["look"].get("visuals") != a2d.VISUALS3D
+    recon = tsm.profile({"3d": 0.85}, {"3d_render": 0.85}, pictures__art_style=tsm.RECONSTRUCTION)
+    assert cm.plan_style(recon, tsm.STYLES)["route"]["engine"] == "animated3d", \
+        "faceless reconstructions are written in code too (a tabletop wargame went to the mannequin engine)"
+    assert cm.plan_style(recon, tsm.STYLES, answers={"made": cm.MADE_OTHER})["route"]["engine"] == "threed"
     picked = cm.plan_style(_blocky(), tsm.STYLES, base="3d")
     assert picked["route"]["engine"] != "animated3d", "the creator picked the 3D recipe themselves"
 
 
-def test_any_channel_is_offered_its_pictures_written_in_code(kit3d, monkeypatch):
-    """The owner (2026-10-25): Studio must never limit what Claude can build. An AI-picture channel, a footage
-    documentary and a faceless 3D reconstruction channel are each offered their own Claude-written renderer beside
-    Studio's usual way (which stays the guess), and the answer routes them to it."""
+def test_every_channel_is_written_in_code_unless_the_creator_chooses_otherwise(kit3d, monkeypatch):
+    """The owner (2026-10-26): "we're promising them that they can clone anything... remove the AI pictures route,
+    unless they choose so." An AI-picture channel, a footage documentary, a faceless 3D reconstruction channel and a
+    Roblox Shorts channel all get their own Claude-written renderer; Studio's ready-made way only on their word."""
     monkeypatch.setattr(a2d, "available", lambda home=None: True)
     drawn = tsm.profile({"generated": 0.9, "graphic": 0.1})
     crime = tsm.profile({"footage": 0.8, "graphic": 0.2}, {"bodycam_cctv": 0.45, "archival_footage": 0.35})
     faceless = tsm.profile({"3d": 0.6, "graphic": 0.4}, pictures__art_style=tsm.RECONSTRUCTION)
-    for prof, usual, kit in ((drawn, "pictures", "animated2d"), (crime, "pictures", "animated2d"),
-                             (faceless, "threed", "animated3d")):
+    for prof, kit, instead in ((drawn, "animated2d", "pictures"), (crime, "animated2d", "pictures"),
+                               (faceless, "animated3d", "threed"), (_blocky(), "animated3d", "drawn")):
         plan = cm.plan_style(prof, tsm.STYLES)
-        assert plan["route"]["engine"] == usual, "Studio's usual way stays the guess"
-        q = next(q for q in plan["questions"] if q["id"] == "made")
-        assert q["options"] == [cm.MADE_USUAL, cm.MADE_CODE] and "renderer" in q["ask"]
-        coded = cm.plan_style(prof, tsm.STYLES, answers={"made": cm.MADE_CODE})
-        assert coded["route"]["engine"] == kit and coded["route"]["coded"] and "medium_gap" not in coded["route"]
-        look = coded["overrides"]["look"]
+        assert plan["route"]["engine"] == kit and plan["route"]["coded"] and "medium_gap" not in plan["route"]
+        look = plan["overrides"]["look"]
         assert look["visuals"] == (a2d.VISUALS3D if kit == "animated3d" else a2d.VISUALS)
-        assert coded["overrides"]["pacing"]["clips_per_min"] == 0.0 and "style_image" not in coded["needs"]
-        assert any(q["id"] == "made" for q in coded["questions"]), "the question stays, so the answer can change back"
-    blocky = cm.plan_style(_blocky(), tsm.STYLES)
-    assert blocky["route"]["engine"] == "animated3d" and not any(q["id"] == "made" for q in blocky["questions"]), \
-        "a channel already written in code isn't asked twice"
-    tall = cm.plan_style(tsm.profile({"generated": 0.9, "graphic": 0.1}, format__vertical=tsm.axis(1.0)), tsm.STYLES,
-                         answers={"made": cm.MADE_CODE})
+        assert plan["overrides"]["pacing"]["clips_per_min"] == 0.0 and "style_image" not in plan["needs"]
+        assert [q["id"] for q in plan["questions"] if q["id"] in ("made", "medium", "animation")] == ["made"]
+        q = next(q for q in plan["questions"] if q["id"] == "made")
+        assert q["options"] == [cm.MADE_CODE, cm.MADE_OTHER] and "Studio recommends code" in q["ask"]
+        other = cm.plan_style(prof, tsm.STYLES, answers={"made": cm.MADE_OTHER})
+        assert other["route"]["engine"] == instead and other["overrides"]["look"].get("visuals") not in a2d.PLUGINS
+    assert "real footage isn't part of a style written in code" in \
+        next(q for q in cm.plan_style(crime, tsm.STYLES)["questions"] if q["id"] == "made")["ask"]
+    assert cm.plan_style(faceless, tsm.STYLES, base="3d")["route"]["engine"] == "threed", "the 3D recipe picked by hand"
+    tall = cm.plan_style(tsm.profile({"generated": 0.9, "graphic": 0.1}, format__vertical=tsm.axis(1.0)), tsm.STYLES)
     spec = tall["overrides"]["look"]["animated2d"]
     assert tall["overrides"]["look"]["aspect"] == "9:16" and (spec["width"], spec["height"]) == (1080, 1920) \
         and spec["captions"] is True, "a Shorts channel written in 2D is vertical with its captions"
     monkeypatch.setattr(a2d, "available", lambda home=None: False)
     monkeypatch.setattr(a2d, "available3d", lambda home=None: False)
-    assert not any(q["id"] == "made" for q in cm.plan_style(drawn, tsm.STYLES)["questions"]), "no kit, no offer"
+    old = cm.plan_style(drawn, tsm.STYLES)
+    assert old["route"]["engine"] == "pictures" and not any(q["id"] == "made" for q in old["questions"]), \
+        "a Studio without the kits routes as before"
 
 
 def test_a_2d_shorts_channel_written_in_code_is_built_vertical(tmp_path, monkeypatch):
@@ -321,7 +324,9 @@ def test_a_designed_cast_keeps_its_renderer_on_the_recipe_the_look_recommended(h
     assert plan["route"]["engine"] == again["route"]["engine"] == "animated3d" and plan["base"] == "stories"
     assert again["overrides"]["look"]["visuals"] == a2d.VISUALS3D
     picked = next(b for b in tsm.STYLES if b not in ("stories", "3d", "nocturne"))
-    assert cm.plan_style(profile, tsm.STYLES, base=picked)["route"]["engine"] == "drawn", "a picture recipe by hand"
+    assert cm.plan_style(profile, tsm.STYLES, base=picked)["route"]["engine"] == "animated3d", \
+        "a recipe picked by hand carries the narration; the pictures are still written in code"
+    assert cm.plan_style(profile, tsm.STYLES, answers={"made": cm.MADE_OTHER})["route"]["engine"] == "designed"
     look_id, _ = _roblox_look(home)
     path = look.folder(home, look_id) / "look.json"
     saved = json.loads(path.read_text())
@@ -346,7 +351,7 @@ def test_a_renderer_study_carries_on_when_its_graphics_browser_was_busy(tmp_path
     with pytest.raises(clone.StudyStopped, match="another video was using the graphics browser"):
         clone._graphics_kit(tmp_path, mock, renders=False)
     with pytest.raises(clone.StudyStopped, match="did not produce a graphics kit"):
-        clone._graphics_kit(tmp_path, {"kit": None}, renders=True)
+        clone._graphics_kit(tmp_path, {"kit": None}, renders=False)
     real = {"kit": "macro_garden", "browser": True}
     assert clone._graphics_kit(tmp_path, real, renders=False) is real
     (tmp_path / "genkit").mkdir()
@@ -355,6 +360,32 @@ def test_a_renderer_study_carries_on_when_its_graphics_browser_was_busy(tmp_path
     assert "genkit/kit.js" in clone._validated_assets(tmp_path, kept)
     with pytest.raises(RuntimeError):
         clone._validated_assets(tmp_path, mock)
+
+
+def test_a_renderer_study_never_depends_on_the_motion_graphics_learner(tmp_path):
+    """The owner (2026-10-26): the renderer build must not depend on the motion-graphics learner's gate. On a renderer
+    route a learner that wrote no kit still leaves a style (its renderer draws everything); elsewhere it still stops."""
+    from types import SimpleNamespace
+    import cr_style_clone as clone
+    kept = clone._graphics_kit(tmp_path, {}, renders=True)
+    assert kept["kit"] is None and kept["no_kit"] and clone._validated_assets(tmp_path, kept) == {}
+    with pytest.raises(clone.StudyStopped, match="did not produce a graphics kit"):
+        clone._graphics_kit(tmp_path, {}, renders=False)
+    home = tmp_path / "home"
+    folder = home / "output" / "cr-style-clone" / ("op_" + "f" * 24)
+    folder.mkdir(parents=True)
+    (home / "styles").mkdir()
+    attached = []
+    designer = SimpleNamespace(build=lambda genome, info, base, **kw: {"name": "x", "look": {}},
+                               save=lambda folder, style: None,
+                               genkit=lambda style, folder, log, invalidate: attached.append(1) or False)
+    learner = SimpleNamespace(around=lambda *a, **k: None, summary=lambda rec: {"kit": rec.get("kit")})
+    spec = {"base_style": "stories", "minutes": 1, "title": "t", "style_id": "cr_clone_ffffffffffff", "label": "L",
+            "references": [{"id": "abcdefghijk"}], "visual_mode": "mixed"}
+    style = clone.finish_original(SimpleNamespace(STYLE_INFO={}), folder, spec, {"genome": {}}, kept, lambda p: None,
+                                  learner=learner, designer=designer, log=lambda m: None)
+    assert style["name"] == "cr_clone_ffffffffffff" and attached == [], "no kit to attach, and none swapped in"
+    assert json.loads((folder / "study-result.json").read_text())["kit"] is None
 
 
 def test_round_files_belong_to_their_build(tmp_path):

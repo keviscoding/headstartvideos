@@ -21,14 +21,13 @@ Link: $ARGUMENTS
    from each channel (for example "the storytelling and pacing of channel A, the 3D look of channel B").
 4. **Wait for the look.** Check `progress(id=look_id)` about once a minute (a few minutes in all). Say what it's doing.
 5. **Their answers.** When the look is done, ask each of its `questions` (a multiple-choice question works well;
-   Studio's guess is the first option). Ask `medium` (how a 3D channel's 3D is made), `animation` (whether the
-   channel's drawn characters are animated, or pictures in their look) and `made` (Studio's usual way for this channel,
-   or written in code: their Claude Code writes the channel's own renderer, for any kind of channel) first: they
-   decide how the videos are made.
-   If `look_progress` shows a `medium_gap`, tell them now what their videos will be (`how_made`). Choosing animated
-   (2D), or 3D characters with faces, has their Claude Code write the channel's own renderer during the study (usually
-   3 to 15 more minutes); say so. A Shorts channel's videos come out vertical. Once the style is saved, the
-   renderer can be improved with the `style_lab` tool (see below). Also ask:
+   Studio's guess is the first option). Ask `made` first: it decides how the videos are made. Written in code
+   (recommended) has their Claude Code write the channel's own renderer during the study, for any kind of channel
+   (usually 5 to 15 more minutes of their Claude usage, no money), and its videos cost their voice. Instead of code
+   gives Studio's ready-made pictures (AI pictures, some AI clips) or its fixed 3D engine: ready at once, but not
+   exactly the channel's look. Say both, plainly. If `look_progress` shows a `medium_gap`, tell them now what their
+   videos will be (`how_made`). A Shorts channel's videos come out vertical with its captions. Once the style is
+   saved, they can keep improving it with you in Style Lab (see below). Also ask:
    - a name for the new style (for example "My History Style");
    - an example video title in the channel's subject.
    Mention `suggested_base` and `because` in one line: the recipe the new style builds on.
@@ -39,9 +38,9 @@ Link: $ARGUMENTS
    them to approve the tool call. If it returns a `medium_gap`, read it to them; only with their OK call again with
    `accept_medium=true`.
 8. **Progress.** Give the page link (`page`) and say Studio shows a notification when the style is ready. Check
-   `progress(id=op_…)` when they ask. When it's ready the style appears in `list_styles(kind='mine')`; for an
-   animated style, read `animation.what_to_tell_them` first. Offer to make a first video with it (the make-videos
-   skill). Styles learned from a channel render on this computer.
+   `progress(id=op_…)` when they ask. When it's ready the style appears in `list_styles(kind='mine')`; for a style
+   written in code, read `animation.what_to_tell_them` first, and offer to make it closer in Style Lab (below) before
+   or after a first video (the make-videos skill). Styles learned from a channel render on this computer.
 
 If the plan's style clones are used up, Studio says so: point them to https://channelrecipe.com/app#billing.
 If a study stops, read what Studio said; never start it again by yourself.

@@ -113,11 +113,12 @@ def test_every_channel_that_animates_its_characters_fits_and_its_conventions_are
 
 def test_the_animated_route_says_what_writing_the_animation_costs(kit):
     plan = cm.plan_style(dart(), tsm.STYLES)
-    question = next(q for q in plan["questions"] if q["id"] == "animation")
-    assert "minutes of Claude usage" in question["ask"] and question["options"][0] == cm.ANIMATED_CODE
+    question = next(q for q in plan["questions"] if q["id"] == "made")
+    assert "minutes of Claude usage" in question["ask"] and question["options"][0] == cm.MADE_CODE
+    assert not any(q["id"] == "animation" for q in plan["questions"]), "one question decides how videos are made"
     route = plan["route"]
     assert route["engine"] == "animated2d" and "medium_gap" not in route
-    assert "Claude Code writes this channel's animation" in route["why"] and "$0.02" in route["why"]
+    assert "Claude Code writes this channel's own renderer" in route["why"] and "$0.02" in route["why"]
     look = plan["overrides"]["look"]
     assert look["visuals"] == a2d.VISUALS and plan["overrides"]["features"]["on"] == ["sound"]
     assert plan["overrides"]["pacing"]["clips_per_min"] == 0.0 and plan["cost"]["clips_per_min"] == 0
