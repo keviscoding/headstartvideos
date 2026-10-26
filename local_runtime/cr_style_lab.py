@@ -392,16 +392,28 @@ def _plates(lab_dir: Path, scene: dict) -> dict:
 def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
     """The renderer in the workspace, drawn and checked (free, on this computer): problems first, then its test shots
     and a short video. Recorded in lab.json against the code's hash."""
-    import cr_animated2d as a2d
     lab_dir, lab = _lab(home, style)
     code = (lab_dir / "renderer.js").read_text(encoding="utf-8")
-    scene = _read(lab_dir / "scene.json")
+    entry = _draw(home, style, lab_dir, lab, code, _read(lab_dir / "scene.json"), lab_dir / "preview" / _sha(code)[:10],
+                  seconds)
+    _record(lab_dir, lab, entry)
+    entry["next"] = ("Fix these problems and preview again." if entry["problems"] else
+                     "Look at the shots (and the video) next to refs/shown_*.jpg; edit and preview again, or check."
+                     + (" The warnings don't stop a save: fix them if the channel needs it." if entry.get("warnings")
+                        else ""))
+    return entry
+
+
+def _draw(home, style: str, lab_dir: Path, lab: dict, code: str, scene: dict, out: Path, seconds: float) -> dict:
+    """A renderer drawn and checked into out (its test shots, a short video with its sound, the contract, text and
+    sound checks): the preview entry, not recorded. Used by Style Lab's preview and by "Improve this style"."""
+    import cr_animated2d as a2d
     sha = _sha(code)
     size = {"dims": lab["dims"], "width": lab["width"], "height": lab["height"]}
     spec = {**{k: v for k, v in (_spec(_style(home, style))).items() if k in ("sky", "floor", "blur")}, **size}
     if lab["dims"] != 3:
         spec.pop("dims")
-    out = lab_dir / "preview" / sha[:10]
+    out = Path(out)
     if out.exists():
         shutil.rmtree(out, ignore_errors=True)
     entry = {"kind": "preview", "at": round(time.time()), "sha256": sha, "ok": False, "problems": []}
@@ -461,16 +473,38 @@ def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
                  pure=info.get("drift"),
                  manifest={k: found.get(k) for k in ("name", "version", "shots") if found.get(k) is not None}
                  | {"actions": sorted((found.get("actions") or {}))[:40]} if found else {})
-    _record(lab_dir, lab, entry)
-    entry["next"] = ("Fix these problems and preview again." if problems else
-                     "Look at the shots (and the video) next to refs/shown_*.jpg; edit and preview again, or check."
-                     + (" The warnings don't stop a save: fix them if the channel needs it." if warnings else ""))
     return entry
 
 
+def _lab_lock(lab_dir: Path):
+    """lab.json is written by Style Lab in Claude Code and by Improve this style in a worker: one at a time."""
+    import contextlib
+    import cr_style_clone
+
+    @contextlib.contextmanager
+    def held():
+        for _ in range(100):
+            try:
+                with cr_style_clone._lock(lab_dir, ".lab.lock"):
+                    yield
+                    return
+            except RuntimeError:
+                time.sleep(0.1)
+        raise LabError("This style's lab is busy writing. Try again in a moment.")
+    return held()
+
+
 def _record(lab_dir: Path, lab: dict, entry: dict):
-    lab["history"] = (list(lab.get("history") or []) + [entry])[-HISTORY:]
-    _write(lab_dir / "lab.json", lab)
+    """One entry added to lab.json as it is on disk now (another writer's entries are kept), and the bar once set."""
+    with _lab_lock(lab_dir):
+        now = _read(lab_dir / "lab.json") or dict(lab)
+        for key in ("bar", "control"):
+            if now.get(key) is None and lab.get(key) is not None:
+                now[key] = lab[key]
+        now["history"] = (list(now.get("history") or []) + [entry])[-HISTORY:]
+        _write(lab_dir / "lab.json", now)
+    lab.clear()
+    lab.update(now)
 
 
 # ── check: the study's likeness judge ───────────────────────────────────────────────────────────────────────────
@@ -492,13 +526,23 @@ def _judge(dims: int):
 def check(home, style: str, *, judge=None) -> dict:
     """The last preview's test shots against the channel's shown frames, by the study's judge, scored against this
     channel's bar (its held-out frames judged once on their own, set on the first check)."""
-    import cr_animated2d as a2d
     lab_dir, lab = _lab(home, style)
     code = (lab_dir / "renderer.js").read_text(encoding="utf-8")
-    sha = _sha(code)
-    done = _last(lab, "preview", sha)
+    done = _last(lab, "preview", _sha(code))
     if not done.get("ok"):
         raise LabError("Preview this renderer first (style_lab action preview); a check judges its test shots.")
+    entry = _judge_preview(lab_dir, lab, code, done, judge)
+    _record(lab_dir, lab, entry)
+    entry["next"] = ("It clears the bar: save it, or keep improving." if entry["passed"] else
+                     "Under the bar: work on the dealbreakers first, preview, check again.")
+    return entry
+
+
+def _judge_preview(lab_dir: Path, lab: dict, code: str, done: dict, judge=None) -> dict:
+    """A preview's test shots judged against the channel's shown frames and its bar (set once, from the held-out
+    frames, kept in lab): the check entry, not recorded."""
+    import cr_animated2d as a2d
+    sha = _sha(code)
     stills = [p for p in done.get("stills") or [] if Path(p).is_file()]
     shown = sorted((lab_dir / "refs").glob("shown_*.jpg"))
     held = sorted((lab_dir / "refs").glob("held_*.jpg"))
@@ -528,9 +572,6 @@ def check(home, style: str, *, judge=None) -> dict:
              "per_shot": [round(float(c.get("overall") or 0), 2) for c in mine],
              "dealbreakers": [str(x) for x in (got.get("dealbreakers") or [])][:6],
              "fixes": [str(x) for x in (got.get("fixes") or [])][:6]}
-    _record(lab_dir, lab, entry)
-    entry["next"] = ("It clears the bar: save it, or keep improving." if entry["passed"] else
-                     "Under the bar: work on the dealbreakers first, preview, check again.")
     return entry
 
 
@@ -580,6 +621,198 @@ def save(home, style: str) -> dict:
             "state": spec["renderer"]["state"], "overall": spec["renderer"]["overall"], "bar": spec["renderer"]["bar"],
             "cost": data["cost"], "next": "Every new video in this style uses this renderer. Make a short one to see it "
                                           "with the voice and sound."}
+
+
+# ── "Improve this style" from the Studio dashboard: one change in the creator's words ───────────────────────────────
+
+IMPROVE_PROMPT = """You are improving a YouTube channel's style in ChannelRecipe Studio. Its renderer is the code that
+draws every video in this style; the creator wants one change and will compare your version with the current one
+before keeping it.
+
+[ASKED]
+
+THE GUIDE (the renderer's contract, sandbox and helpers):
+[GUIDE]
+
+[HEADER]
+```javascript
+[CODE]
+```
+
+ITS TEST SCENE:
+```json
+[SCENE]
+```
+
+[IMAGES]
+[FIX]
+[TASK] Keep the contract:
+Kit.renderer({...}) with the manifest's actions, shots, fx and cast traits (add new ones if the change needs them, never
+remove one: the style's videos already use them). Every frame stays a pure function of t; every word on screen stays
+readable at video size; sounds stay the channel's own.
+
+Reply with exactly two fenced blocks and nothing else:
+```javascript
+// the whole renderer: Kit.renderer({...})
+```
+```json
+{"duration": 6, "cast": {}, "sets": {}, "shots": [], "actions": [], "fx": [], "stills": [1.2, 3.0, 5.1]}
+```
+(the test scene, changed to show what you changed)"""
+
+
+def _improve_prompt(lab_dir: Path, request: str, code: str, scene: dict, images: str, fix: str = "") -> str:
+    """The change's prompt. With fix (the problems of Claude's own version): that version is the code shown, the
+    change is already in it, and only the problems are to be fixed (never the change made twice)."""
+    guide = (lab_dir / "GUIDE.md").read_text(encoding="utf-8") if (lab_dir / "GUIDE.md").is_file() else ""
+    if fix:
+        asked = "THE CREATOR ASKED (your version below already makes this change): " + request
+        header = ("YOUR VERSION (it has the creator's change, but couldn't be used yet: fix only the problems below, "
+                  "keep the change and everything else):")
+        task = "Fix only these problems, keeping the creator's change exactly as you made it."
+    else:
+        asked = "THE CREATOR ASKS: " + request
+        header = "THE CURRENT RENDERER (it works: keep everything the creator didn't ask to change):"
+        task = "Make the change the creator asked for, as fully as the code allows, in the channel's own look."
+    return (IMPROVE_PROMPT.replace("[GUIDE]", guide[:60000]).replace("[CODE]", code)
+            .replace("[SCENE]", json.dumps(scene, ensure_ascii=False, indent=1)[:20000])
+            .replace("[IMAGES]", images).replace("[FIX]", fix).replace("[HEADER]", header).replace("[TASK]", task)
+            .replace("[ASKED]", asked))
+
+
+def improvement_folder(home, style: str, operation_id: str) -> Path:
+    if not re.fullmatch(r"op_[a-f0-9]{24}", str(operation_id or "")):
+        raise LabError("Choose a saved improvement.")
+    return folder(home, style) / "improve" / operation_id
+
+
+def candidate(home, style: str, operation_id: str) -> dict:
+    """The improvement's candidate as saved (candidate.json), {} before it exists."""
+    return _read(improvement_folder(home, style, operation_id) / "candidate.json")
+
+
+FIX_CALL_MIN_S = 300                     # a fix call starts only with this long left (and 1.25x the first call's time)
+
+
+def run_improvement(home, style: str, operation_id: str, request: str, see, *, judge=None, log=print,
+                    left=None) -> dict:
+    """One change in the creator's words: Claude rewrites the style's saved renderer (see(prompt, images), one vision
+    call, and one more to fix what the preview finds), then the candidate is drawn and checked like any Style Lab
+    preview and judged against the channel. Held aside in style-lab/<style>/improve/<operation>/ until the creator
+    saves it or keeps the old one; the style itself is never changed here."""
+    import cr_animated2d as a2d
+    if not (folder(home, style) / "lab.json").is_file():
+        start(home, style)
+    lab_dir, lab = _lab(home, style)
+    record = (_spec(_style(home, style)).get("renderer") or {})
+    path = Path(home) / "assets" / str(record.get("file") or "")
+    if not record.get("file") or not path.is_file() or _sha(path.read_text(encoding="utf-8")) != record.get("sha256"):
+        raise LabError("This style's saved renderer is missing or changed on disk. Nothing was changed.")
+    code = path.read_text(encoding="utf-8")
+    scene = _read(lab_dir / "scene.json") or _starter_scene(_spec(_style(home, style)))
+    out = improvement_folder(home, style, operation_id)
+    out.mkdir(parents=True, exist_ok=True)
+    current = _last(lab, "preview", record["sha256"])
+    if not current.get("ok") or not all(Path(p).is_file() for p in current.get("stills") or [None]):
+        log("  improve: drawing the current version for comparison")
+        current = _draw(home, style, lab_dir, lab, code, scene, lab_dir / "preview" / record["sha256"][:10], PREVIEW_S)
+        _record(lab_dir, lab, current)
+    shown = sorted((lab_dir / "refs").glob("shown_*.jpg"))[:6]
+    stills = [p for p in current.get("stills") or [] if Path(p).is_file()][:4]
+    words = (f"The first {len(shown)} pictures are the channel's own frames" if shown else "")
+    words += (("; " if words else "The pictures are ") + f"the last {len(stills)} are the current renderer's test shots."
+              if stills else ".")
+    images = [str(p) for p in shown] + [str(p) for p in stills]
+    entry, new, new_scene, fix, short, took = {}, "", scene, "", "", 0.0
+    for attempt in range(2):
+        if attempt and left is not None and left() < max(FIX_CALL_MIN_S, 1.25 * took):
+            short = "there wasn't time left in this change's budget for a second try"
+            log("  improve: no time for a fix call; stopping with what Claude wrote")
+            break
+        log(f"  improve: Claude writes the change (call {attempt + 1})")
+        began = time.monotonic()
+        text = see(_improve_prompt(lab_dir, request, new or code, new_scene, words, fix), images)
+        took = time.monotonic() - began
+        got, got_scene = a2d._blocks(text or "")
+        if not got:
+            fix = "\nYOUR LAST ANSWER HAD NO RENDERER: reply with the two fenced blocks.\n"
+            continue
+        new, new_scene = got, (got_scene or new_scene)
+        entry = _draw(home, style, lab_dir, lab, new, new_scene, out / "preview", PREVIEW_S)
+        if entry.get("ok"):
+            break
+        fix = ("\nYOUR VERSION COULDN'T BE USED YET. Fix these and keep the change:\n- "
+               + "\n- ".join(entry.get("problems") or ["it drew nothing"]) + "\n")
+    result = {"schema": 1, "request": request, "operation_id": operation_id, "at": round(time.time()),
+              "current": {"sha256": record["sha256"], "version": record.get("version"), "stills": stills,
+                          "video": current.get("video"), "overall": record.get("overall"), "bar": record.get("bar")},
+              # background pictures cost about $0.02 each on the creator's Kie account: said before Save when the new
+              # version draws them and the current one doesn't
+              "plates": {"current": a2d.uses_plates(code), "new": bool(new) and a2d.uses_plates(new)}}
+    if new:                                                 # Claude's code is kept, used or not (Style Lab can open it)
+        (out / "renderer.js").write_text(new, encoding="utf-8")
+        _write(out / "scene.json", new_scene)
+    if not new or not entry.get("ok"):
+        result.update(state="failed", problems=((entry.get("problems") or ["Claude wrote no renderer"])[:5]
+                                                + ([short] if short else [])), code_kept=bool(new))
+        _write(out / "candidate.json", result)
+        import cr_style_clone
+        raise cr_style_clone.StudyStopped("Claude's change couldn't be drawn yet ("
+                                          + str(result["problems"][0])[:300] + ")" + (f", and {short}" if short else "")
+                                          + ". Your style is unchanged"
+                                          + ("; Claude's code is kept in Style Lab." if new else "."))
+    _record(lab_dir, lab, entry)                            # Style Lab knows this exact code was previewed
+    verdict = {}
+    try:
+        verdict = _judge_preview(lab_dir, lab, new, entry, judge)
+        _record(lab_dir, lab, verdict)
+    except Exception as error:                              # noqa: BLE001 - the preview still shows
+        log(f"  improve: the likeness check could not run ({str(error)[:120]})")
+    result.update(preview=entry, checked=verdict or None)   # recorded again at Save if lab.json lost them
+    result.update(state="ready", sha256=_sha(new), stills=entry.get("stills") or [], video=entry.get("video"),
+                  smallest_text=entry.get("smallest_text"), own_sounds=entry.get("own_sounds") or [],
+                  warnings=entry.get("warnings") or [],
+                  check={k: verdict.get(k) for k in ("overall", "bar", "passed", "dealbreakers")} if verdict else None)
+    _write(out / "candidate.json", result)
+    return result
+
+
+def keep_candidate(home, style: str, operation_id: str, *, use_new: bool) -> dict:
+    """The creator's choice: save the candidate as the style's next renderer version (Style Lab's save: metadata
+    only) or keep the old one."""
+    out = improvement_folder(home, style, operation_id)
+    cand = _read(out / "candidate.json")
+    if cand.get("state") not in ({"ready", "kept_old"} if use_new else {"ready"}):    # kept the old one: may still save
+        raise LabError("This change has no ready version to keep: " + str(cand.get("state") or "not drawn yet") + ".")
+    if use_new:
+        lab_dir, lab = _lab(home, style)
+        code = (out / "renderer.js").read_text(encoding="utf-8") if (out / "renderer.js").is_file() else ""
+        if _sha(code) != cand.get("sha256"):
+            raise LabError("The new version changed since it was drawn. Nothing was saved.")
+        now = _spec(_style(home, style)).get("renderer") or {}
+        if now.get("sha256") != (cand.get("current") or {}).get("sha256"):
+            # a newer version was saved since this change was made from an older one: saving it would undo that one
+            raise LabError(f"This change was made to version {(cand.get('current') or {}).get('version')}, and the "
+                           f"style has had version {now.get('version')} saved since. Nothing was saved; ask for the "
+                           "change again on the version it has now.")
+        if not _last(lab, "preview", cand["sha256"]).get("ok") and (cand.get("preview") or {}).get("ok"):
+            _record(lab_dir, lab, {**cand["preview"], "at": round(time.time())})     # pushed out of lab.json
+            if cand.get("checked"):
+                _record(lab_dir, lab, {**cand["checked"], "at": round(time.time())})
+        for name in ("renderer.js", "scene.json"):           # Claude Code's own work in the workspace, kept
+            mine = lab_dir / name
+            if mine.is_file() and (out / name).is_file() and mine.read_bytes() != (out / name).read_bytes():
+                shutil.copyfile(mine, lab_dir / f"{mine.stem}.before-{operation_id}{mine.suffix}")
+        mine = lab_dir / "renderer.js"
+        mine.write_text(code, encoding="utf-8")
+        if (out / "scene.json").is_file():
+            shutil.copyfile(out / "scene.json", lab_dir / "scene.json")
+        saved = save(home, style)
+        cand.update(state="saved", version=saved["version"], saved_at=round(time.time()))
+    else:
+        cand.update(state="kept_old", decided_at=round(time.time()))
+    _write(out / "candidate.json", cand)
+    return cand
 
 
 # ── routes (Studio's own, for the studio tools) ─────────────────────────────────────────────────────────────────

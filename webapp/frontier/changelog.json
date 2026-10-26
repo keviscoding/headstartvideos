@@ -1,5 +1,15 @@
 [
   {
+    "build": 108,
+    "date": "2026-10-26",
+    "title": "Improve a style from its page",
+    "items": [
+      "New: improve a cloned style from its page. Say what to change and your Claude Code tries it (one call, a few minutes of your Claude plan); the current and the new version show side by side with their likeness scores, and nothing changes until you press Save the new version.",
+      "Your videos stay as they are. A video already being made keeps the version it started with, a newer version saved meanwhile is never overwritten, and a change Studio was closed in the middle of never blocks the style.",
+      "The page says when a change draws backgrounds for each video (about $0.02 each, up to six) before you save it."
+    ]
+  },
+  {
     "build": 107,
     "date": "2026-10-26",
     "title": "Claude codes your channel's look, plus a queue",
