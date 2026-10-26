@@ -279,7 +279,7 @@ def status(name: str) -> dict:
     """The fix's state for setup's progress line: idle | starting | downloading | checking | installing | done |
     failed, with a plain message."""
     fix = dict(FIXES[name])
-    if fix["state"] == "downloading":
+    if fix.get("state") == "downloading":
         done, total = fix.get("done", 0) >> 20, fix.get("total", 0) >> 20
         fix["message"] = (f"Downloading {fix.get('what') or LABEL[name]}: {done} of {total} MB…" if total else
                           f"Downloading {fix.get('what') or LABEL[name]}…")
@@ -288,10 +288,10 @@ def status(name: str) -> dict:
 
 def _start(name: str, work, *, background: bool = True) -> dict:
     with _locks[name]:
-        if FIXES[name]["state"] in BUSY:
+        if FIXES[name].get("state") in BUSY:
             return status(name)
-        FIXES[name].clear()
-        FIXES[name].update(state="starting", done=0, total=0, message="Starting…", tail="")
+        # one assignment: a status read never sees half a reset
+        FIXES[name] = {"state": "starting", "done": 0, "total": 0, "message": "Starting…", "tail": ""}
 
     def run():
         fix = FIXES[name]
@@ -458,16 +458,31 @@ def _stage(home: Path, name: str) -> Path:
     return stage
 
 
-def _swap(stage: Path, final: Path) -> None:
+def _rename(source: Path, target: Path, *, tries: int = 10, wait: float = 0.5) -> None:
+    """Windows refuses a rename while an antivirus still scans a program just written or run: try again briefly."""
+    for attempt in range(tries):
+        try:
+            source.rename(target)
+            return
+        except OSError:
+            if attempt == tries - 1:
+                raise
+            time.sleep(wait)
+
+
+def _swap(stage: Path, final: Path, *, wait: float = 0.5) -> None:
     """Move the checked install into place; the one before it goes only once the new one is there."""
     old = final.with_name(f".{final.name}-old-{int(time.time())}")
     try:
         if final.exists():
-            final.rename(old)
-        stage.rename(final)
+            _rename(final, old, wait=wait)
+        _rename(stage, final, wait=wait)
     except OSError:
         if old.exists() and not final.exists():
-            old.rename(final)
+            try:
+                _rename(old, final, wait=wait)                # the working install back where it was
+            except OSError:
+                pass
         raise Stop(f"Studio couldn't replace its {final.name} folder: a program is probably still using it (a video "
                    "being made). Try again when nothing is running.") from None
     shutil.rmtree(old, ignore_errors=True)

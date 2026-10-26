@@ -470,3 +470,31 @@ def test_claude_from_the_official_installer_is_found_where_it_puts_it(tmp_path, 
     claude.write_bytes(b"binary")
     claude.chmod(0o755)
     assert Path(cr_claude.find_executable()) == claude.resolve()
+
+
+def test_the_swap_waits_out_a_brief_lock_and_keeps_the_old_install_when_it_cant(tmp_path, monkeypatch):
+    """Windows refuses a rename while an antivirus scans a program just written: the swap tries again."""
+    real = Path.rename
+    locked = {"left": 2}
+
+    def rename(self, target):
+        if self.name == ".ffmpeg-1-2" and locked["left"]:
+            locked["left"] -= 1
+            raise PermissionError(13, "in use")
+        return real(self, target)
+    monkeypatch.setattr(Path, "rename", rename)
+    final = tmp_path / "tools" / "ffmpeg"
+    final.mkdir(parents=True)
+    (final / "ffmpeg").write_bytes(b"old")
+    stage = tmp_path / "tools" / ".ffmpeg-1-2"
+    stage.mkdir()
+    (stage / "ffmpeg").write_bytes(b"new")
+    cr_installs._swap(stage, final, wait=0)
+    assert (final / "ffmpeg").read_bytes() == b"new" and locked["left"] == 0
+    assert sorted(p.name for p in (tmp_path / "tools").iterdir()) == ["ffmpeg"]
+    stage.mkdir()
+    (stage / "ffmpeg").write_bytes(b"newer")
+    locked["left"] = 99
+    with pytest.raises(cr_installs.Stop, match="still using it"):
+        cr_installs._swap(stage, final, wait=0)
+    assert (final / "ffmpeg").read_bytes() == b"new", "the working install stays"
