@@ -54,12 +54,30 @@ def workflow_view(result):
     return viewed
 
 
-def _mcp_tool(name, payload):
+# A running video's workflow calls are recorded by ChannelRecipe under their own ids, so sending one again after a
+# lost answer can never make work twice: a stage is authorized once per stage id (asking again gets that stage's saved
+# state or a refusal, never a second run), and a stage's or a project's result is saved once (the same result again
+# is "reused"). One gateway error page on one of these (Cloudflare's 521, 2026-10-26) stopped a whole FOLIO video at
+# shot 8 of 22: "ChannelRecipe could not authorize this stage". Starting a project (begin) and an approved retry are
+# never resent; page reads (prepare, progress) answer at once as before.
+RETRY_TOOLS = {"local_studio_authorize_stage", "local_studio_finish_stage", "local_studio_finish_project"}
+TOOL_RETRY_DELAYS = (5, 15, 30, 60, 90)          # about 3 minutes: a deploy, a gateway hiccup or a Wi-Fi drop
+
+
+def _mcp_tool(name, payload, *, sleep=None):
     try:
         import cr_mcp
     except ImportError:
         from . import cr_mcp
-    return workflow_view(cr_mcp.call_tool(name, {"payload": payload}, load_settings()))
+    sleep = sleep or time.sleep
+    delays = TOOL_RETRY_DELAYS if name in RETRY_TOOLS else ()
+    for attempt in range(len(delays) + 1):
+        try:
+            return workflow_view(cr_mcp.call_tool(name, {"payload": payload}, load_settings()))
+        except cr_mcp.TransportError:
+            if attempt == len(delays):
+                raise
+            sleep(delays[attempt])
 
 
 def current_project():
