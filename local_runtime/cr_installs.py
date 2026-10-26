@@ -257,6 +257,18 @@ def node_status(*, which=None, run=None) -> dict:
     return {"ready": True, "version": text, "reason": ""}
 
 
+# FFmpeg and Node.js starting their own Fix it while setup is open (the owner's Windows test, 2026-10-26): about 150 MB
+# of programs downloaded without a press, so it stays off until the owner decides; `auto_fix_tools: true` in the
+# settings (or this constant) turns it on.
+AUTO_FIX_TOOLS = False
+
+
+def auto_fix_tools(settings: dict | None = None) -> bool:
+    """Does setup start FFmpeg's and Node.js's Fix it by itself?"""
+    value = (settings or {}).get("auto_fix_tools")
+    return value if isinstance(value, bool) else AUTO_FIX_TOOLS
+
+
 def can_fix(name: str, key: str | None = None) -> bool:
     """Is there a one-click fix for this tool on this computer?"""
     key = platform_key() if key is None else key

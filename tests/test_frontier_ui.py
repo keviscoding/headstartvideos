@@ -753,6 +753,11 @@ def test_setup_fixes_ffmpeg_and_node_and_installs_and_signs_in_to_claude_code(pa
 
     tab.route("**/*", fixture)
     tab.goto("http://setup-ui-fixture.invalid/cr-setup")
+    tab.wait_for_selector("#fix-ffmpeg")
+    tab.wait_for_timeout(1500)
+    assert asked["posts"] == [], "nothing downloads by itself until the owner turns it on (auto_fix_tools)"
+    state["auto_fix_tools"] = True
+    tab.goto("http://setup-ui-fixture.invalid/cr-setup")
     tab.wait_for_selector("#ffmpeg-row")
     # nobody pressed anything: both start by themselves, and the badge says Downloading…, not Needs attention
     tab.wait_for_function("document.querySelector('#ffmpeg-row')?.innerText.includes('30 of 57 MB')", timeout=8000)
