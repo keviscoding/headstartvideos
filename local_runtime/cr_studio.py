@@ -40,6 +40,41 @@ STUDIO_URL = "http://127.0.0.1:7860"
 import collections
 RECENT_OUTPUT = collections.deque(maxlen=400)
 
+# A Studio started from inside a Claude Code chat inherits that chat's variables. CLAUDE_EFFORT=xhigh then makes every
+# `claude -p` step Studio runs think at extra-high effort: a 3D review round went past half an hour and steps overran
+# CC_TIMEOUT, so a 2-minute video took hours. The chat's ids and sockets also point at a session that may be gone.
+# Studio's own Claude steps run on the customer's normal settings, so these are dropped when Studio starts. The login
+# (CLAUDE_CODE_OAUTH_TOKEN) and the customer's own configuration (Bedrock, Vertex, Git Bash path, output limits) stay.
+_CHAT_ONLY = {"CLAUDE_EFFORT", "CLAUDECODE", "CLAUDE_PID", "CLAUDE_PREVIEW_CLASSIFIER_FLOOR",
+              "MCP_CONNECTION_NONBLOCKING", "MCP_SERVER_CONNECTION_BATCH_SIZE"}
+_CHAT_PREFIXES = ("CLAUDE_AGENT_SDK_", "CLAUDE_CODE_SESSION", "CLAUDE_CODE_HOST_", "CLAUDE_CODE_CHILD_",
+                  "CLAUDE_CODE_MESSAGING_", "CLAUDE_CODE_DESKTOP_", "CLAUDE_CODE_SDK_")
+_CHAT_CODE = {"ENTRYPOINT", "SIMPLE", "EXECPATH", "TERMINAL_MCP_TOOLS", "STARTUP_FAILURE_RESULTS", "REPORT_FINDINGS",
+              "EMIT_TOOL_USE_SUMMARIES", "ENABLE_ASK_USER_QUESTION_TOOL", "ENABLE_SDK_FILE_CHECKPOINTING", "EAGER_FLUSH",
+              "DISABLE_CRON", "DISABLE_TERMINAL_TITLE", "OAUTH_SCOPES", "ACCOUNT_UUID", "ORGANIZATION_UUID", "USER_EMAIL"}
+CHAT_SETTINGS_DROPPED = []
+
+
+def chat_line() -> str:
+    """For Copy diagnostics: whether this Studio was started from inside a Claude Code chat."""
+    if not CHAT_SETTINGS_DROPPED:
+        return "no"
+    effort = [x for x in CHAT_SETTINGS_DROPPED if x.startswith("CLAUDE_EFFORT=")]
+    return "yes, its settings were left out" + (" (%s)" % effort[0] if effort else "")
+
+
+def forget_claude_chat(environ=None) -> list:
+    """Drop the variables a Claude Code chat hands its child processes; -> what was dropped (names, plus the effort
+    level the chat asked for, never a value that could be personal)."""
+    environ = os.environ if environ is None else environ
+    gone = []
+    for name in sorted(environ):
+        if (name in _CHAT_ONLY or name.startswith(_CHAT_PREFIXES)
+                or (name.startswith("CLAUDE_CODE_") and name[len("CLAUDE_CODE_"):] in _CHAT_CODE)):
+            gone.append("CLAUDE_EFFORT=%s" % environ[name][:12] if name == "CLAUDE_EFFORT" else name)
+            environ.pop(name, None)
+    return gone
+
 
 class _RecentOutput:
     """Write to the window as usual and remember the last lines."""
@@ -907,6 +942,7 @@ def create_app():
                 tick(cli.get("installed")), (" " + str(cli["version"])) if cli.get("version") else "",
                 tick(cli.get("authenticated")), tick(cli.get("mcp_connected")), tick(cli.get("models_verified"))),
             "Writing route: %s" % checks.get("brain_mode", "unknown"),
+            "Started from a Claude Code chat: %s" % chat_line(),
             "Voice and images: %s%s · narration %s" % (hub.get("provider", "none"),
                 (" (" + ", ".join(hub.get("tasks", [])) + ")") if hub.get("tasks") else "", tick(voice.get("connected"))),
             cr_network.diagnostics_line(checks.get("network") or {}),
@@ -1765,6 +1801,11 @@ def main():
         sys.stdout, sys.stderr = _RecentOutput(sys.stdout), _RecentOutput(sys.stderr)
     # Every page poll printed a line; keep the window for what matters.
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    CHAT_SETTINGS_DROPPED[:] = forget_claude_chat()
+    if CHAT_SETTINGS_DROPPED:
+        effort = next((x.split("=", 1)[1] for x in CHAT_SETTINGS_DROPPED if x.startswith("CLAUDE_EFFORT=")), "")
+        print("Started from inside a Claude Code chat: Studio's own Claude steps use your normal settings"
+              + (" (not the chat's %s effort)" % effort if effort else "") + ".", flush=True)
     import cr_update
     if cr_update.studio_running():
         if already_running():
