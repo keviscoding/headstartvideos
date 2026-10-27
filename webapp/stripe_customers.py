@@ -55,3 +55,10 @@ def customer_for(stripe, user: dict, *, sleep=time.sleep) -> str:
         customer = stripe.Customer.create(email=user["email"])
     db.update_user(int(user["id"]), stripe_customer_id=customer.id)
     return customer.id
+
+
+def no_affiliate_commission() -> dict:
+    """Checkout's payment_intent_data for a one-time payment (a top-up): affiliates earn on subscriptions only (owner,
+    2026-10-27). Rewardful skips a payment whose Charge has metadata rewardful=false, and Stripe copies the PaymentIntent's
+    metadata onto the Charge it creates."""
+    return {"metadata": {"rewardful": "false"}}

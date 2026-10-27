@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 import config  # noqa: E402
 import webapp.server as server  # noqa: E402
+from webapp import cloud_wallet  # noqa: E402
 from tests.test_plans import PRICES, _Req  # noqa: E402
 
 REF = "8f2a1c3e-7b4d-4e9a-9c1f-2d3e4f5a6b7c"
@@ -81,6 +82,21 @@ def test_a_bad_referral_or_a_stripe_hiccup_never_stops_a_checkout(checkout):
     assert session["client_reference_id"] == REF
 
 
+def test_affiliates_earn_on_subscriptions_but_never_on_top_ups(checkout, monkeypatch):
+    session, _ = checkout(REF)
+    assert "payment_intent_data" not in session
+    monkeypatch.setattr(config, "STRIPE_PRICE_TOPUP_5", "price_topup_5")
+    member = {"id": 9, "email": "a@example.com", "plan": "starter", "stripe_customer_id": "cus_x"}
+    monkeypatch.setattr(server, "_current_user", lambda request: member)
+    fake = _Stripe()
+    monkeypatch.setitem(sys.modules, "stripe", fake)
+    server.create_topup(server.TopupRequest(credits=5), _Req())
+    cloud_wallet.checkout_session(member, 5, "https://channelrecipe.com", stripe=fake)
+    # Rewardful skips a payment whose Charge says rewardful=false; Stripe copies it there from the PaymentIntent
+    assert [s["mode"] for s in fake.sessions] == ["payment", "payment"]
+    assert [s["payment_intent_data"] for s in fake.sessions] == [{"metadata": {"rewardful": "false"}}] * 2
+
+
 def test_the_front_end_gets_the_tracker_key_only_once_connected(monkeypatch):
     monkeypatch.setattr(config, "REWARDFUL_PUBLIC_KEY", "")
     assert asyncio.run(server.get_client_config())["affiliate"] is None
@@ -98,7 +114,7 @@ def test_the_affiliate_page_is_live_only_once_set_up(monkeypatch):
     monkeypatch.setattr(config, "AFFILIATE_COMMISSION_PCT", 30)
     monkeypatch.setattr(config, "AFFILIATE_COMMISSION_MONTHS", 12)
     page = asyncio.run(server.affiliates_page()).body.decode()
-    assert 'href="https://channelrecipe.getrewardful.com/signup"' in page and "30% of every payment" in page
+    assert 'href="https://channelrecipe.getrewardful.com/signup"' in page and "30% of every subscription payment" in page
     assert "12 months" in page and "__" not in page
 
 
