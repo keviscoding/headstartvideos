@@ -448,7 +448,8 @@ def _supported_model(provider, model):
 # on Kie's errors. No new API brain key is saved; a key saved before keeps working for the work it started, and Studio
 # moves its owner to Claude Code. Admins can still save one for support.
 API_BRAIN_CLOSED = ("ChannelRecipe now makes every video with Claude Code on your Claude plan, not an API account. "
-                    "In Studio's setup, press Set up Claude for videos (step 2) and finish its steps.")
+                    "In Studio's setup, step 2, press Switch to Claude Code (Set up Claude for videos on Studio 109 "
+                    "and older) and finish its steps.")
 
 
 def save_key(user: dict, req: BrainKey) -> dict:
