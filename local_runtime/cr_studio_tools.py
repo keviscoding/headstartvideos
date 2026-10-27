@@ -1287,10 +1287,11 @@ def look_progress(look_id: str) -> dict:
     return out
 
 
-SHORTS_NOTE = ("These references are Shorts. Written in code (the default answer to 'made'), the style makes vertical "
-               "Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9) "
-               "videos for now: tell the creator before the paid study (their Shorts recipes, similar_styles "
-               "kind='short', make vertical Shorts too).")
+SHORTS_NOTE = ("These references are Shorts. Either way the style makes vertical Shorts: written in code (the default "
+               "answer to 'made') with the channel's own captions; instead of code, with Studio's pictures drawn tall, "
+               "captions above the Shorts buttons, and any graphics made for wide screens (maps, headlines, 3D "
+               "scenes) whole across the middle of the frame: tell the creator before the paid study (their Shorts "
+               "recipes, similar_styles kind='short', make vertical Shorts too).")
 SIMILAR_NEXT = ("similar_styles are the styles they already have that come closest (suggestions only, never a reason not "
                 "to study): before the paid study, mention them in a line each. They can use one now (make_videos with its "
                 "id), try a few seconds of one on their topic first (style_sample: try_first.cost_usd on their own "
@@ -1918,8 +1919,7 @@ TOOLS = {
                     "style_name, an example_title and the creator's answers to the look's questions. accept_medium: "
                     "only after the creator read and accepted the medium_gap this returns (what Studio can't make yet). "
                     "budget_minutes: the Claude study budget (15-30, default 22); raise it only when a study stopped "
-                    "because its time ran out. A style learned from Shorts makes regular 16:9 videos for now, not "
-                    "vertical Shorts.",
+                    "because its time ran out. A style learned from Shorts makes vertical Shorts.",
                     _schema({"look_id": {"type": "string"}, "style_name": {"type": "string"},
                              "example_title": {"type": "string"},
                              "answers": {"type": "object", "additionalProperties": {"type": "string"}},

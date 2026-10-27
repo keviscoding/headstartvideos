@@ -13,8 +13,9 @@ Link: $ARGUMENTS
 
 1. **Check Studio** with `setup_check` (see the make-videos skill for what to say when it isn't running or ready).
 2. **The link.** Use the link above or ask for a YouTube channel (@name) or one video. To **combine** two or three
-   channels into one new style (cross-niche arbitrage), take all their links. A channel of Shorts works too, but
-   for now the style it saves makes regular landscape (16:9) videos, not vertical Shorts: tell them first.
+   channels into one new style (cross-niche arbitrage), take all their links. A channel of Shorts works too, and its
+   style makes vertical Shorts either way (written in code, or with Studio's pictures drawn tall: then graphics made
+   for wide screens, such as maps or 3D scenes, sit whole across the middle of the frame).
 3. **Look first (free).** Call `clone_style_look(youtube_url)`, or `clone_style_look(youtube_urls=[…])` to combine.
    Studio lists the videos and looks at three of the most viewed, taking them in turn from each channel. No Claude
    is used and nothing is charged. Tell them which videos it is studying; if they prefer others, call it again

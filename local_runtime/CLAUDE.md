@@ -237,9 +237,11 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Before the paid study, the finished look's `similar_styles` are the styles they already have that come closest. Mention
   them in a line each, as suggestions only, never as a reason not to study: they can use one now, or try a few seconds
   of one on their topic first with `style_sample` (about $0.05 on their own accounts: say so and ask first). A channel
-  that posts only Shorts is read from its Shorts tab and studied like any other. Written in code, its videos are
-  vertical Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9)
-  videos for now, so say so before the study.
+  that posts only Shorts is read from its Shorts tab and studied like any other, and its videos are vertical Shorts
+  either way: written in code, with the channel's own captions; instead of code, with Studio's pictures drawn tall
+  and captions above the Shorts buttons. Graphics Studio draws for wide screens (maps, headlines, 3D scenes) then sit
+  whole across the middle of the frame, and its name labels, lifted subjects and punch cards are left out: say so
+  before the study.
 - A learned style can be changed after it is saved, without studying again: `edit_style` shows or changes its name,
   description, creative direction (script_notes, director_notes), character and the options Create starts from. On the
   Studio page it is Style library → Edit or study again. To study it again with other videos, run the clone again

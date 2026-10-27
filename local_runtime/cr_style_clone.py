@@ -1844,8 +1844,6 @@ def _apply_learned(folder, spec, style, log):
         planned = (mapping["overrides"].get("features") or {})
         learned["features"] = {**(learned.get("features") or {}),
                                **{k: list(planned[k]) for k in ("offered", "on", "channel_on") if k in planned}}
-        if mapping["overrides"]["look"].get("aspect"):
-            look["aspect"] = mapping["overrides"]["look"]["aspect"]
         import cr_animated2d
         carried = _read(folder / "renderer-carried.json")
         if spec.get("renderer") and carried.get("schema") == 1:
@@ -1854,6 +1852,10 @@ def _apply_learned(folder, spec, style, log):
         elif spec.get("renderer"):
             cr_animated2d.attach(learned, folder, home)
         learned["cost"] = cr_animated2d.cost_note(learned)
+    if ((mapping["overrides"].get("look") or {}).get("aspect")):
+        # a Shorts channel's videos are vertical however they're made (the code routes draw them tall; Studio's own
+        # engine through cr_vertical), whatever the art director's words say
+        learned.setdefault("look", {})["aspect"] = mapping["overrides"]["look"]["aspect"]
     learned.setdefault("cr_style_clone", {}).update(
         learned_v2={"look_id": spec["look_id"], "base": mapping["base"], "base_why": mapping["base_why"],
                     "route": mapping.get("route") or {},

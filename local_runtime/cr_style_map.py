@@ -20,7 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 104         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: every clone is written in code unless the creator chooses Studio's ready-made pictures); older saved plans are made again
+ROUTER = 110         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: every clone is written in code unless the creator chooses Studio's ready-made pictures; 110: a Shorts channel is vertical however it's made); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
@@ -878,7 +878,7 @@ def made_question(profile, other: dict) -> dict:
             "channel's own animation during the study, and Studio draws every frame of every video on this computer."
             + (" Real footage isn't part of a style written in code: it draws every scene." if footage else "")
             + f" Or, instead of code: {instead}. That's ready at once, but the videos won't look or move exactly like "
-            "the channel's.",
+            "the channel's." + (" Either way they're vertical Shorts, like the channel's." if vertical(profile) else ""),
             "options": list(MADES), "labels": [MADE_LABELS[m] for m in MADES]}
 
 
@@ -1061,6 +1061,16 @@ def _animated3d(plan: Plan, original: dict):
     plan.set("pacing.clips_per_min", 0.0, area="Motion", label="Moving pictures",
              why="every scene is rendered in 3D; no AI video is paid for", source="", show="off (rendered in 3D)")
     plan.needs = [n for n in plan.needs if n not in ("style_image", "character_image")]
+
+
+def _vertical(plan: Plan):
+    """A Shorts channel made with Studio's own engine instead of code (its pictures, footage or 3D engine): vertical
+    too. The pictures that fill the frame are drawn tall, and what the engine draws only for wide frames is fitted
+    whole across the middle or left out (cr_vertical). Before Studio 110 these clones made regular 16:9 videos."""
+    plan.set("look.aspect", "9:16", area="Look", label="Format",
+             why="the references are vertical Shorts (measured from their frames)", source="measured",
+             show="vertical 1080x1920: pictures drawn tall, captions above the Shorts buttons, graphics made for wide "
+                  "screens across the middle")
 
 
 def _designed_cast(plan: Plan, profile: dict, base: str, original: dict):
@@ -1379,6 +1389,8 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     _voice(plan, profile)
     _presenter(plan, profile, chosen, base_style)
     _cta(plan, profile, chosen)
+    if vertical(original) and not plan.animated2d:
+        _vertical(plan)
     coded_way = way.get("engine") in ("animated2d", "animated3d")
     base_for = BASES.get(chosen, "")
     if coded_way:
