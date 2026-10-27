@@ -143,10 +143,10 @@ def test_provider_failure_is_recorded_and_cannot_silently_retry_on_cr_key(env, m
 
 
 def test_a_server_error_with_no_answer_is_sent_again_never_kept_as_a_stopped_step(env, monkeypatch):
-    """A customer's 3D video stopped twice (2026-10-27): Kie's Claude route answered HTTP 500 to five planning calls in
-    30 s, each was kept as a stopped step ("This request stopped or is still running"), and Studio could never send it
-    again. A 500/502/504 with no answer generated nothing: it's released like a busy answer and the same request goes
-    through when sent again, counted once."""
+    """A customer's 3D video stopped (2026-10-27): Kie's Claude route answered HTTP 500 to five planning calls in about a
+    second each, each was kept as a stopped step ("This request stopped or is still running"), and Studio could never
+    send it again. A fast 500/502 on a streamed request generated nothing: it's released like a busy answer and the same
+    request goes through when sent again, counted once."""
     env.connect(env.owner)
     p = studio.create_project(env.owner, studio.ProjectRequest(title="Example"))
     answers = [SimpleNamespace(status_code=500, headers={}, close=lambda: None), reply()]
@@ -621,3 +621,33 @@ def test_a_customer_can_no_longer_save_an_api_brain_and_is_sent_to_claude_code(e
                                                   model="claude-opus-5-5"))
     assert closed.value.status_code == 409 and "Claude Code" in closed.value.detail
     assert "Set up Claude for videos" in closed.value.detail
+
+
+def test_the_same_fast_server_error_again_and_again_stops_as_before(env, monkeypatch):
+    """Coordinator review (2026-10-27): Studio resends a busy answer for up to 15 minutes, so a 500 that always repeats
+    is resent only FAST_5XX_LIMIT - 1 times, then recorded as a stop, as every 500 was before."""
+    env.connect(env.owner)
+    p = studio.create_project(env.owner, studio.ProjectRequest(title="Example"))
+    calls = []
+    monkeypatch.setattr(studio.requests, "post",
+                        lambda *a, **kw: calls.append(kw) or SimpleNamespace(status_code=500, headers={}, close=lambda: None))
+    req = request_for(p["id"]).model_copy(update={"request_id": "request_repeating500"})
+    codes = []
+    for _ in range(studio.FAST_5XX_LIMIT):
+        with pytest.raises(HTTPException) as error:
+            studio.generate(env.owner, req)
+        codes.append(error.value.status_code)
+    assert codes == [429] * (studio.FAST_5XX_LIMIT - 1) + [502]
+    with studio.db._conn() as conn:
+        row = conn.execute("SELECT status, error_json FROM frontier_requests WHERE id='request_repeating500'").fetchone()
+    assert row["status"] == "needs_review" and '"upstream_http": 500' in row["error_json"]
+    with pytest.raises(HTTPException) as stopped:
+        studio.generate(env.owner, req)
+    assert stopped.value.status_code == 409 and len(calls) == studio.FAST_5XX_LIMIT, "nothing more is sent"
+
+
+def test_a_customer_without_an_api_brain_is_pointed_to_claude_code(env):
+    customer = {"id": 8, "email": "customer2@example.com", "plan": "studio_pro"}
+    with pytest.raises(HTTPException) as error:
+        studio.create_project(customer, studio.ProjectRequest(title="Example"))
+    assert error.value.status_code == 409 and "Claude Code" in error.value.detail

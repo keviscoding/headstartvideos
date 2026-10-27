@@ -34,7 +34,7 @@ class ProviderBusy(ProviderFailure):
 
 BUSY_STATUSES = (429, 503, 529)
 FAST_ERROR_STATUSES = (500, 502)
-FAST_ERROR_S = 20
+FAST_ERROR_S = 10                                 # Kie's 500s came back in 0.6-1.1 s (2026-10-27)
 
 
 def _retry_after(res, default=20):
@@ -364,12 +364,15 @@ def generate(provider, key, model, parts, kind, max_tokens):
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=(15, READ_TIMEOUT),
                             allow_redirects=False, stream=claude or provider != "kie")
-        # Turned away before any answer: busy (429) or overloaded (503, 529); and a server error (500, 502) that came
-        # back within FAST_ERROR_S, before any stream, when the model can't have run. Kie's Claude route answered HTTP
-        # 500 to five planning calls in 30 s (2026-10-27) and each was kept as a stopped step Studio could never send
-        # again, so the customer's 3D video stopped. A 504, or a 500/502 after a long wait, may mean the model ran and
-        # was billed: those stay recorded stops (never rerun uncertain paid work).
-        if res.status_code in BUSY_STATUSES or (res.status_code in FAST_ERROR_STATUSES
+        # Turned away before any answer: busy (429) or overloaded (503, 529); and a server error (500, 502) on a
+        # streamed request that came back within FAST_ERROR_S, before its stream began, when the model can't have run.
+        # Kie's Claude route answered HTTP 500 to five planning calls in about a second each (2026-10-27) and each was
+        # kept as a stopped step Studio could never send again, so the customer's 3D video stopped. A 504, a 500/502
+        # after a long wait, or one from Kie's Gemini route (it answers only once the whole reply is written, so its
+        # error can follow a billed answer) may mean the model ran: those stay recorded stops (never rerun uncertain
+        # paid work). The relay resends one request at most FAST_5XX_LIMIT times for this (frontier_studio).
+        streamed = claude or provider != "kie"
+        if res.status_code in BUSY_STATUSES or (streamed and res.status_code in FAST_ERROR_STATUSES
                                                 and time.monotonic() - started < FAST_ERROR_S):
             raise ProviderBusy(label, res.status_code, _retry_after(res))
         if res.status_code != 200:

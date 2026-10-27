@@ -322,3 +322,11 @@ def test_a_server_error_after_a_long_wait_stays_a_recorded_stop(monkeypatch):
     with pytest.raises(providers.ProviderFailure) as error:
         send(monkeypatch, Response(status=500))
     assert error.value.diagnostics["code"] == "upstream_http" and not isinstance(error.value, providers.ProviderBusy)
+
+
+def test_kies_gemini_route_answers_only_when_done_so_its_500_stays_a_stop(monkeypatch):
+    """Coordinator review (2026-10-27): Kie's Gemini route doesn't stream; its status comes after the whole answer, so a
+    500 there can follow a billed answer and is never resent."""
+    with pytest.raises(providers.ProviderFailure) as error:
+        send(monkeypatch, Response(status=500), provider="kie", model="gemini-3-flash")
+    assert error.value.diagnostics["code"] == "upstream_http" and not isinstance(error.value, providers.ProviderBusy)
