@@ -43,6 +43,10 @@ from webapp.frontier_studio import is_admin
 PROMPT_VERSION = 4
 MAX_WINDOW_S = 200
 BUSY_WAITS_S = (15, 45, 90)                     # retries when Gemini is busy (the job has time; Studio is polling)
+# what the creator reads when Gemini's answer can't be read twice over (never the parser's own words: a customer saw
+# "Expecting ',' delimiter: line 6 column 27 (char 523)", 2026-10-27)
+UNREADABLE = "Gemini's notes on this part of the video came back unreadable, even when asked a second time"
+UNANSWERED = "Gemini gave no notes on this part of the video"
 STALE_S = 900
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1beta/files"
@@ -220,17 +224,21 @@ def public(row: dict, admin: bool = False) -> dict:
 
 
 def _parse(text: str) -> dict:
+    """Gemini's JSON answer as a dict, mended for free where it can be (line breaks inside its strings, a comma before a
+    closing bracket). Raises ValueError for anything else: the caller asks Gemini once more."""
     text = (text or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text)
-    try:
-        value = json.loads(text)
-    except ValueError:
-        a, b = text.find("{"), text.rfind("}")
-        value = json.loads(text[a:b + 1]) if 0 <= a < b else None
-    if not isinstance(value, dict):
-        raise ValueError("Gemini's answer was not a JSON object")
-    return value
+    a, b = text.find("{"), text.rfind("}")
+    tries = [text] + ([text[a:b + 1]] if 0 <= a < b else [])
+    for attempt in tries + [re.sub(r",\s*([}\]])", r"\1", t) for t in tries]:
+        try:
+            value = json.loads(attempt, strict=False)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return value
+    raise ValueError("Gemini's answer was not a JSON object")
 
 
 class WatchFailed(ValueError):
@@ -313,9 +321,15 @@ def watch_once(video_id: str, start: int, end: int, *, post=None, file_uri: str 
                                    "fps": fps or (4 if question else 2)}},
                 {"text": question or prompt(start, end)}]}],
             "generationConfig": config}
-    for wait in BUSY_WAITS_S + (None,):
+    return _answer(post, body, BUSY_WAITS_S, (15, 600))
+
+
+def _generate(post, body: dict, waits: tuple, timeout: tuple) -> tuple:
+    """One Gemini answer, asked again while Google says it is busy: (text, input tokens, output tokens). A refusal
+    raises RuntimeError with Google's reason."""
+    for wait in waits + (None,):
         res = post(f"{GEMINI_BASE}/models/{model()}:generateContent", headers={"x-goog-api-key": _key()},
-                   json=body, timeout=(15, 600))
+                   json=body, timeout=timeout)
         # Google's "high demand" answers are brief; nothing was generated or billed, so wait and ask again
         if res.status_code not in (429, 500, 503) or wait is None:
             break
@@ -333,10 +347,31 @@ def watch_once(video_id: str, start: int, end: int, *, post=None, file_uri: str 
     text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
     tokens_in = int(usage.get("promptTokenCount") or 0)
     tokens_out = int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0)
-    try:
-        return _parse(text), tokens_in, tokens_out
-    except ValueError as exc:                   # billed already (a blocked, cut-off or non-object answer)
-        raise WatchFailed(str(exc), tokens_in, tokens_out) from None
+    return text, tokens_in, tokens_out
+
+
+def _answer(post, body: dict, waits: tuple, timeout: tuple, again_within_s: float | None = None) -> tuple:
+    """Gemini's answer as a dict: (answer, input tokens, output tokens), every attempt's tokens counted. An answer that
+    can't be read (a missing comma, cut off) is asked for once more, unless the first took longer than again_within_s;
+    still unreadable, or blocked (no answer at all), WatchFailed says so plainly and carries what Google billed."""
+    spent_in = spent_out = 0
+    started = time.monotonic()
+    for attempt in range(2):
+        try:
+            text, tokens_in, tokens_out = _generate(post, body, waits, timeout)
+        except RuntimeError:
+            if not attempt:
+                raise
+            break                                   # the second ask was refused: the first answer was billed all the same
+        spent_in, spent_out = spent_in + tokens_in, spent_out + tokens_out
+        if not text.strip():                        # blocked: asked again it says the same, and is billed again
+            raise WatchFailed(UNANSWERED, spent_in, spent_out)
+        try:
+            return _parse(text), spent_in, spent_out
+        except ValueError:
+            if again_within_s is not None and time.monotonic() - started > again_within_s:
+                break
+    raise WatchFailed(UNREADABLE, spent_in, spent_out)
 
 
 _QUESTIONS: dict[str, str] = {}
@@ -347,6 +382,7 @@ COMPARE_VERSION = 2
 MAX_COMPARE_IMAGES = 7                           # reference frames, and candidates (a hidden control among them)
 MAX_COMPARE_BYTES = 1_500_000                    # one 960 px JPEG
 COMPARE_WAITS_S = (5, 20)                        # the call is synchronous: Studio waits on it, the gateway cuts at ~100 s
+COMPARE_AGAIN_S = 40                             # an unreadable answer is asked again only if it took less
 COMPARE_PROMPT = """You judge whether NEW pictures match a YouTube channel's visual style. The REFERENCE images are real
 frames from the channel. The CANDIDATE images were made by a studio to look like that channel: they show NEW scenes
 and subjects on purpose, so a different subject, setting or story is never a fault. Judge only the STYLE.
@@ -392,24 +428,8 @@ def compare_once(references: list, candidates: list, context: str = "", *, post=
     parts.append({"text": COMPARE_PROMPT.replace("[CONTEXT]", (context or "").strip()[:600])})
     body = {"contents": [{"parts": parts}],
             "generationConfig": {"responseMimeType": "application/json", "thinkingConfig": {"thinkingLevel": "low"}}}
-    for wait in COMPARE_WAITS_S + (None,):
-        res = post(f"{GEMINI_BASE}/models/{model()}:generateContent", headers={"x-goog-api-key": _key()},
-                   json=body, timeout=(15, 90))
-        if res.status_code not in (429, 500, 503) or wait is None:
-            break
-        _sleep(wait)
-    if res.status_code != 200:
-        raise RuntimeError(f"Gemini HTTP {res.status_code}")
-    data = res.json()
-    usage = data.get("usageMetadata") or {}
-    parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
-    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
-    tokens_in = int(usage.get("promptTokenCount") or 0)
-    tokens_out = int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0)
-    try:
-        return _parse(text), tokens_in, tokens_out
-    except ValueError as exc:                                 # billed all the same: the spend ledger records it
-        raise WatchFailed(str(exc), tokens_in, tokens_out) from None
+    # asked again only when the first answer came quickly: Studio waits on this call and the gateway cuts at ~100 s
+    return _answer(post, body, COMPARE_WAITS_S, (15, 90), again_within_s=COMPARE_AGAIN_S)
 
 
 def _score(value) -> float:
@@ -493,7 +513,8 @@ def _run(job_id: str, data: bytes = b"", mime: str = "video/mp4"):
         values = ("done", json.dumps(log), "", tin, tout, cost(tin, tout))
     except Exception as exc:                                    # noqa: BLE001 - recorded on the job
         print(f"[style-watch] {row['video_id']} {row['start_s']}-{row['end_s']}: {exc}", flush=True)
-        values = ("failed", "", str(exc)[:300], 0, 0, 0.0)
+        tin, tout = getattr(exc, "tokens_in", 0), getattr(exc, "tokens_out", 0)    # an unreadable answer was billed
+        values = ("failed", "", str(exc)[:300], tin, tout, cost(tin, tout))
     with db._conn() as conn:
         conn.execute(db._q("""UPDATE style_watch_jobs SET status=?, result_json=?, error=?, tokens_in=?,
             tokens_out=?, cost_usd=?, updated_at=? WHERE id=?"""), (*values, time.time(), job_id))
