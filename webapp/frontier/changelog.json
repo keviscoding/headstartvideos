@@ -1,5 +1,15 @@
 [
   {
+    "build": 110,
+    "date": "2026-10-27",
+    "title": "Videos are made with Claude Code, and the full course is in Studio",
+    "items": [
+      "Studio makes every video with Claude Code on your Claude plan, and the API account option is gone from setup. Still on the old route? Setup and Create show one button, Switch to Claude Code (recommended): it connects Claude Code, picks the models and checks them. Without Claude Code installed and signed in, it says that step first, and your videos keep working until you switch. Your saved key stays where it is.",
+      "Verify my Claude models is one press, and a check that stopped never blocks you again: press it and Studio runs a new one. Studio never reruns a stopped check by itself. The reason a check failed stays on screen, and an older Claude Code is told to update instead of being asked to sign in again.",
+      "New: the full course in Studio. Setup's Watch button plays the 11-minute course, a new account to a finished video, with chapters. The 3-minute setup video is one click away, and the sidebar links channelrecipe.com/course."
+    ]
+  },
+  {
     "build": 109,
     "date": "2026-10-26",
     "title": "Coded channels look right, and Windows setup is smoother",
