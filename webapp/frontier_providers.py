@@ -32,7 +32,9 @@ class ProviderBusy(ProviderFailure):
         self.retry_after = retry_after
 
 
-BUSY_STATUSES = (429, 500, 502, 503, 504, 529)
+BUSY_STATUSES = (429, 503, 529)
+FAST_ERROR_STATUSES = (500, 502)
+FAST_ERROR_S = 20
 
 
 def _retry_after(res, default=20):
@@ -362,11 +364,13 @@ def generate(provider, key, model, parts, kind, max_tokens):
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=(15, READ_TIMEOUT),
                             allow_redirects=False, stream=claude or provider != "kie")
-        # Turned away before any answer: busy (429), overloaded (503, 529) or a server error with no answer at all (500,
-        # 502, 504). Kie's Claude route answered HTTP 500 to five planning calls in 30 s (2026-10-27) and each was kept
-        # as a stopped step that Studio could never send again, so the customer's 3D video stopped twice; their next one,
-        # an hour later, went through. Nothing was generated, so it is sent again like any busy answer.
-        if res.status_code in BUSY_STATUSES:
+        # Turned away before any answer: busy (429) or overloaded (503, 529); and a server error (500, 502) that came
+        # back within FAST_ERROR_S, before any stream, when the model can't have run. Kie's Claude route answered HTTP
+        # 500 to five planning calls in 30 s (2026-10-27) and each was kept as a stopped step Studio could never send
+        # again, so the customer's 3D video stopped. A 504, or a 500/502 after a long wait, may mean the model ran and
+        # was billed: those stay recorded stops (never rerun uncertain paid work).
+        if res.status_code in BUSY_STATUSES or (res.status_code in FAST_ERROR_STATUSES
+                                                and time.monotonic() - started < FAST_ERROR_S):
             raise ProviderBusy(label, res.status_code, _retry_after(res))
         if res.status_code != 200:
             raise ProviderFailure(f"{label} could not complete this request (HTTP {res.status_code}). No other account was used.",

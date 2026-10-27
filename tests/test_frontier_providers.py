@@ -135,7 +135,8 @@ def test_unreadable_stream_and_upstream_http_close_connection(monkeypatch):
                            # answered 500 to five calls in 30 s on 2026-10-27 and stopped a customer's video twice).
                            (Response(status=503), "upstream_busy"), (Response(status=429), "upstream_busy"),
                            (Response(status=500), "upstream_busy"), (Response(status=502), "upstream_busy"),
-                           (Response(status=504), "upstream_busy")]:
+                           # a gateway timeout may mean the model ran and billed: a recorded stop, never resent
+                           (Response(status=504), "upstream_http")]:
         with pytest.raises(providers.ProviderFailure) as error:
             send(monkeypatch, response)
         assert response.closed and error.value.diagnostics["code"] == code
@@ -311,3 +312,13 @@ def test_claude_key_check_rejects_unavailable_model_without_using_a_different_on
     with pytest.raises(providers.HTTPException) as error:
         providers.check_key("kie", "private-owner-key", "claude-opus-5-5")
     assert error.value.status_code == 400 and "not available" in error.value.detail
+
+
+def test_a_server_error_after_a_long_wait_stays_a_recorded_stop(monkeypatch):
+    """Coordinator review (2026-10-27): only a 500/502 that comes back fast (before the model could run) is resent;
+    after FAST_ERROR_S it may have been billed, so it's a recorded stop, like a timeout."""
+    clock = iter([100.0, 100.0 + providers.FAST_ERROR_S + 1])
+    monkeypatch.setattr(providers.time, "monotonic", lambda: next(clock, 200.0))
+    with pytest.raises(providers.ProviderFailure) as error:
+        send(monkeypatch, Response(status=500))
+    assert error.value.diagnostics["code"] == "upstream_http" and not isinstance(error.value, providers.ProviderBusy)
