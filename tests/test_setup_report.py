@@ -110,7 +110,7 @@ def test_a_studio_reports_its_setup_over_its_own_route(fresh_db, monkeypatch):
 def test_the_privacy_page_says_what_a_setup_report_holds():
     page = (Path(__file__).parents[1] / "webapp" / "static" / "privacy.html").read_text(encoding="utf-8")
     said = page.split("Studio setup reports")[1].split("</p>")[0]
-    assert "which setup checks" in said and "never" in said
+    assert "which setup checks" in said and "never" in said and "short code for why" in said
 
 
 def test_a_failed_send_waits_instead_of_trying_on_every_status_check(monkeypatch):
@@ -151,3 +151,46 @@ def test_reports_older_than_ninety_days_are_dropped(fresh_db, monkeypatch):
     monkeypatch.setattr(studio_setup, "_ready", set())
     studio_setup.initialize()
     assert studio_setup.stuck([5, 6])["by_check"] == {"claude": 1}
+
+
+def test_a_failing_checks_reason_code_is_reported_never_its_message(monkeypatch):
+    """2026-10-27: the only stuck Studio failed the graphics browser check and the server couldn't see why. A failing
+    check's short code (cr_readiness row "code") goes with the report; its message never does."""
+    monkeypatch.setattr(cr_setup_report, "_last", {"sent": None, "at": 0.0, "wait_until": 0.0})
+    sent = []
+    readiness = {"ready": False, "checks": [
+        {"key": "browser", "ready": False, "message": "This computer's disk is full ... /Users/jane", "code": "disk_full"},
+        {"key": "ffmpeg", "ready": False, "message": "Install FFmpeg", "code": "Not A Code /x"},
+        {"key": "python", "ready": True, "code": "ignored"}]}
+    assert cr_setup_report.maybe_send(readiness, "5.3-admin.111", connected=True, send=sent.append, now=1,
+                                      background=False)
+    assert sent[0]["failing"] == ["browser", "ffmpeg"] and sent[0]["why"] == {"browser": "disk_full"}
+    assert "jane" not in json.dumps(sent[0]) and "message" not in json.dumps(sent[0])
+
+
+def test_the_server_keeps_reason_codes_only_for_failing_checks_and_counts_them(fresh_db):
+    got = report(ready=False, failing=["browser", "node"], os="mac", version="5.3-admin.111",
+                 why={"browser": "disk_full", "node": "C:\\Users\\jane", "claude": "missing", "ffmpeg": 3})
+    assert got.why == {"browser": "disk_full"}
+    studio_setup.record(1, got)
+    studio_setup.record(2, report(ready=False, failing=["browser"], os="windows", why={"browser": "disk_full"}))
+    studio_setup.record(3, report(ready=False, failing=["browser"], os="mac"))
+    studio_setup.record(4, report(ready=True, os="mac", why={"browser": "timeout"}))
+    stuck = studio_setup.stuck([1, 2, 3, 4])
+    assert stuck["by_check"] == {"browser": 3, "node": 1} and stuck["by_reason"] == {"browser:disk_full": 2}
+
+
+def test_reports_saved_before_reason_codes_still_count(fresh_db):
+    """A server that saved reports before the codes (no why_json column) gains the column at its next start."""
+    with db._conn() as conn:
+        conn.execute("""CREATE TABLE studio_setup_reports (
+            user_id INTEGER PRIMARY KEY, ready INTEGER NOT NULL DEFAULT 0, failing_json TEXT NOT NULL DEFAULT '[]',
+            os TEXT NOT NULL DEFAULT 'other', version TEXT NOT NULL DEFAULT '',
+            first_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL,
+            first_ready_at DOUBLE PRECISION)""")
+        conn.execute("INSERT INTO studio_setup_reports (user_id, ready, failing_json, os, version, first_at, updated_at)"
+                     " VALUES (9, 0, '[\"browser\"]', 'mac', '5.3-admin.109', ?, ?)", (__import__("time").time(),) * 2)
+    stuck = studio_setup.stuck([9])
+    assert stuck["by_check"] == {"browser": 1} and stuck["by_reason"] == {}
+    studio_setup.record(9, report(ready=False, failing=["browser"], why={"browser": "timeout"}))
+    assert studio_setup.stuck([9])["by_reason"] == {"browser:timeout": 1}

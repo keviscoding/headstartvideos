@@ -812,6 +812,20 @@ def test_setup_check_says_why_the_graphics_browser_isnt_ready_and_the_fix_runs_i
     assert "fix_graphics_browser" in ccc.FREE_TOOLS, "free and pre-approved: it only installs Studio's own browser"
 
 
+def test_setup_check_never_asks_for_a_reinstall_that_cant_help(studio, monkeypatch):
+    real_call = tools.call
+    status = {"local_version": "5.3-admin.111", "readiness": {"ready": False, "blockers": ["disk"]},
+              "browser": False, "browser_why": "disk_full", "can_fix": {"browser": False},
+              "browser_reason": "This computer's disk is full, so the graphics browser can't start."}
+    monkeypatch.setattr(tools, "call", lambda method, path, body=None, **kw: dict(status)
+                        if path == "/cr-status" else real_call(method, path, body, **kw))
+    browser = ok("setup_check", {})["graphics_browser"]
+    assert browser["ready"] is False and "disk is full" in browser["why"]
+    assert browser["fix"].startswith("Don't call fix_graphics_browser")
+    status.update(browser_why="missing", can_fix={"browser": True}, browser_reason="isn't installed yet")
+    assert ok("setup_check", {})["graphics_browser"]["fix"].startswith("Call fix_graphics_browser")
+
+
 def test_setup_check_names_blocked_services_and_the_speech_model_and_the_fix_runs_in_studio(studio, monkeypatch):
     sys.path.insert(0, str(ROOT / "local_runtime"))
     import cr_network
