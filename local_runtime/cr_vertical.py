@@ -59,7 +59,8 @@ def phone_captions(cap: dict, width: int, height: int, size: int, line_chars: in
 
 def _size(src: Path) -> tuple:
     probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
-                            "-of", "csv=p=0", str(src)], capture_output=True, text=True, timeout=60)
+                            "-of", "csv=p=0", str(src)], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60)
     w, h = (int(x) for x in probe.stdout.strip().split(",")[:2])
     return w, h
 
