@@ -246,7 +246,7 @@ class _StudioMarkup(HTMLParser):
 _FOOTER = """<footer class="cr-studio-footer">
   <div class="updates"><span class="txt"><b>ChannelRecipe studio</b>
     Get the current studio and workflow from your ChannelRecipe account.
-    Planning uses your selected brain account and its limits. Generated media uses your
+    Planning uses your Claude plan through Claude Code and its limits. Generated media uses your
     provider balances; actual charges are shown in those accounts.</span>
     <a href="https://channelrecipe.com/app#local-studio" target="_blank" rel="noopener">Studio &amp; updates &rarr;</a>
   </div>

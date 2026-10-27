@@ -20,6 +20,11 @@ _accounts = {}
 
 
 YOUTUBE_NODE = "This video downloads from YouTube, which needs Node.js 22 or newer: press Fix it in Setup."
+# Create and setup offer this check as one button; Claude Code's make_videos runs it itself (cr_studio_tools)
+MODELS_UNVERIFIED = ("Your Claude models need their quick check: press Verify my Claude models (one tiny request to "
+                     "each model on your Claude plan).")
+SWITCH_TO_CLAUDE_CODE = ("Studio now makes every video with Claude Code on your Claude plan: press Switch to Claude "
+                         "Code (recommended) in Setup, step 2.")
 
 
 def item(key, label, ready, why=""):
@@ -64,9 +69,12 @@ def basic(checks, *, verify_mcp=True):
     if mode == "claudecode":
         results += [item("claude", "Claude Code installed and signed in", cli["ready"], cli.get("message", "Sign in to Claude Code.")),
             item("mcp", "CR production tools connected", cli["mcp_connected"], mcp.get("why") or "Connect CR tools in step 3."),
-            item("models", "Both Claude models verified", cli["models_verified"], "Save your model choices, then press Verify both Claude models.")]
+            item("models", "Both Claude models verified", cli["models_verified"], MODELS_UNVERIFIED)]
     else:
-        results.append(item("brain", "Selected API brain connected", account.get("brain", {}).get("connected"), "Choose your Claude Code route or connect an API brain in step 3."))
+        # the old API route (an API brain account): its videos keep working until the customer switches; no new
+        # setup lands here (setup offers Claude Code only)
+        results.append(item("brain", "Old API route connected", account.get("brain", {}).get("connected"),
+                            SWITCH_TO_CLAUDE_CODE))
     return {"ready": all(row["ready"] for row in results), "checks":results,
             "blockers":[r["message"] for r in results if not r["ready"]], "claude_code":cli, "brain_mode":mode}
 
