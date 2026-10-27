@@ -202,7 +202,7 @@ window.CRLocalStudio = (() => {
             (done===steps.length?'You’re all set':'Your first video in 3 steps')+'</strong><span>'+done+' of '+steps.length+'</span></div>'+
             '<div class="ls-meter-bar"><span style="width:'+Math.round(done/steps.length*100)+'%"></span></div><ol>'+
             steps.map(([title,ok,note])=>'<li class="'+(ok?'done':'')+'"><span class="ls-check">'+(ok?icon('check'):'')+'</span><div><b>'+title+'</b><small>'+esc(note)+'</small></div></li>').join('')+
-            '</ol>'+(view==='member'?'<a class="ls-walk-link" href="#ls-setup-video">'+icon('play')+'Stuck? Watch the 3-minute setup</a>':'')+'</aside>';
+            '</ol>'+(view==='member'?'<a class="ls-walk-link" href="#ls-setup-video">'+icon('play')+'Stuck? Watch the full course</a>':'')+'</aside>';
     }
     const READY = [
         ['stick-stories','Stick Figure Stories','Funny stick-figure stories on painted backgrounds, with a recurring mascot.'],
@@ -279,22 +279,40 @@ window.CRLocalStudio = (() => {
             (older.length?'<details class="ls-mini"><summary>Earlier updates</summary><ul class="ls-older">'+older.slice(0,8).map(r=>'<li><b>Studio '+esc(r.build)+'</b> · '+esc(r.title||'')+'</li>').join('')+'</ul></details>':'')+
             '</div></section>';
     }
-    // The owner's own three-minute walkthrough of the whole setup, with chapters, so anyone stuck on one step can jump
-    // straight to it. It plays from the media CDN, only when asked.
-    const WALKTHROUGH = 'https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/onboarding/studio-setup-walkthrough-v1';
-    const CHAPTERS = [[0,'What you need'],[26,'Download Studio'],[31,'Open it in Claude Code'],[51,'Paste the install prompt'],
-        [62,'The Mac security warning'],[81,'Connect your account'],[90,'Set up Claude'],[100,'Your Kie.ai key'],
-        [119,'Make your first video'],[131,'Choose a voice'],[152,'What came out']];
+    // The owner's full course (2026-10-27): a new account to a finished video in 11 minutes, recorded on Windows, with
+    // chapters; the three-minute setup walkthrough stays one click away for anyone who only needs the install. Both play
+    // from the media CDN, only when asked. The course also has its own public page to share: /course.
+    const MEDIA = 'https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/onboarding/';
+    const WALKS = {
+        course: {file: MEDIA+'channelrecipe-full-course-v1', length: '10:49', chip: '11 min · the full course',
+            title: 'Watch the full course first', play: 'Watch the course', captions: '/static/course/channelrecipe-full-course-v1.vtt',
+            about: () => 'From a new account to a finished video: setup, cloning a channel’s style and your first video, every click in order. Recorded on Windows; on a Mac it’s the same steps.',
+            chapters: [[0,'What you’ll make'],[20,'What you need'],[31,'Download Studio'],[96,'Open it in Claude Code'],
+                [135,'Paste the install prompt'],[177,'Fix the tools'],[192,'Connect your account'],[198,'Set up Claude'],
+                [229,'Your Kie.ai key'],[273,'Clone a channel’s style'],[366,'Make it yours'],[450,'Make your first video'],
+                [517,'The finished video'],[610,'Improve this style']]},
+        setup: {file: MEDIA+'studio-setup-walkthrough-v1', length: '3:10', chip: '3 min · just the setup',
+            title: 'Watch the setup', play: 'Watch the setup', captions: '',
+            about: () => platform==='windows'?'Download, Claude Code, your Kie.ai key and your first video, done for real (recorded on a Mac: on Windows you open the inner ChannelRecipe studio folder and Start on Windows.cmd).':'Download, Claude Code, the Mac security prompt, your Kie.ai key and your first video, done for real.',
+            chapters: [[0,'What you need'],[26,'Download Studio'],[31,'Open it in Claude Code'],[51,'Paste the install prompt'],
+                [62,'The Mac security warning'],[81,'Connect your account'],[90,'Set up Claude'],[100,'Your Kie.ai key'],
+                [119,'Make your first video'],[131,'Choose a voice'],[152,'What came out']]},
+    };
+    let walkView = 'course';
     const clock = t => Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
     function setupVideo() {
-        return '<section class="ls-walk" id="ls-setup-video" aria-label="Watch the whole setup">'+
-            '<div class="ls-walk-head"><span class="ls-walk-chip">'+icon('play')+'3 min · start to finish</span>'+
-            '<h3>Watch the whole setup first</h3>'+
-            '<p>'+(platform==='windows'?'Download, Claude Code, your Kie.ai key and your first video, done for real (recorded on a Mac: on Windows you open the inner ChannelRecipe studio folder and Start on Windows.cmd).':'Download, Claude Code, the Mac security prompt, your Kie.ai key and your first video, done for real.')+' Stuck on one step? Jump straight to it.</p></div>'+
-            '<div class="ls-walk-player"><video id="ls-walk-video" preload="none" playsinline poster="'+WALKTHROUGH+'.jpg" '+
-                'aria-label="The whole ChannelRecipe Studio setup, start to finish"><source src="'+WALKTHROUGH+'.mp4" type="video/mp4"></video>'+
-            '<button type="button" class="ls-walk-play" data-ls-walk-seek="0">'+icon('play')+'Watch the setup <small>3:10</small></button></div>'+
-            '<ol class="ls-chapters">'+CHAPTERS.filter(([,label])=>platform!=='windows'||!/\bMac\b/.test(label)).map(([t,label])=>'<li><button type="button" data-ls-walk-seek="'+t+'"><span>'+clock(t)+'</span>'+label+'</button></li>').join('')+'</ol>'+
+        const w = WALKS[walkView], other = walkView==='course'?'setup':'course';
+        return '<section class="ls-walk" id="ls-setup-video" aria-label="'+esc(w.title)+'">'+
+            '<div class="ls-walk-head"><span class="ls-walk-chip">'+icon('play')+w.chip+'</span>'+
+            '<h3>'+w.title+'</h3>'+
+            '<p>'+w.about()+' Stuck on one step? Jump straight to it. '+
+                '<button type="button" class="ls-walk-switch" data-ls-walk-view="'+other+'">'+(other==='setup'?'Just the setup (3 min)':'The full course (11 min)')+'</button>'+
+                (walkView==='course'?' · <a href="/course" target="_blank" rel="noopener">Share the course</a>':'')+'</p></div>'+
+            '<div class="ls-walk-player"><video id="ls-walk-video" preload="none" playsinline poster="'+w.file+'.jpg" '+
+                'aria-label="'+esc(w.title)+'"><source src="'+w.file+'.mp4" type="video/mp4">'+
+                (w.captions?'<track kind="captions" src="'+w.captions+'" srclang="en" label="English">':'')+'</video>'+
+            '<button type="button" class="ls-walk-play" data-ls-walk-seek="0">'+icon('play')+w.play+' <small>'+w.length+'</small></button></div>'+
+            '<ol class="ls-chapters">'+w.chapters.filter(([,label])=>platform!=='windows'||!/\bMac\b/.test(label)).map(([t,label])=>'<li><button type="button" data-ls-walk-seek="'+t+'"><span>'+clock(t)+'</span>'+label+'</button></li>').join('')+'</ol>'+
             '</section>';
     }
     function setupSteps() {
@@ -546,6 +564,11 @@ window.CRLocalStudio = (() => {
         r.querySelectorAll('[data-ls-platform]').forEach(el=>el.addEventListener('click',()=>{ platform = el.dataset.lsPlatform; render(); }));
         r.querySelector('[data-ls-download]')?.addEventListener('click',()=>track('studio_download_clicked',{platform}));
         r.querySelector('[data-ls-open-studio]')?.addEventListener('click',()=>track('studio_open_clicked',{source:'home'}));
+        r.querySelectorAll('[data-ls-walk-view]').forEach(el=>el.addEventListener('click',()=>{
+            walkView = el.dataset.lsWalkView === 'setup' ? 'setup' : 'course'; render();
+            r.querySelector('#ls-setup-video')?.scrollIntoView({block:'nearest'});
+            track('studio_walkthrough_switched', {view: walkView});
+        }));
         r.querySelectorAll('[data-ls-walk-seek]').forEach(el=>el.addEventListener('click',()=>{
             const video = r.querySelector('#ls-walk-video'); if (!video) return;
             const at = Number(el.dataset.lsWalkSeek) || 0;
@@ -555,7 +578,7 @@ window.CRLocalStudio = (() => {
             const go = () => { try { video.currentTime = at; } catch (_) {} video.play().catch(()=>{}); };
             if (video.readyState >= 1) go(); else { video.addEventListener('loadedmetadata', go, {once:true}); video.load(); }
             if (!el.classList.contains('ls-walk-play')) video.scrollIntoView({block:'nearest', behavior:'smooth'});
-            track('studio_setup_video_played', {at, first});
+            track('studio_setup_video_played', {at, first, view: walkView});
         }));
         r.querySelector('[data-ls-copy-prompt]')?.addEventListener('click',()=>{ track('studio_prompt_copied'); copy(CLAUDE_PROMPT,'Copied. Paste it into Claude Code in your Studio folder.'); });
         r.querySelector('[data-ls-copy-key]')?.addEventListener('click',async()=>{

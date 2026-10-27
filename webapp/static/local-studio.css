@@ -134,6 +134,7 @@
     box-shadow:0 24px 60px -30px rgba(139,123,255,.55)}
 .ls-walk-head h3{font:800 22px/1.2 var(--font-display);margin:10px 0 6px}
 .ls-walk-head p{font-size:14px;line-height:1.6;color:var(--app-ink-2);margin:0 0 16px;max-width:640px}
+.ls-walk-switch{background:none;border:0;padding:0;font:inherit;font-weight:600;color:#c9c0ff;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.ls-walk-switch:hover{color:#fff}.ls-walk-head p a{color:#c9c0ff;font-weight:600}
 .ls-walk-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;background:rgba(139,123,255,.16);border:1px solid rgba(173,157,255,.4);color:#c9c0ff;font:700 11px var(--font-mono);letter-spacing:.04em;text-transform:uppercase}
 .ls-walk-chip svg{width:11px;height:11px}
 .ls-walk-player{position:relative;aspect-ratio:16/9;border-radius:14px;overflow:hidden;background:#000;border:1px solid var(--app-border)}
