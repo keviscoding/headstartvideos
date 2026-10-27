@@ -1064,9 +1064,9 @@ HEADLINES = {"below_bar": "Your style is saved, but it failed the likeness check
 def _unjudged_why(why) -> str:
     """Why a renderer has no likeness score, in the creator's words (the server's own reason after the build's)."""
     why = re.sub(r"^the likeness check couldn't run:\s*", "", str(why or "")).strip()
-    if "style checks" in why and "today" in why:
-        return ("your plan's style checks for today were used up (watching the references uses them too); they come "
-                "back within a day")
+    if ("style checks" in why or "likeness checks" in why) and "today" in why:
+        # the server's 402: its own allowance since 2026-10-27; before, the references' watches used it up
+        return "your plan's likeness checks for today were used up; they come back within a day"
     return why.rstrip(".") or "the check didn't answer"
 
 
@@ -1948,6 +1948,10 @@ def _apply_learned(folder, spec, style, log):
         elif spec.get("renderer"):
             cr_animated2d.attach(learned, folder, home)
         learned["cost"] = cr_animated2d.cost_note(learned)
+        import cr_style_art
+        for key in ("description", "tagline"):              # the card says the kit it's written on, 2D or 3D
+            if learned.get(key):
+                learned[key] = cr_style_art.kit_true(learned[key], cr_animated2d.dims_of(look["animated2d"]))
     if ((mapping["overrides"].get("look") or {}).get("aspect")):
         # a Shorts channel's videos are vertical however they're made (the code routes draw them tall; Studio's own
         # engine through cr_vertical), whatever the art director's words say

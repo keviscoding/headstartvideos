@@ -751,7 +751,7 @@ def test_a_renderer_the_judge_never_scored_is_said_plainly_never_as_zero():
         "why": "the likeness check couldn't run: You've used today's style checks. Try again tomorrow."}}}})
     assert unjudged["state"] == "unjudged" and unjudged["verdict"] == "Not checked yet" and unjudged["offer_pictures"]
     assert unjudged["say"].startswith("Your style is saved, but it hasn't been checked against the channel: ")
-    assert "style checks for today were used up" in unjudged["say"] and "/10" not in unjudged["say"]
+    assert "likeness checks for today were used up" in unjudged["say"] and "/10" not in unjudged["say"]
     assert "study the channel again" in unjudged["say"] and "Improve this style" in unjudged["say"]
     # saved before Studio 111 as 0/10 (the customer's War Map 3D and Sample): said as never checked, not as a 0
     legacy = clone.renderer_verdict({"look": {"visuals": "cr_animated2d", "animated2d": {"renderer": {

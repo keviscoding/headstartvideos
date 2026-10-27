@@ -837,7 +837,7 @@ def test_an_unjudged_build_is_a_skipped_likeness_check_never_a_score(tmp_path):
     style = {"name": "cr_clone_x", "look": {"visuals": "cr_animated2d", "animated2d": {"schema": 1}}}
     result = like.run(folder, {"look_id": "lk_x"}, style, lambda m: None, home=tmp_path,
                       call=lambda *a, **k: pytest.fail("nothing is judged again"))
-    assert result["state"] == "skipped" and "style checks for today were used up" in result["why"]
+    assert result["state"] == "skipped" and "likeness checks for today were used up" in result["why"]
 
 
 # ── the plugin, end to end, with a stand-in engine ──────────────────────────────────────────────────────────────

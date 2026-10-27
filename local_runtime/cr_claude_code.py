@@ -421,16 +421,18 @@ def install(studio, token: str, home=None) -> dict:
             out = []
             for row in rows:
                 slug = str(row.get("slug") or "")
-                path = ""
+                path, coded = "", False
                 try:
                     found = studio.mv.find_job(slug)
                     video = studio.mv.final_video(Path(found)) if found is not None else None
                     if video is not None and Path(video).is_file() and Path(video).resolve().is_relative_to(home):
                         path = str(Path(video).resolve())
+                    import cr_animated2d
+                    coded = found is not None and cr_animated2d.coded_video(Path(found))   # no timeline for it
                 except Exception:                                  # noqa: BLE001 - the file path is a bonus
                     path = ""
                 out.append({**{k: row.get(k) for k in ("slug", "title", "style", "mtime", "size", "desc")},
-                            "path": path})
+                            "path": path, **({"coded": True} if coded else {})})
             return protect(jsonify(videos=out))
         except Exception as error:                                 # noqa: BLE001
             return failure(error)

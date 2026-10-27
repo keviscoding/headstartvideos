@@ -104,6 +104,20 @@ def with_addon(html: str) -> str:
     return html[:at] + TAGS + html[at:] if at >= 0 else html + TAGS
 
 
+def no_timeline(slug: str, said: str) -> str:
+    """The page /editor/<slug> shows for a video drawn by its style's own code, instead of the timeline: why, and what
+    works (watch it, back to Studio)."""
+    from html import escape
+    from urllib.parse import quote
+    return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,'
+            'initial-scale=1"><title>No timeline for this video</title><style>body{font:16px/1.5 system-ui,sans-serif;'
+            'max-width:640px;margin:48px auto;padding:0 16px;color:#1b1b1b;background:#fff}a{color:#2e5bd8}'
+            '@media (prefers-color-scheme:dark){body{color:#eee;background:#141414}a{color:#8fb0ff}}</style></head><body>'
+            f'<h1>No timeline for this video</h1><p>{escape(said)}</p>'
+            f'<p><a href="/f/video/{quote(slug, safe="")}">Watch the video</a> · <a href="/">Back to Studio</a></p>'
+            '</body></html>')
+
+
 def install(studio, *, home=None) -> bool:
     """Add the add-on's routes and load it into the editor page. False (nothing changed) on an engine without the
     timeline editor."""
@@ -126,6 +140,15 @@ def install(studio, *, home=None) -> bool:
         return response
 
     def editor_page(*args, **kwargs):
+        slug = str(kwargs.get("slug") or (args[0] if args else ""))
+        if _SLUG.fullmatch(slug) and slug not in {".", ".."}:
+            found = studio.mv.find_job(slug)
+            job = Path(found).resolve() if found is not None else None
+            import cr_animated2d
+            if job is not None and job.is_dir() and job.is_relative_to(home / "output") and cr_animated2d.coded_video(job):
+                # a video drawn by its style's own code: its minutes are whole animations no timeline edit redraws
+                return protect(app.make_response((no_timeline(slug, cr_animated2d.NO_TIMELINE), 200,
+                                                  {"Content-Type": "text/html; charset=utf-8"})))
         response = app.make_response(original(*args, **kwargs))
         if response.status_code == 200 and response.mimetype == "text/html" and not response.direct_passthrough:
             response.set_data(with_addon(response.get_data(as_text=True)))

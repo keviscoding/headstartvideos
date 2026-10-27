@@ -411,6 +411,15 @@ def test_call_waits_out_a_busy_studio_and_sends_the_local_token(monkeypatch, tmp
     assert seen == ["tok", "tok", "tok"]
 
 
+def test_a_coded_video_is_never_offered_the_timeline(monkeypatch):
+    monkeypatch.setattr(tools, "call", lambda method, path, body=None, **kw: {"videos": [
+        {"slug": "war-map--a1", "title": "Waterloo", "style": "cr_clone_x", "mtime": 1, "size": 1, "coded": True},
+        {"slug": "money--b2", "title": "Money", "style": "documentary", "mtime": 1, "size": 1}]})
+    coded, plain = ok("list_videos", {"include_cloud": False})["this_computer"]
+    assert "project_url" not in coded and "timeline can't edit it" in coded["no_timeline"] and coded["watch_url"]
+    assert plain["project_url"].endswith("/editor/money--b2") and "no_timeline" not in plain
+
+
 def test_a_closed_studio_says_to_open_the_launcher(monkeypatch):
     def urlopen(request, timeout=None):
         raise tools.urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))

@@ -658,3 +658,43 @@ def test_a_3d_styles_progress_says_animated_3d_never_2d():
     import re
     said = re.findall(r'(?:engine\.(?:step|log)|\blog)\(f?"[Aa]nimated [23]D:', source)
     assert said == [], "every progress line names its kit by the style's dims"
+
+
+def test_a_look_that_is_partly_3d_asks_2d_or_3d_code_never_decided_silently(monkeypatch):
+    """A customer's low-poly war-map channel measured under 20% 3D got the 2D kit while its card said "clean 3D"
+    (2026-10-27): the owner's decision is to ask the creator whenever the look is partly 3D."""
+    monkeypatch.setattr(a2d, "available", lambda home=None: True)
+    monkeypatch.setattr(a2d, "available3d", lambda home=None: True)
+    low = tsm.profile({"3d": 0.12, "graphic": 0.88})
+    asked = next(q for q in cm.plan_style(low, tsm.STYLES)["questions"] if q["id"] == "kit")
+    assert asked["options"] == [cm.KIT_2D, cm.KIT_3D] and "12% measured as 3D" in asked["ask"], "the guess first: 2D"
+    assert cm.plan_style(low, tsm.STYLES)["route"]["engine"] == "animated2d"
+    built = cm.plan_style(low, tsm.STYLES, answers={"made": cm.MADE_CODE, "kit": cm.KIT_3D})
+    assert built["route"]["engine"] == "animated3d" and built["overrides"]["look"]["animated2d"]["dims"] == 3
+    half = tsm.profile({"3d": 0.5, "graphic": 0.5})
+    assert next(q for q in cm.plan_style(half, tsm.STYLES)["questions"] if q["id"] == "kit")["options"][0] == cm.KIT_3D
+    flat = cm.plan_style(half, tsm.STYLES, answers={"kit": cm.KIT_2D})
+    assert flat["route"]["engine"] == "animated2d" and flat["overrides"]["look"]["animated2d"].get("dims") != 3
+    words = tsm.profile({"graphic": 1.0}, pictures__art_style=tsm.axis("Low-poly 3D war maps with tiny soldiers."))
+    assert any(q["id"] == "kit" for q in cm.plan_style(words, tsm.STYLES)["questions"]), "described as 3D: asked too"
+    for plain in (tsm.profile({"graphic": 1.0}), tsm.profile({"3d": 0.95, "graphic": 0.05})):
+        assert not any(q["id"] == "kit" for q in cm.plan_style(plain, tsm.STYLES)["questions"]), "plainly 2D or 3D"
+    monkeypatch.setattr(a2d, "available3d", lambda home=None: False)
+    assert not any(q["id"] == "kit" for q in cm.plan_style(low, tsm.STYLES)["questions"]), "one kit: nothing to ask"
+
+
+def test_a_coded_styles_card_says_the_kit_it_is_written_on():
+    import cr_presentation
+    import cr_style_art
+    assert cr_style_art.kit_true("Battles rebuilt in clean 3D, three-dimensional maps.", 2) == \
+        "Battles rebuilt in clean 2D, two-dimensional maps."
+    assert cr_style_art.kit_true("Flat 2D explainers.", 3) == "Flat 3D explainers."
+    note = cr_style_art._route_note({"route": {"engine": "animated2d"}})
+    assert "in 2D" in note and "never calls the videos 3D" in note
+    assert "real 3D" in cr_style_art._route_note({"route": {"engine": "animated3d"}})
+    style = {"look": {"visuals": "cr_animated2d", "animated2d": {}}, "description": "Battles rebuilt in clean 3D."}
+    row = cr_presentation.present({"name": "cr_clone_e4010ca3e2a7", "description": style["description"]}, style)
+    assert row["description"] == "Battles rebuilt in clean 2D." and "3D" not in row["tagline"]
+    three = {"look": {"visuals": "cr_animated3d", "animated2d": {"dims": 3}}}
+    assert cr_presentation.present({"name": "cr_clone_x", "description": "Low-poly 3D battles."}, three)[
+        "description"] == "Low-poly 3D battles."

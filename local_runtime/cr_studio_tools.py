@@ -1275,7 +1275,9 @@ def look_progress(look_id: str) -> dict:
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
                         "with look_id, a style name, an example title (title_ideas has a few from the channel's own "
                         "titles to offer; they can change any) and their answers. The 'made' question decides "
-                        "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
+                        "how the videos are made, so ask it first, in plain words; a 'kit' question (asked when the "
+                        "look is partly 3D) decides whether the code draws in 2D or builds real 3D: ask it next and never "
+                        "answer it for them. Written in code (recommended) has "
                         "their Claude Code write the channel's own renderer during the study (usually 10 to 25 "
                         "minutes of their Claude usage for the whole study, at most 46). Its videos then cost their "
                         "voice, plus at most a "
@@ -1287,6 +1289,10 @@ def look_progress(look_id: str) -> dict:
     return out
 
 
+# a video drawn by its style's own code has no timeline (cr_animated2d.NO_TIMELINE): never offer it one
+NO_TIMELINE = ("Drawn by its style's own animation code, so the timeline can't edit it (each minute is one whole "
+               "animation). To change how the style's videos look, use Improve this style on its study page or "
+               "style_lab; to change this video, make it again with the changes in its brief.")
 SHORTS_NOTE = ("These references are Shorts. Either way the style makes vertical Shorts: written in code (the default "
                "answer to 'made') with the channel's own captions; instead of code, with Studio's pictures drawn tall, "
                "captions above the Shorts buttons, and any graphics made for wide screens (maps, headlines, 3D "
@@ -1350,7 +1356,8 @@ def tool_list_videos(args):
         "made": time.strftime("%Y-%m-%d %H:%M", time.localtime(r.get("mtime") or 0)),
         "megabytes": round((r.get("size") or 0) / 1e6, 1), "file": r.get("path") or "",
         "watch_url": link("/f/video/" + _quote_path(r["slug"])),
-        "project_url": link("/editor/" + _quote_path(r["slug"]))} for r in rows[:limit]]}
+        **({"no_timeline": NO_TIMELINE} if r.get("coded") else
+           {"project_url": link("/editor/" + _quote_path(r["slug"]))})} for r in rows[:limit]]}
     if args.get("include_cloud", True) is not False:
         try:
             cloud = cloud_progress()

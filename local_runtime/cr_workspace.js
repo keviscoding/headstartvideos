@@ -808,7 +808,10 @@
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
       const thumbs = (data.thumbs || data.thumbnails || []).map(name => typeof name === 'string' ? name : name?.name).filter(Boolean);
       for (const [i, filename] of thumbs.entries()) {const a=el('a','crw-export-link',thumbs.length > 1 ? `Thumbnail ${i + 1}` : 'Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
-      try {const saved = await api(`/cr-workspace/project/${encoded(job.slug)}`); const lines = (saved.sound_check || []).map(r => (r.state === 'ok' ? '✓ ' : '• ') + r.text); text('crw-output-message', lines.length ? 'Sound check: ' + lines.join(' · ') : '');} catch (_) {/* the sound check is optional */}
+      try {const saved = await api(`/cr-workspace/project/${encoded(job.slug)}`); const lines = (saved.sound_check || []).map(r => (r.state === 'ok' ? '✓ ' : '• ') + r.text);
+        // a video drawn by its style's own code: no timeline (its minutes are whole animations), and why, plainly
+        if (saved.no_timeline) {$('crw-output-editor').hidden = true; hide('crw-output-timing', true); if (saved.improve) {$('crw-output-editor').href = saved.improve; text('crw-output-editor-label', 'Improve this style'); $('crw-output-editor').hidden = false;}}
+        text('crw-output-message', [saved.no_timeline || '', lines.length ? 'Sound check: ' + lines.join(' · ') : ''].filter(Boolean).join(' '));} catch (_) {/* the sound check is optional */}
       $('crw-output').showModal();
     } catch (e) {toast(e.message);}
   }

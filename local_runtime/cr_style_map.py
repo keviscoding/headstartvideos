@@ -20,7 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 111         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: every clone is written in code unless the creator chooses Studio's ready-made pictures; 111: a Shorts channel is vertical however it's made); older saved plans are made again
+ROUTER = 111         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: every clone is written in code unless the creator chooses Studio's ready-made pictures; 111: a Shorts channel is vertical however it's made, and a look that is partly 3D asks 2D or 3D code); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
@@ -61,6 +61,13 @@ MOVES_ANYWAY = ("live_footage", "archival_footage", "stock_footage", "news_clip"
 MADE_CODE = "Written in code: your Claude Code writes this channel's own renderer (recommended)"
 MADE_OTHER = "Instead of code: Studio's ready-made pictures (AI pictures, some AI clips) or its fixed 3D engine"
 MADES = (MADE_CODE, MADE_OTHER)
+# Which kit Claude writes a channel's code on, asked when the look is partly 3D (the owner, 2026-10-27: never decided
+# silently; a customer's low-poly war-map channel measured under 20% 3D got the 2D kit while its card said "clean 3D")
+KIT_2D = "In 2D: drawn shapes, lines and maps on a flat canvas"
+KIT_3D = "In real 3D: models with depth, light and camera moves (three.js)"
+KITS = (KIT_2D, KIT_3D)
+PARTLY_3D = (0.05, 0.8)      # a 3D share in this range is partly 3D; above it the channel is plainly 3D
+THREE_D_WORDS = re.compile(r"\b(3d|three[- ]dimensional|low[- ]?poly|cgi|isometric)\b", re.I)
 # what the page shows for each answer (the answers themselves stay as saved studies have them)
 MADE_LABELS = {MADE_CODE: "Written in code: your Claude Code writes this channel's own animation (recommended)",
                MADE_OTHER: MADE_OTHER}
@@ -843,12 +850,12 @@ def _animated_route(profile, animation: str) -> dict:
             "or are animated by AI (the channel's characters move in small ways under its narrator)."}
 
 
-def coded_route(profile) -> dict:
+def coded_route(profile, kit: str = "") -> dict:
     """Any channel's pictures written in code, on the creator's word: its own renderer, which their Claude Code writes
-    during the study from the channel's frames (three.js when 20%+ of its pictures are 3D and the 3D kit is here, else
-    2D); {} when this Studio has neither kit."""
+    during the study from the channel's frames (three.js as the creator answered the kit question, else when 20%+ of
+    its pictures are 3D, and the 3D kit is here; else 2D); {} when this Studio has neither kit."""
     import cr_animated2d
-    three = _families(profile).get("3d", 0) >= 0.2 and cr_animated2d.available3d()
+    three = (kit == KIT_3D if kit in KITS else _families(profile).get("3d", 0) >= 0.2) and cr_animated2d.available3d()
     if not three and not cr_animated2d.available():
         return {}
     return {"engine": "animated3d" if three else "animated2d", "coded": True,
@@ -880,6 +887,30 @@ def made_question(profile, other: dict) -> dict:
             + f" Or, instead of code: {instead}. That's ready at once, but the videos won't look or move exactly like "
             "the channel's." + (" Either way they're vertical Shorts, like the channel's." if vertical(profile) else ""),
             "options": list(MADES), "labels": [MADE_LABELS[m] for m in MADES]}
+
+
+def partly_3d(profile) -> bool:
+    """The look is partly 3D: 5% to 80% of its pictures measured 3D, or fewer while its art style is described as 3D
+    (low-poly, CGI, isometric); a channel that is plainly 3D, or plainly flat, is not."""
+    share = _families(profile).get("3d", 0)
+    if share >= PARTLY_3D[1]:
+        return False
+    return share >= PARTLY_3D[0] or bool(THREE_D_WORDS.search(str(_v(_get(profile, "pictures", "art_style"), "") or "")))
+
+
+def kit_question(profile) -> dict:
+    """2D or 3D code, asked when the look is partly 3D and this Studio has both kits (Studio's guess first); {}
+    otherwise. Never decided silently: the answer is the kit the study's renderer is written on."""
+    import cr_animated2d
+    coded = coded_route(profile)
+    if not coded or not partly_3d(profile) or not cr_animated2d.available3d():
+        return {}
+    share = round(_families(profile).get("3d", 0) * 100)
+    guess = KIT_3D if coded["engine"] == "animated3d" else KIT_2D
+    return {"id": "kit", "ask": f"If it's written in code, should it be drawn in 2D or built in real 3D? The channel's "
+            f"pictures look partly 3D ({share}% measured as 3D scenes). Studio's guess is first: it decides the kit "
+            "your Claude Code writes the channel's animation on, and the style's description says the same.",
+            "options": [guess] + [k for k in KITS if k != guess]}
 
 
 def vertical(profile) -> bool:
@@ -1341,7 +1372,7 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
               animation=ANIMATED_PICTURES, rendered=False, pictures=pictures or drawn_instead)
     instead = (str((answers or {}).get("made") or "") == MADE_OTHER or medium == MEDIUM_PICTURES
                or animation == ANIMATED_PICTURES)
-    coded = {} if base in ("3d", "nocturne") else coded_route(original)
+    coded = {} if base in ("3d", "nocturne") else coded_route(original, str((answers or {}).get("kit") or ""))
     offered = bool(coded)
     if not code:
         coded = {}
@@ -1405,7 +1436,7 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
             "overrides": plan.overrides, "remove": plan.remove, "settings": plan.settings,
             "needs": list(dict.fromkeys(plan.needs)), "notes": plan.notes,
             "cost": cost(plan.overrides, chosen),
-            "questions": [q for q in ([made_question(original, other)] if offered else
+            "questions": [q for q in ([made_question(original, other), kit_question(original)] if offered else
                                       [medium_question(original), animation_question(original)]) if q]
                          + list(original.get("questions") or [])}
 

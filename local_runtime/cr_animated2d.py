@@ -121,6 +121,23 @@ def dims_of(spec) -> int:
     return 3 if isinstance(spec, dict) and spec.get("dims") == 3 else 2
 
 
+# The engine's timeline editor is made for videos of many short shots. A video drawn by a style's own renderer is a few
+# whole animations (motion/a2d_NNN_*.mp4, a stretch of narration each): no edit there redraws one, and a retime,
+# delete or swap freezes or restarts it, while its re-render burns captions the renderer already drew. The owner
+# (2026-10-27): hide it for these videos, say why, and point to what works. ("Redo this minute with a note" is next.)
+NO_TIMELINE = ("This video was drawn by your style's own animation code, so the timeline can't edit it: each minute of "
+               "it is one whole animation, and the timeline's edits can't redraw them. To change how your videos look, "
+               "use Improve this style on the style's page. To change this video, make it again with your changes in "
+               "its brief.")
+
+
+def coded_video(job) -> bool:
+    """A video drawn by a style's own renderer (Claude's code): its minutes are whole animations the timeline can't
+    edit (NO_TIMELINE)."""
+    job = Path(job)
+    return (job / "animated2d" / "delivery.json").is_file() or any((job / "motion").glob("a2d_*.mp4"))
+
+
 def kit_name(spec) -> str:
     """How a video's progress names its kind of animation: "Animated 3D" for a renderer drawn in three.js (a 3D style's
     log said "Animated 2D", 2026-10-27), else "Animated 2D". The work folder stays animated2d/ for videos already made."""

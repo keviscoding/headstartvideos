@@ -28,7 +28,9 @@ Link: $ARGUMENTS
    (usually 10 to 25 minutes of their Claude usage for the whole study, at most 46, no money), and its videos cost
    their voice. Instead of code
    gives Studio's ready-made pictures (AI pictures, some AI clips) or its fixed 3D engine: ready at once, but not
-   exactly the channel's look. Say both, plainly. If `look_progress` shows a `medium_gap`, tell them now what their
+   exactly the channel's look. Say both, plainly. A `kit` question comes when the look is partly 3D: ask it right
+   after `made`, in plain words (2D: drawn shapes, lines and maps; 3D: real 3D models, light and camera). It decides
+   what their Claude Code writes, so never answer it for them. If `look_progress` shows a `medium_gap`, tell them now what their
    videos will be (`how_made`). A Shorts channel's videos come out vertical with its captions. Once the style is
    saved, they can keep improving it with you in Style Lab (see below). Also ask:
    - a name for the new style (for example "My History Style");

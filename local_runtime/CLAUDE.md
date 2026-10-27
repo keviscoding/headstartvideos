@@ -205,7 +205,8 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Cloning a style (/clone-style): any channel is cloned in code by default. The look's `made` question comes first:
   ask it before anything else, in plain words. Written in code (Studio's recommendation, first) means the study has
   their Claude Code write this channel's own renderer from its frames, whatever they show (characters, graphics, maps,
-  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames:
+  text, 3D sets, camera), in three.js for a 3D channel (a look that is partly 3D asks `kit`, 2D or 3D, next: never
+  answer it for them), and check its test shots against the channel's frames:
   usually 10 to 25 minutes of Claude usage for the whole study (at most 46: the study budget plus 24 for the
   animation), no money.
   A style written in code has no motion-graphics kit (Studio 109 skips that step): its renderer draws every picture.

@@ -246,6 +246,17 @@ def test_project_lookup_is_local_hint_and_resume_auth_route_is_not_invoked(env):
     assert response.json["project_id"] == PROJECT and response.json["available_for_resume"] is True
     assert response.json["title"] == "My video" and response.json["link"] == "/editor/my-video"
     assert "private script" not in response.text and "private instruction" not in response.text
+    assert "no_timeline" not in response.json
+    # a video drawn by its style's own code: no timeline link, why in plain words, and Improve this style instead
+    (job / "animated2d").mkdir()
+    (job / "animated2d" / "delivery.json").write_text("{}")
+    (env.home / "styles").mkdir(exist_ok=True)
+    (env.home / "styles" / "documentary.json").write_text(json.dumps({"cr_style_clone": {"operation_id": OPERATION}}))
+    coded = env.get("/cr-workspace/project/my-video").json
+    assert coded["link"] == "" and "timeline can't edit it" in coded["no_timeline"]
+    assert coded["improve"] == "/cr-style-clone?operation=" + OPERATION + "#improve"
+    script = (Path(workspace.__file__).parent / "cr_workspace.js").read_text(encoding="utf-8")
+    assert "saved.no_timeline" in script and "'Improve this style'" in script
     env.studio.JOBS["my-video"] = {"state": "running"}
     assert env.get("/cr-workspace/project/my-video").json["available_for_resume"] is False
     env.studio.JOBS["my-video"] = {"state": "done"}

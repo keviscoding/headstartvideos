@@ -83,6 +83,35 @@ character of every story must be drawn that same way. That design language is th
 full (only never a name, a logo or one character's signature item).
 """
 
+# Written in code (cr_style_map.route "animated2d" / "animated3d"): the recipe card says the kit the channel's own
+# renderer is written on (a customer's 2D-coded clone's card said "rebuilt in clean 3D", 2026-10-27)
+ROUTE_CODED = """HOW THESE PICTURES ARE MADE: every picture of a new video is drawn in code by the channel's own renderer,
+[KIT]. The "description" says so in its own words and never calls the videos [NOT].
+"""
+CODED_KITS = {"animated2d": ("in 2D (flat shapes, lines and maps on a canvas, even where the references look 3D)",
+                             "3D"),
+              "animated3d": ("in real 3D (three.js models with depth, light and camera moves)", "2D or flat")}
+
+
+def kit_true(text, dims: int):
+    """A recipe card's words for the kit its renderer is written on, whatever the art director wrote: a style coded in
+    2D never says 3D, one coded in 3D never says 2D."""
+    if not isinstance(text, str) or not text:
+        return text
+    if dims == 3:
+        return re.sub(r"\b2D\b", "3D", re.sub(r"\btwo[- ]dimensional\b", "three-dimensional", text, flags=re.I),
+                      flags=re.I)
+    return re.sub(r"\b3D\b", "2D", re.sub(r"\bthree[- ]dimensional\b", "two-dimensional", text, flags=re.I), flags=re.I)
+
+
+def _route_note(mapping: dict) -> str:
+    engine = (mapping.get("route") or {}).get("engine")
+    if engine in CODED_KITS:
+        kit, never = CODED_KITS[engine]
+        return ROUTE_CODED.replace("[KIT]", kit).replace("[NOT]", never)
+    return {"drawn": ROUTE_DRAWN, "designed": ROUTE_DESIGNED}.get(engine, "")
+
+
 # A designed cast Studio's 3D engine builds itself (cr_style_map.route "designed", Studio 79): the art director's eyes
 # measure the channel's characters into the cast spec the engine builds from (cr_designed), in the same call.
 ROUTE_DESIGNED = """HOW THESE PICTURES ARE MADE: the references are 3D renders of a DESIGNED cast, and Studio's own 3D engine rebuilds
@@ -167,7 +196,7 @@ def prompt(profile: dict, mapping: dict, *, title: str, brief: str, base: str, e
     polish_line = CANDID if rule.startswith("candid") or polish == "candid" else LO_FI if polish == "lo-fi" else ""
     return (ART_PROMPT.replace("[TITLE]", title.strip()[:280]).replace("[BRIEF]", (brief or "none").strip()[:1500])
             .replace("[BASE]", base).replace("[POLISH]", polish_line)
-            .replace("[ROUTE]", {"drawn": ROUTE_DRAWN, "designed": ROUTE_DESIGNED}.get((mapping.get("route") or {}).get("engine"), ""))
+            .replace("[ROUTE]", _route_note(mapping))
             .replace("[CAST_3D]", CAST_3D_KEY if (mapping.get("route") or {}).get("engine") == "designed" else "")
             .replace("[PROFILE]", json.dumps(_compact(profile, mapping), ensure_ascii=False)[:9000])
             .replace("[EXCERPT]", (excerpt or "no captions available").strip()[:1500]))
