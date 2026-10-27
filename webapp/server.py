@@ -1341,6 +1341,7 @@ def create_topup(req: TopupRequest, request: Request):
         success_url=f"{base_url}/app?topup=1#pipeline",
         cancel_url=f"{base_url}/app#pipeline",
         metadata={"user_id": str(user["id"]), "topup_credits": str(credit_amount)},
+        payment_intent_data=_stripe_customers.no_affiliate_commission(),
     )
     return {"url": session.url}
 

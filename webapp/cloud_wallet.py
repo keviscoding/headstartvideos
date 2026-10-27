@@ -160,7 +160,8 @@ def checkout_session(user: dict, usd: int, base_url: str, *, stripe=None):
         line_items=[{"price_data": {"currency": "usd", "unit_amount": usd * 100,
                                     "product_data": {"name": f"Studio Cloud balance: ${usd}"}}, "quantity": 1}],
         success_url=f"{base_url}/app?cloud_topup=1#billing", cancel_url=f"{base_url}/app#billing",
-        metadata={"user_id": str(user["id"]), "cloud_topup_cents": str(usd * 100)})
+        metadata={"user_id": str(user["id"]), "cloud_topup_cents": str(usd * 100)},
+        payment_intent_data=stripe_customers.no_affiliate_commission())
     return {"url": session.url}
 
 
