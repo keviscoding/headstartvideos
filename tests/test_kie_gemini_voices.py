@@ -279,7 +279,10 @@ def test_setup_and_create_say_kie_narrates_with_gemini():
     assert "Kie narrates with Gemini voices. For ElevenLabs voices, add your own ElevenLabs key" in setup
     assert media.KIE_NOTE == "Kie narrates with Gemini voices. For ElevenLabs voices, add your own ElevenLabs key."
     page = (ROOT / "local_runtime/cr_workspace.js").read_text(encoding="utf-8")
-    assert "location.href = '/cr-setup'" not in page, "Choose voice never sends a connected creator back to setup"
+    # Choose voice (the voices dialog, renderVoices -> chooseVoice) only: Create's "Finish setting up Claude" (Studio
+    # 110) goes to setup on purpose
+    voices = page[page.index("function renderVoices()"):page.index("async function chooseVoice(")]
+    assert "/cr-setup" not in voices, "Choose voice never sends a connected creator back to setup"
     assert 'id="crw-narration-note"' in (ROOT / "local_runtime/cr_workspace.html").read_text(encoding="utf-8")
 
 
