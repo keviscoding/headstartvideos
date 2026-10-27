@@ -462,6 +462,52 @@ def test_a_stopped_model_check_never_blocks_the_next_press_of_verify(verified, m
     assert cr_claude.models_verified(v.cfg, v.local)
 
 
+@pytest.mark.parametrize("stages,carried_on", [
+    ([{"status": "failed"}], False),
+    ([{"status": "authorized"}], False),
+    ([{"status": "complete"}, {"status": "retry_allowed"}], True),
+    ([], True),
+    (None, False),
+])
+def test_the_automatic_check_never_runs_a_stopped_one_again(verified, monkeypatch, stages, carried_on):
+    """Create's run on page load and make_videos (auto) carry on a clean check, but one that stopped waits for the
+    customer's press of Verify: a new check is a new Claude request on their plan, never made by itself."""
+    v = verified
+    old = "crv_" + "1" * 24
+    identity = cr_claude._verification_identity(v.cfg, v.local)
+    (v.root / ".cr-claude-probe.json").write_text(json.dumps({"identity": identity, "project_id": old}))
+    progress = None if stages is None else {"project": {"status": "running"}, "stages": stages}
+    bridge, begun = probing(v, monkeypatch, progress=progress)
+    if carried_on:
+        assert cr_claude.verify_models(SimpleNamespace(), bridge, {"local_version": "5.3-admin.14"}, auto=True)["verified"]
+        assert begun == [old]
+        return
+    with pytest.raises(cr_claude.ClaudeStageStopped, match="Press Verify my Claude models"):
+        cr_claude.verify_models(SimpleNamespace(), bridge, {"local_version": "5.3-admin.14"}, auto=True)
+    assert begun == [] and not cr_claude.models_verified(v.cfg, v.local)
+
+
+def test_the_automatic_check_runs_a_first_or_a_new_days_check(verified, monkeypatch):
+    """No saved check, or the last one passed (a day later, or a new Claude Code): the automatic run checks."""
+    v = verified
+    bridge, begun = probing(v, monkeypatch)
+    assert cr_claude.verify_models(SimpleNamespace(), bridge, {"local_version": "5.3-admin.14"}, auto=True)["verified"]
+    assert begun == [None]
+
+
+def test_verify_route_passes_auto_and_make_videos_sends_it(verified, setup_client, monkeypatch):
+    client, headers = setup_client
+    seen = []
+    monkeypatch.setattr(cr_studio.cr_mcp, "is_registered", lambda *a: True)
+    monkeypatch.setattr(cr_studio.cr_mcp, "status", lambda *a: {"connected": True})
+    monkeypatch.setattr(cr_claude, "verify_models", lambda *a, **k: seen.append(k.get("auto")) or {"verified": True})
+    for body in ({"action": "verify"}, {"action": "verify", "auto": True}):
+        assert client.post("/cr-claude/setup", headers=headers, json=body).status_code == 200
+    assert seen == [False, True]
+    tools = (Path(cr_claude.__file__).parent / "cr_studio_tools.py").read_text(encoding="utf-8")
+    assert '{"action": "verify", "auto": True}' in tools
+
+
 @pytest.mark.parametrize("answer", ["OK", "OK.", "ok", "**OK**", "\"OK\"\n"])
 def test_the_check_accepts_ok_however_claude_dresses_it(verified, monkeypatch, answer):
     bridge, _ = probing(verified, monkeypatch, answer=answer)
@@ -492,10 +538,16 @@ def test_a_stopped_check_says_why_in_plain_words_and_what_to_press(verified, mon
     assert not cr_claude.models_verified(verified.cfg, verified.local)
 
 
-def test_an_old_claude_code_is_told_to_update_not_to_sign_in_again():
+def test_an_old_claude_code_is_told_to_update_not_to_sign_in_again(monkeypatch):
     run = lambda args, **kw: SimpleNamespace(returncode=0, stdout="2.1.100 (Claude Code)", stderr="")
+    monkeypatch.setattr(cr_claude.shutil, "which", lambda name: "/fake/claude")
     found = cr_claude.status("/fake/claude", run=run, environment={})
-    assert found["outdated"] and not found["authenticated"] and "claude update" in found["message"]
+    assert found["outdated"] and not found["authenticated"] and "run: claude update." in found["message"]
+    # found only by its full path (not on PATH): the terminal wouldn't know `claude`, so the command names the file
+    monkeypatch.setattr(cr_claude.shutil, "which", lambda name: None)
+    found = cr_claude.status("/fake/claude", run=run, environment={})
+    said = '& "/fake/claude" update' if os.name == "nt" else '"/fake/claude" update'
+    assert found["outdated"] and said in found["message"]
 
 
 def test_an_api_route_customer_is_ready_to_switch_only_with_claude_code_set_up_and_verified(verified):
@@ -524,7 +576,7 @@ def test_switch_moves_an_api_route_customer_to_claude_code_and_checks_the_models
     assert not status["api_route"]["ready_to_switch"]
     assert "Old API route" in status["readiness"]["checks"][-1]["label"]
     checks = []
-    monkeypatch.setattr(cr_claude, "verify_models", lambda *a: checks.append(a) or {"verified": True})
+    monkeypatch.setattr(cr_claude, "verify_models", lambda *a, **k: checks.append(a) or {"verified": True})
     answer = client.post("/cr-claude/setup", headers=headers, json={"action": "switch"})
     assert answer.status_code == 200, answer.get_json()
     result = answer.get_json()
@@ -542,22 +594,26 @@ def test_switch_moves_an_api_route_customer_to_claude_code_and_checks_the_models
                                         ({"ready": False, "authenticated": False}, "sign_in"),
                                         ({"ready": False, "authenticated": False, "outdated": True,
                                           "message": "This Claude Code is too old for Studio."}, "update")])
-def test_switch_without_claude_code_ready_switches_and_says_the_next_setup_step(verified, setup_client, monkeypatch,
-                                                                                local, step):
+def test_switch_waits_for_claude_code_and_says_the_next_setup_step(verified, setup_client, monkeypatch, local, step):
+    """Switch changes the route only once Claude Code is installed and signed in: before that the customer's videos
+    keep working on the old route (nothing could switch them back), and setup says the step that comes first."""
     client, headers = setup_client
     verified.cfg.update(brain_mode="channelrecipe")
     monkeypatch.setattr(cr_claude, "status", lambda *a, **k: {**verified.local, **local})
-    monkeypatch.setattr(cr_claude, "verify_models", lambda *a: pytest.fail("Nothing to check without Claude Code"))
+    monkeypatch.setattr(cr_claude, "verify_models", lambda *a, **k: pytest.fail("Nothing to check without Claude Code"))
     result = client.post("/cr-claude/setup", headers=headers, json={"action": "switch"}).get_json()
-    assert result["switched"] and not result["verified"] and result["next"] == step
-    assert verified.cfg["brain_mode"] == "claudecode"
+    assert not result["switched"] and not result["verified"] and result["next"] == step
+    assert verified.cfg["brain_mode"] == "channelrecipe" and result["brain_mode"] == "channelrecipe"
     assert ("too old" in result["message"]) is (step == "update")
+    assert "keep using your API account until then" in result["message"]
+    if step != "update":
+        assert "Switch to Claude Code again" in result["message"]
 
 
 def test_a_failed_check_during_the_switch_is_said_and_the_route_stays_switched(verified, setup_client, monkeypatch):
     client, headers = setup_client
     verified.cfg.update(brain_mode="channelrecipe")
-    def stopped(*a):
+    def stopped(*a, **k):
         raise cr_claude.ClaudeStageStopped(cr_claude.check_failure("usage limit"))
     monkeypatch.setattr(cr_claude, "verify_models", stopped)
     answer = client.post("/cr-claude/setup", headers=headers, json={"action": "switch"})
@@ -575,7 +631,7 @@ def test_verify_is_one_click_it_connects_the_tools_and_saves_the_recommended_mod
     registered = []
     monkeypatch.setattr(cr_studio.cr_mcp, "is_registered", lambda *a: bool(registered))
     monkeypatch.setattr(cr_studio.cr_mcp, "register", lambda cfg: registered.append(1) or {"connected": True})
-    monkeypatch.setattr(cr_claude, "verify_models", lambda *a: {"verified": True, "message": "Both passed."})
+    monkeypatch.setattr(cr_claude, "verify_models", lambda *a, **k: {"verified": True, "message": "Both passed."})
     answer = client.post("/cr-claude/setup", headers=headers, json={"action": "verify"})
     assert answer.status_code == 200 and answer.get_json()["verified"]
     assert registered and v.cfg["general_model"] == cr_claude.GENERAL_MODEL and v.cfg["local_version"] == "5.3-admin.14"
@@ -584,7 +640,7 @@ def test_verify_is_one_click_it_connects_the_tools_and_saves_the_recommended_mod
 def test_verify_on_the_old_api_route_points_to_the_switch(verified, setup_client, monkeypatch):
     client, headers = setup_client
     verified.cfg.update(brain_mode="channelrecipe")
-    monkeypatch.setattr(cr_claude, "verify_models", lambda *a: pytest.fail("The API route is switched first"))
+    monkeypatch.setattr(cr_claude, "verify_models", lambda *a, **k: pytest.fail("The API route is switched first"))
     answer = client.post("/cr-claude/setup", headers=headers, json={"action": "verify"})
     assert answer.status_code == 409 and "Switch to Claude Code (recommended)" in answer.get_json()["error"]
 

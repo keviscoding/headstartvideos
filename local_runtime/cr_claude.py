@@ -180,6 +180,18 @@ def _fresh_allowance(result):
     return result
 
 
+def _update_command(exe) -> str:
+    """`claude update`, or with the full path when Studio found Claude Code outside PATH (the terminal wouldn't)."""
+    try:
+        on_path = shutil.which("claude")
+        same = bool(on_path) and os.path.normcase(os.path.realpath(on_path)) == os.path.normcase(os.path.realpath(exe))
+    except (OSError, ValueError):
+        same = False
+    if same:
+        return "claude update"
+    return f'& "{exe}" update' if os.name == "nt" else f'"{exe}" update'
+
+
 def _status(exe, *, run=None, environment=None):
     result = {"installed": bool(exe), "authenticated": False, "ready": False,
               "version": "", "auth_method": "none", "api_provider": "", "subscription_type": ""}
@@ -201,7 +213,7 @@ def _status(exe, *, run=None, environment=None):
             result["outdated"] = True
             result["message"] = ("This Claude Code is too old for Studio (it needs 2.1.268 or newer). Open "
                                  + ("PowerShell" if os.name == "nt" else "Terminal")
-                                 + " and run: claude update. Then press Check my Claude Code login.")
+                                 + " and run: " + _update_command(exe) + ". Then press Check my Claude Code login.")
             return result
         auth = invoke([exe, "--setting-sources", "", "auth", "status"],
                       capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
@@ -973,7 +985,9 @@ def _check_to_continue(bridge, previous, identity):
     return project_id
 
 
-def verify_models(engine, bridge, proof):
+def verify_models(engine, bridge, proof, *, auto=False):
+    """The models' tiny check. `auto` (Create's own run on page load, make_videos): a saved check that stopped is
+    never run again by itself, only on the customer's press of Verify (a new check is a new Claude request)."""
     cfg = bridge.load_settings()
     profile = select_profile(cfg.get("general_model",GENERAL_MODEL),cfg.get("visual_model",VISUAL_MODEL))
     cfg = {**cfg, **profile}
@@ -995,8 +1009,12 @@ def verify_models(engine, bridge, proof):
     if not local["ready"] or not cfg.get("costs_accepted"):
         raise RuntimeError(local.get("message") if local.get("outdated") or local.get("slow") else
                            "Sign in to Claude Code (setup, step 2: Open the sign-in window), then verify your models.")
+    carry_on = _check_to_continue(bridge,previous,identity)
+    if (auto and carry_on is None and previous.get("identity") == identity and not previous.get("complete")
+            and previous.get("project_id")):
+        raise ClaudeStageStopped(check_failure("already started or stopped"))
     project = bridge.begin_project("Claude model connection checks","custom",
-        _check_to_continue(bridge,previous,identity),
+        carry_on,
         proof={**proof,**profile,"models_verified":False,"purpose":"setup"},purpose="setup")
     _private_write(marker,{"identity":identity,"project_id":project["id"]})
     install(engine,bridge)

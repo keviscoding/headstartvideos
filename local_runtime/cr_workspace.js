@@ -890,7 +890,7 @@
           api(`/api/status/${encoded(was.slug)}`).then(st=>{if(st.done && st.state==='done')celebrate({...was,...(now||{})});}).catch(()=>{});
         }
       }
-      if (results[1].status==='fulfilled') {state.busy=results[1].value.busy===true || results[0].status==='fulfilled' && results[0].value.busy===true;state.studies=results[1].value.operations || [];}
+      if (results[1].status==='fulfilled') {state.activityLoaded=true;state.busy=results[1].value.busy===true || results[0].status==='fulfilled' && results[0].value.busy===true;state.studies=results[1].value.operations || [];}
       if (results[2].status==='fulfilled' && results[2].value) state.jobs=results[2].value.jobs || [];
       const active = state.studies.find(x=>x.state==='running') || state.queue.find(x=>['running','queued'].includes(x.state));
       const notice=$('crw-active-notice');notice.replaceChildren();notice.hidden=!state.busy;
@@ -1061,13 +1061,13 @@
     if (failing.length && failing.every(c => ['claude', 'mcp', 'models'].includes(c.key))) return {kind: 'setup', label: 'Finish setting up Claude'};
     return null;
   }
-  async function claudeStep(kind) {
+  async function claudeStep(kind, auto = false) {
     if (state.claudeBusy) return;
     if (kind === 'setup') {location.href = '/cr-setup'; return;}
     state.claudeBusy = kind === 'switch' ? 'Switching to Claude Code and checking your Claude models (about a minute)…' : 'Checking your Claude models (a tiny check, about 20 seconds)…';
     error(''); gate();
     try {
-      const result = await api('/cr-claude/setup', {method: 'POST', body: {action: kind}});
+      const result = await api('/cr-claude/setup', {method: 'POST', body: {action: kind, ...(auto ? {auto: true} : {})}});
       if (kind === 'switch' && !result.verified) error(result.message || 'Switched to Claude Code. Finish setting up Claude in setup.');
       else toast(result.message || 'Your Claude models passed their check.');
     } catch (e) {error(e.message);}
@@ -1081,9 +1081,12 @@
   // creator's Claude) instead of sending them back to setup every morning; if it stops, it says why and the button stays.
   async function autoVerify() {
     const cc = state.setup?.claude_code || {};
-    if (state.autoVerified || apiRoute() || !modelsOnlyBlocker() || !cc.authenticated || !cc.mcp_connected) return;
+    // never while a video is made (the check shares its slot), nor before Studio has said whether one is: the next
+    // page load tries
+    if (state.autoVerified || !state.activityLoaded || state.busy || apiRoute() || !modelsOnlyBlocker() || !cc.authenticated || !cc.mcp_connected) return;
     state.autoVerified = true;
-    await claudeStep('verify');
+    // auto: a check that stopped before waits for the button (Studio says so), never runs again by itself
+    await claudeStep('verify', true);
   }
   async function start() {
     const draft=restore();

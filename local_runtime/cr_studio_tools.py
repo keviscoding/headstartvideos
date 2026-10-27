@@ -911,7 +911,12 @@ def tool_make_videos(args):
         if (error.data or {}).get("resume_first"):
             return resume_first_answer(error.data["resume_first"], error.data.get("others") or [])
         if blockers and only_models_check(error.data):
-            call("POST", "/cr-claude/setup", {"action": "verify"}, timeout=300)   # two tiny checks, up to 2 min each
+            try:
+                # two tiny checks, up to 2 min each; a check that stopped before runs again only on the creator's
+                # press of Verify my Claude models (auto)
+                call("POST", "/cr-claude/setup", {"action": "verify", "auto": True}, timeout=300)
+            except Refused as stopped:
+                raise Refused(f"{stopped} Setup: {link('/cr-setup')}", stopped.status, stopped.data) from None
             result = call("POST", "/api/run", payload, timeout=120)
         elif blockers:
             raise Refused(" ".join(blockers) + f" Setup: {link('/cr-setup')}", error.status, error.data) from None
