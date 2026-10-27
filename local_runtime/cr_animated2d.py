@@ -961,6 +961,15 @@ PROBE_OUTSIDE = {"prompt": "a sunny beach at midday with palm trees and a lifegu
                  "sky": ["#5fb8f0", "#bfe6fb"], "floor_colors": ["#e8d49a", "#d9c17e"], "light": "bright day", "crowd": 0,
                  "props": ["palm tree", "lifeguard tower", "beach umbrella"]}
 PROBE_CROWD = 40
+# the same room with other props, and its crowd in another time: what comes out the same draws a few stock props and
+# one kind of people whatever the script says (a customer's renderers, 2026-10-27: filing cabinets in a forest for a
+# 1944 tunnel escape, modern helmeted infantry at Waterloo)
+PROBE_PROPS = ["wooden shoring beams", "mine cart on rails", "oil lamp", "pickaxe", "sign: TUNNEL HARRY"]
+PROBE_ERA = "June 1815, the Napoleonic Wars"
+PROPS_SHOW = 1.0                       # other props that change the room's thumbnail less than this drew nothing new
+ERA_SHOWS = 1.0                        # and another era that changes its crowd less than this dressed nobody for it
+MIN_ACTIONS = 8                        # a renderer's own actions (besides place, enter and exit): every video is made of
+MIN_FRAMINGS = 4                       # them, and of its framings; a customer's had walk, point and turn, and repeated
 PLACES_APART = 6.0                     # two places whose thumbnails (64x36 RGB, 0-255) differ less than this look alike
 CROWD_SHOWS = 1.0                      # a crowd that changes its place's thumbnail less than this drew nobody
 PROBE_WORDS = ("Somebody has already done the math for every single person in this bunker and nobody likes the "
@@ -985,6 +994,18 @@ def _long_words(most: int) -> str:
     return _cut(text, most)
 
 
+PROBE_SAID = {"inside": "in an underground bunker room", "outside": "on a sunny beach", "crowd": "with a crowd",
+              "era": "with that crowd in 1815", "props": "in the bunker room with other props (shoring, a mine cart, an "
+                                                        "oil lamp, a pickaxe, a sign)"}
+
+
+def probe_words(pictures) -> str:
+    """The probes among a draft's pictures, in order, as Claude reads them ("in an underground bunker room, on a sunny
+    beach, ..."), by their file names (inside_0.jpg)."""
+    said = [PROBE_SAID[n] for n in (Path(str(p)).name.split("_")[0] for p in pictures) if n in PROBE_SAID]
+    return ", ".join(said[:-1]) + (", then " if len(said) > 1 else "") + said[-1] if said else "(none)"
+
+
 def text_probe(scene: dict, man: dict):
     """The scene with every declared text parameter at its longest (words up to its declared length, else 60), or
     None when no action or effect in it takes text."""
@@ -1005,6 +1026,28 @@ def text_probe(scene: dict, man: dict):
     return (scene, sorted(set(changed))) if changed else (None, [])
 
 
+def vocabulary_gaps(man: dict) -> str:
+    """What a renderer's manifest lacks for a whole video: its own actions (besides place, enter and exit) and its
+    framings, each counted against MIN_ACTIONS and MIN_FRAMINGS; "" when it has enough or declares none to read."""
+    if not man:
+        return ""
+    actions = [a for a in vocabulary(man.get("actions")) if a not in ("place", "enter", "exit")]
+    framings = sorted({str(f).split(":")[0] for f in man.get("shots") or [] if str(f).strip()})
+    short = []
+    if len(actions) < MIN_ACTIONS:
+        short.append(f"{len(actions)} actions ({', '.join(actions[:6]) or 'none'})")
+    if len(framings) < MIN_FRAMINGS:
+        short.append(f"{len(framings)} framings ({', '.join(framings) or 'none'})")
+    if not short:
+        return ""
+    return ("your renderer has only " + " and ".join(short) + ": every video is made of them, so its videos repeat "
+            "themselves. Give it what stories need, drawn the channel's way: at least " + str(MIN_ACTIONS) + " actions "
+            "(moving: walk, run, crawl, climb; doing: dig, carry, build, fight, fire, hide; reacting: fall, cheer, "
+            "argue, talk; and the channel's own) and at least " + str(MIN_FRAMINGS) + " framings (wide, medium, close, "
+            "ground level, top-down or map, an insert of a prop), with maps and boards drawn from their parameters, "
+            "never one fixed picture")
+
+
 def draws_own_places(man: dict) -> bool:
     """The renderer draws every place itself in code (plates: {draw: false}); otherwise Studio draws each place's
     picture from its words. The director's new places, the build's place probe and the frame check all go by this."""
@@ -1021,8 +1064,9 @@ def probe(scene: dict, spec: dict, code: str, out: Path, *, home=None, man: dict
           stress: dict = None) -> dict:
     """What a draft does with what every video needs: {"problems" (it can't draw at all: hard), "issues" (what to
     fix, in Claude's words), "pictures" [(what, path)]}. Its test scene is drawn at its first still in a bunker room,
-    on a beach (unless Studio draws each place's picture: plates.draw true) and with a crowd; its stress scene with
-    every text parameter at its longest."""
+    on a beach and with other props (unless Studio draws each place's picture: plates.draw true), and with a crowd,
+    today and in 1815; its stress scene with every text parameter at its longest; its manifest counted for a whole
+    video's actions and framings."""
     out = Path(out)
     man, channel = man or {}, channel or {}
     base = _test_scene(scene, spec)
@@ -1048,8 +1092,12 @@ def probe(scene: dict, spec: dict, code: str, out: Path, *, home=None, man: dict
     drawn("inside", PROBE_INSIDE)
     if own_places:
         drawn("outside", PROBE_OUTSIDE)
-    if channel.get("cast") or (man.get("cast") or {}).get("traits"):
+    people = bool(channel.get("cast") or (man.get("cast") or {}).get("traits"))
+    if people:
         drawn("crowd", PROBE_INSIDE, PROBE_CROWD)
+        drawn("era", {**PROBE_INSIDE, "era": PROBE_ERA}, PROBE_CROWD)
+    if own_places:
+        drawn("props", {**PROBE_INSIDE, "props": PROBE_PROPS})
     if problems:
         return {"problems": problems, "issues": [], "pictures": list(pictures.items())}
     thumbs = {k: _thumb(v) for k, v in pictures.items()}
@@ -1064,6 +1112,18 @@ def probe(scene: dict, spec: dict, code: str, out: Path, *, home=None, man: dict
     if "crowd" in thumbs and _apart(thumbs["inside"], thumbs["crowd"]) < CROWD_SHOWS:
         issues.append(f"a place with crowd: {PROBE_CROWD} drew nobody more: draw a set's crowd (or a shot's) as that many "
                       "background extras in the channel's figure style, smaller in depth (Kit.place.crowd gives slots)")
+    elif "era" in thumbs and _apart(thumbs["crowd"], thumbs["era"]) < ERA_SHOWS:
+        issues.append(f"the same crowded room with era: \"{PROBE_ERA}\" came out the same as today's: every video is "
+                      "set in its own time, so draw its people (clothes, headwear, weapons, kit), vehicles, buildings and "
+                      "props for the set's era (a Napoleonic soldier in a shako with a musket, never a modern helmet), "
+                      "in the channel's style")
+    if "props" in thumbs and _apart(thumbs["inside"], thumbs["props"]) < PROPS_SHOW:
+        issues.append("the same room with other props (" + ", ".join(PROBE_PROPS[:4]) + ") came out the same: draw "
+                      "each prop from its words (its shape, size and colour; a sign with its words), never a stock "
+                      "prop in its place, and never the same few whatever the set lists (Kit.sketch helps)")
+    thin = vocabulary_gaps(man)
+    if thin:
+        issues.append(thin)
     if stress:
         long, which = text_probe(stress, man)
         if long:
@@ -1214,8 +1274,8 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
                       .replace("[BRIEF]", str(brief or "").strip()[:1500] or "(nothing more than the channel itself)")
                       .replace("[IMAGES]", f"The first {len(shown)} pictures are the channel's own frames"
                                + (f"; the last {len(prev_stills)} are your previous test shots, in order (any after "
-                                  "the test shots are Studio's probes: your test scene's first still in an underground "
-                                  "bunker room, on a sunny beach, then with a crowd)." if prev_stills else ".")))
+                                  "the test shots are Studio's probes: your test scene's first still "
+                                  + probe_words(prev_stills) + ")." if prev_stills else ".")))
             log(f"  renderer: Claude writes draft {r + 1}")
             text = see(prompt, [str(p) for p in shown] + [str(p) for p in prev_stills])
             if not text:
@@ -1848,6 +1908,7 @@ def clean_cast(raw, traits: dict = None, keep: dict = None) -> dict:
 
 
 LIGHT_MAX = 40
+ERA_MAX = 60                           # a set's time: "June 1815, the Napoleonic Wars", "1944, a German POW camp", "today"
 
 
 def clean_sets(raw, most: int = 6, taken=()) -> dict:
@@ -1873,6 +1934,10 @@ def clean_sets(raw, most: int = 6, taken=()) -> dict:
             row["walls"] = walls
         if isinstance(s.get("light"), str) and s["light"].strip():
             row["light"] = _cut(s["light"], LIGHT_MAX)
+        if isinstance(s.get("era"), str) and s["era"].strip():
+            # what its people wear and carry, its vehicles and buildings: a Waterloo script was drawn with modern
+            # helmeted infantry, a 1944 tunnel escape with filing cabinets in a forest (2026-10-27)
+            row["era"] = _cut(s["era"], ERA_MAX)
         props = [_cut(x, 48) for x in (s.get("props") if isinstance(s.get("props"), list) else [])
                  if isinstance(x, (str, int, float)) and str(x).strip()][:8]
         if props:
@@ -2164,6 +2229,8 @@ def plate_prompt(set_: dict, spec: dict, man: dict = None) -> str:
     place's words, framed for its kit (a 2D stage, or a backdrop 3D characters are composited over) and the video's
     shape (a Shorts channel's plates are vertical)."""
     look = ((man or {}).get("plates") or {}).get("prompt") or spec.get("art") or "flat 2D vector animation"
+    if set_.get("era"):                                     # a place of its time (only a set that says one: the
+        set_ = {**set_, "prompt": f"{set_['prompt']} ({set_['era']})"}     # plates of a video begun before keep theirs
     tall = int(spec.get("height") or 1080) > int(spec.get("width") or 1920)
     shape = "tall 9:16 (vertical)" if tall else "wide 16:9"
     empty = "EMPTY: nobody in it, no people, no figures, no characters, no animals, no text, no logos. "
@@ -2287,7 +2354,7 @@ NEW_SETS = 2                           # places a director may add to a stretch,
 
 
 def _places_words(sets: dict) -> str:
-    return json.dumps({k: {f: v[f] for f in ("prompt", "inside", "light", "props", "crowd") if f in v}
+    return json.dumps({k: {f: v[f] for f in ("prompt", "era", "inside", "light", "props", "crowd") if f in v}
                        for k, v in sets.items()}, ensure_ascii=False)
 
 
@@ -2338,8 +2405,9 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
                                             if line.startswith("- place ")), "") or "{x, face: left|right}")
                   .replace("[NEWSETS]", ("NEW PLACES: when the narration goes somewhere none of the places above is (a "
                                          "hatch, a tunnel, the surface), add it under \"sets\" in your reply, at most "
-                                         f"{NEW_SETS}, with a place's fields (prompt, inside, walls, sky, floor_colors, "
-                                         "light, props, crowd), and use its id in the shots. The renderer draws any place.")
+                                         f"{NEW_SETS}, with a place's fields (prompt, era, inside, walls, sky, "
+                                         "floor_colors, light, props, crowd), and use its id in the shots. The renderer "
+                                         "draws any place, in its era.")
                            if own_places else "")
                   .replace("[NEWSETS_REPLY]", ',\n "sets": {}' if own_places else "")
                   .replace("[REVIEW]", review)
@@ -2354,7 +2422,7 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
     return clean_plan(_json(text), casting["cast"], casting["sets"], t0, t1, man, new_sets=NEW_SETS if own_places else 0)
 
 
-SET_FIELDS = ("sky", "floor_colors", "prompt", "inside", "walls", "light", "props", "crowd")
+SET_FIELDS = ("sky", "floor_colors", "prompt", "inside", "walls", "light", "props", "crowd", "era")
 
 
 def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: list = None, size=None) -> dict:
@@ -2416,7 +2484,9 @@ FRAME_CHECK_KEPT = "frame-check.json"  # that choice, kept in the video's animat
 FRAME_CHECK_MINUTES = (1.0, 2.5)
 # what the free checks find that is clearly worth a re-plan (their words, from plan_notes and frame_notes)
 CLEAR_NOTES = ("frozen picture", "drawn over", "run off the edge", "recurring character", "don't fit their box")
-CLEAR_SEEN = ("PLACE", "TEXT", "MISSING")
+# REPEAT: a stretch that loops the same framing and action (the owner and a customer, 2026-10-27: "REPETITIVE");
+# ERA and PROP (people or props of another time or place) are mostly the renderer's, said after the video
+CLEAR_SEEN = ("PLACE", "TEXT", "MISSING", "REPEAT")
 
 
 def frame_check_default(home=None) -> bool:

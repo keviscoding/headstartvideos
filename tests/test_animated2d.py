@@ -454,9 +454,11 @@ def test_claude_writes_the_renderer_its_shots_are_judged_and_it_is_revised_until
                                          judge=judge, references=refs, home=home, log=lambda m: None))
     assert result["state"] == "passed" and result["round"] == 3 and result["overall"] == 7.5 and result["bar"] == 7.0
     assert "may not" in seen[1][0], "the refused draft's reasons go back to Claude"
-    assert "band sits too low" in seen[2][0] and len(seen[2][1]) == 5 + 3 + 3, "the judge's words and the last shots go back"
-    assert [Path(p).name for p in seen[2][1][-3:]] == ["inside_0.jpg", "outside_0.jpg", "crowd_0.jpg"], \
-        "with Studio's probes: the test scene in a bunker room, on a beach and with a crowd"
+    assert "band sits too low" in seen[2][0] and len(seen[2][1]) == 5 + 3 + 5, "the judge's words and the last shots go back"
+    assert [Path(p).name for p in seen[2][1][-5:]] == ["inside_0.jpg", "outside_0.jpg", "crowd_0.jpg", "era_0.jpg",
+                                                      "props_0.jpg"], \
+        "with Studio's probes: the test scene in a bunker room, on a beach, with a crowd, in 1815 and with other props"
+    assert "on a sunny beach, with a crowd, with that crowd in 1815, then in the bunker room with other props" in seen[2][0]
     assert not any("never shown" in prompt for prompt, _ in seen), "the held-out frame's notes are not Claude's to fix"
     assert len(judged) == 3, "the channel's own frame is scored once, on its own"
     assert result["manifest"]["name"] == "bean-shorts" and (tmp_path / "op/renderer/renderer.js").is_file()
@@ -478,10 +480,14 @@ def test_a_renderer_that_never_reaches_the_bar_is_saved_as_below_it(home, tmp_pa
     assert nothing["state"] == "failed"
 
 
-def test_a_judge_that_never_answers_saves_the_renderer_unjudged_never_as_zero(home, tmp_path):
+def test_a_judge_that_never_answers_saves_the_renderer_unjudged_never_as_zero(home, tmp_path, monkeypatch):
     """A customer's two studies (2026-10-27) were saved as 0/10 against a bar of 5.5: their plan's style checks were
     used up by the looks, so every likeness call was refused, and each refusal was counted as a score of 0."""
     refs = _frames(tmp_path / "refs")
+    # a draft that draws what every video needs (the test bean has few actions and no eras: not what this is about)
+    monkeypatch.setattr(a2d, "vocabulary_gaps", lambda man: "")
+    monkeypatch.setattr(a2d, "ERA_SHOWS", -1)
+    monkeypatch.setattr(a2d, "PROPS_SHOW", -1)
     seen, logged = [], []
 
     def refused(references, candidates):
@@ -630,8 +636,10 @@ def test_a_draft_that_knows_only_its_own_place_is_sent_back_with_what_every_vide
                                       channel={"cast": [{"name": "you", "look": "a red-cap stick figure", "share": 0.8}]},
                                       stress={**scene, "width": 1920, "height": 1080}))
     issues = "\n".join(got["issues"])
-    assert got["problems"] == [] and [k for k, _ in got["pictures"]] == ["inside", "outside", "crowd"]
+    assert got["problems"] == [] and [k for k, _ in got["pictures"]] == ["inside", "outside", "crowd", "era", "props"]
     assert "came out the same in both" in issues and "crowd: 40 drew nobody more" in issues
+    assert "with other props (wooden shoring beams" in issues and "never a stock prop in its place" in issues
+    assert "your renderer has only 1 actions (sign): every video is made of them" in issues, "one move repeats"
     assert "with each text parameter at its longest (sign.text)" in issues and "run off the edge of the frame" in issues
     assert "these parameters say no type: place.x" in issues
     assert "you (a red-cap stick figure) in 80% of its shots" in issues and "manifest.cast.recurring" in issues
@@ -664,6 +672,63 @@ def test_a_quote_says_the_claude_time_the_frame_check_adds():
          "media": {"per_video_usd": 0.1}, "frame_check": {"on": True, "adds_minutes": [3, 8]}}
     assert "The frame check adds about 3 to 8 minutes of Claude time a video" in tools.summary(q)
     assert "frame check" not in tools.summary({**q, "frame_check": {"on": False, "adds_minutes": [3, 8]}})
+
+
+def test_every_place_carries_its_era_to_the_renderer_its_plate_and_the_director():
+    """A Waterloo script was drawn with modern helmeted infantry, a 1944 tunnel escape with filing cabinets in a forest
+    (a customer, 2026-10-27): each place now says when it is, and the renderer dresses it for that time."""
+    sets = a2d.clean_sets({"field": {"prompt": "a muddy field at Waterloo", "era": "June 1815, the Napoleonic Wars " * 4,
+                                     "props": ["cannon", "powder barrels"]},
+                           "today": {"prompt": "a parking lot"}})
+    assert sets["field"]["era"].startswith("June 1815") and len(sets["field"]["era"]) <= a2d.ERA_MAX
+    assert "era" not in sets["today"], "a place without a time says none"
+    film = a2d.film_spec({"duration": 2, "shots": [], "actions": [], "fx": []}, {"cast": {}, "sets": sets}, {}, {})
+    assert film["sets"]["field"]["era"] == sets["field"]["era"]
+    assert "(June 1815" in a2d.plate_prompt(sets["field"], {}) and "(" not in a2d.plate_prompt(sets["today"], {})
+    assert '"era": "June 1815' in a2d._places_words(sets)
+
+
+def test_a_renderer_with_a_few_actions_and_framings_is_told_its_videos_repeat():
+    man = {"actions": {"place": {"does": "x"}, "walk": {"does": "w"}, "point": {"does": "p"}, "turn": {"does": "t"}},
+           "shots": ["wide", "close:<id>", "close:<id>"]}
+    said = a2d.vocabulary_gaps(man)
+    assert "only 3 actions (walk, point, turn) and 2 framings (close, wide)" in said and "repeat" in said
+    full = {"actions": {n: {"does": n} for n in ("walk", "run", "crawl", "dig", "carry", "fight", "fall", "talk")},
+            "shots": ["wide", "medium:<id>", "close:<id>", "ground"]}
+    assert a2d.vocabulary_gaps(full) == "" and a2d.vocabulary_gaps({}) == ""
+    assert a2d.probe_words(["round-1/shot_0.jpg", "inside_0.jpg", "era_0.jpg"]) == \
+        "in an underground bunker room, then with that crowd in 1815"
+
+
+def test_a_stretch_that_loops_is_planned_again(home):
+    found = {"notes": [], "seen": [{"at": 12.0, "kind": "REPEAT", "fix": "director",
+                                    "what": "the same wide walk as two moments before"}]}
+    fix, faults = a2d.replan_for(found, {"plates": {"draw": True}})
+    assert fix and "repeat: the same wide walk" in fix[0] and faults == []
+    era = {"notes": [], "seen": [{"at": 3.0, "kind": "ERA", "fix": "renderer", "what": "modern helmets in 1815"}]}
+    assert a2d.replan_for(era, {}) == ([], []), "the renderer's own fault is said after the video, never re-planned"
+    review = (home / a2d.KIT / "review.txt").read_text(encoding="utf-8")
+    assert "- ERA:" in review and "- PROP:" in review and "- REPEAT:" in review
+
+
+def test_the_creators_brief_reaches_the_renderer_without_changing_the_builds_key(home, tmp_path):
+    refs = _frames(tmp_path / "refs")
+    seen = []
+
+    def see(prompt, images):
+        seen.append(prompt)
+        return "I can't"
+    a2d.build(tmp_path / "op", {}, {}, see=see, judge=lambda r, c: {}, references=refs, home=home, rounds=1,
+              log=lambda m: None, brief="Recurring ground-level battle shots with detailed units")
+    assert "Recurring ground-level battle shots with detailed units" in seen[0] and "[BRIEF]" not in seen[0]
+    again = a2d.build(tmp_path / "op", {}, {}, see=lambda p, i: pytest.fail("never asked twice"), judge=lambda r, c: {},
+                      references=refs, home=home, rounds=1, log=lambda m: None)
+    assert again["state"] == "failed", "the same build, found by its key"
+    for kit in (a2d.KIT, a2d.KIT3D) if (home / a2d.KIT3D).is_dir() else (a2d.KIT,):
+        guide = (home / kit / "AUTHORING.md").read_text(encoding="utf-8")
+        assert "**Any time.**" in guide and "**Props from their words.**" in guide and "**A whole video's range.**" in guide
+    assert set(a2d.earlier("cast.txt", home)) >= {(home / a2d.KIT / "cast-110.txt").read_text(encoding="utf-8")}, \
+        "a video cast under Studio 110 resumes without asking Claude again"
 
 
 def test_the_example_claude_is_shown_meets_what_every_video_needs(home, tmp_path):

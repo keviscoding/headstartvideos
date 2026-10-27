@@ -143,7 +143,7 @@ def test_the_3d_example_draws_any_place_a_crowd_and_typed_parameters(home3d, tmp
     got = _chromium(lambda: a2d.probe(scene, {"dims": 3, "width": 960, "height": 540}, code, tmp_path / "probe",
                                       home=home3d, man=man, channel={"cast": [{"name": "Pip", "look": "x", "share": 0.9}]},
                                       stress=scene))
-    assert got["problems"] == [] and got["issues"] == [] and len(got["pictures"]) == 3
+    assert got["problems"] == [] and got["issues"] == [] and len(got["pictures"]) == 5, "in 1815 and with other props too"
     assert a2d.untyped(man) == [] and "pip" in a2d.recurring(man)
 
 
