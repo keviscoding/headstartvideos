@@ -1,0 +1,488 @@
+WEBVTT
+
+00:00.000 --> 00:04.000
+Day 1, 6:42 PM.
+
+00:04.000 --> 00:06.000
+The bunker door seals behind you.
+
+00:06.000 --> 00:08.600
+This video is made by ChannelRecipe Studio
+
+00:08.600 --> 00:10.800
+on a brand new Windows computer.
+
+00:10.800 --> 00:13.200
+In this full course, we'll go from a fresh account
+
+00:13.200 --> 00:16.000
+to this exact video, step-by-step.
+
+00:16.000 --> 00:20.000
+Every click, every setting, in order.
+
+00:20.000 --> 00:21.300
+You need three things.
+
+00:21.300 --> 00:24.300
+ChannelRecipe Studio, the Claude desktop app,
+
+00:24.300 --> 00:27.700
+and a Kie.ai account for the voice and pictures.
+
+00:27.700 --> 00:29.300
+We'll set up all three together.
+
+00:31.300 --> 00:33.700
+Once you've subscribed, you'll see this.
+
+00:33.700 --> 00:35.700
+Click Setup Studio.
+
+00:35.700 --> 00:38.700
+That opens the setup page with three steps.
+
+00:38.700 --> 00:41.700
+Download Studio, install, and connect it.
+
+00:41.700 --> 00:43.700
+Then make your first video.
+
+00:43.700 --> 00:45.700
+Under step 1, pick Windows
+
+00:45.700 --> 00:48.700
+and click Download ChannelRecipe Studio.
+
+00:48.700 --> 00:51.700
+It's a zip file, about 250 megabytes.
+
+00:51.700 --> 00:54.700
+There's also a short setup video on this page
+
+00:54.700 --> 00:56.700
+if you want the quick version.
+
+00:57.700 --> 01:02.100
+While that downloads, install the Claude desktop app.
+
+01:02.100 --> 01:04.300
+Search for Claude desktop app.
+
+01:04.300 --> 01:08.700
+Open the official download page and click Download for Windows.
+
+01:08.700 --> 01:12.700
+The installer runs by itself. Give it a few minutes.
+
+01:16.700 --> 01:21.700
+When Claude opens, accept the cookie settings. Click Get Started and sign in with your email.
+
+01:21.700 --> 01:26.700
+Claude sends you a sign-in link. Open it and when your browser asks, choose Open Link.
+
+01:26.700 --> 01:27.700
+Choose Open Link.
+
+01:28.700 --> 01:29.700
+You're signed in.
+
+01:30.700 --> 01:33.700
+If Claude asks for access to your camera, you can say no.
+
+01:33.700 --> 01:34.700
+You won't need it.
+
+01:36.700 --> 01:38.700
+Now unzip Studio.
+
+01:38.700 --> 01:40.700
+Open your Downloads folder.
+
+01:40.700 --> 01:42.700
+Right-click the ChannelRecipe zip.
+
+01:42.700 --> 01:43.700
+Choose Extract All.
+
+01:43.700 --> 01:45.700
+And click Extract.
+
+01:46.700 --> 01:49.700
+Back in Claude, open the Code tab.
+
+01:49.700 --> 01:52.700
+Under the Message box, click the folder picker.
+
+01:52.700 --> 01:59.200
+Choose Open Folder and select the ChannelRecipe Studio folder inside the one you just extracted.
+
+01:59.200 --> 02:02.200
+Then, click Trust Workspace.
+
+02:02.200 --> 02:05.200
+Set the permissions to bypass permissions.
+
+02:05.200 --> 02:10.700
+So, Claude Code can install things without stopping to ask you every few seconds and confirm.
+
+02:10.700 --> 02:13.200
+Leave the model on Sonnet.
+
+02:15.200 --> 02:17.200
+Go back to the setup page.
+
+02:17.200 --> 02:19.700
+Under Step 2, copy the install prompt.
+
+02:19.700 --> 02:22.200
+Paste it into Claude Code and press Enter.
+
+02:22.200 --> 02:28.080
+Claude Code reads the folder, checks what your computer already has, like Python and Node,
+
+02:28.080 --> 02:36.460
+and starts the Studio Installer.
+
+02:36.460 --> 02:41.540
+Windows asks if you want to run the installer, untick
+
+02:41.540 --> 02:46.020
+Always ask before opening this file, and click Run.
+
+02:46.020 --> 02:49.300
+Now the installer downloads everything Studio needs.
+
+02:49.300 --> 02:57.060
+When it's done, Studio opens its setup page in your browser, all by itself.
+
+02:57.060 --> 02:58.940
+First, the tools check.
+
+02:58.940 --> 03:02.100
+Python, the graphics browser, and the network are ready.
+
+03:02.100 --> 03:06.940
+The video tools and the YouTube helper aren't installed yet, so click Fix it on each one,
+
+03:06.940 --> 03:09.780
+and Studio downloads them for you.
+
+03:09.780 --> 03:12.900
+Wait until every line says ready.
+
+03:12.900 --> 03:13.900
+Step 1.
+
+03:13.900 --> 03:15.980
+Connect your ChannelRecipe account.
+
+03:15.980 --> 03:18.460
+Click the button, then approve and connect.
+
+03:18.460 --> 03:25.940
+You're sent straight back and step one says done. Step two, set up Claude, click install
+
+03:25.940 --> 03:31.780
+Claude Code. Studio runs Anthropic's official installer for you. Click open the
+
+03:31.780 --> 03:36.620
+sign-in window, sign in with your Claude account, open the link from your email
+
+03:36.620 --> 03:43.900
+and click Authorize. Back in Studio, click Setup Claude for videos. It connects,
+
+03:43.900 --> 03:49.900
+picks the Claude models and runs a quick check with each one.
+
+03:49.900 --> 03:50.900
+Step 3.
+
+03:50.900 --> 03:53.660
+Voice and Images.
+
+03:53.660 --> 03:58.900
+By default, Studio narrates with Gemini Voices through Kie.ai, and if you have your own
+
+03:58.900 --> 04:01.900
+ElevenLabs account, you can pick that instead.
+
+04:01.900 --> 04:07.900
+Copy your API key from your Kie dashboard, paste it in, and click Check and Connect Media
+
+04:07.900 --> 04:08.900
+account.
+
+04:08.900 --> 04:11.900
+Kie is connected, and Step 3 is done.
+
+04:11.900 --> 04:14.400
+That's set up done. Click Open Studio.
+
+04:19.500 --> 04:22.200
+If there's an update banner at the top, take it.
+
+04:22.200 --> 04:25.400
+Click Update Now, then Restart Now.
+
+04:25.400 --> 04:27.400
+The page reloads on the new version
+
+04:27.400 --> 04:29.400
+and your projects, accounts, and styles
+
+04:29.400 --> 04:31.400
+stay exactly as they were.
+
+04:33.900 --> 04:37.400
+Now the fun part, Cloning a Channel's Style.
+
+04:37.400 --> 04:40.900
+Go to Style Library and click Clone a Style.
+
+04:40.900 --> 04:43.580
+You need a channel to learn from.
+
+04:43.580 --> 04:46.780
+We searched YouTube for zombie apocalypse day one,
+
+04:46.780 --> 04:49.820
+opened one of these stick figure survival videos,
+
+04:49.820 --> 04:52.620
+and went to the channel, Nobody Gets In,
+
+04:52.620 --> 04:54.060
+copy the channel's link.
+
+04:56.100 --> 04:58.540
+Paste it into YouTube reference link,
+
+04:58.540 --> 05:01.260
+and click Preview References.
+
+05:01.260 --> 05:04.100
+Studio lists the channel's videos.
+
+05:04.100 --> 05:06.460
+Tick up to three that show the style best,
+
+05:06.460 --> 05:08.980
+and click Look at these videos.
+
+05:08.980 --> 05:18.980
+Studio now reads each video's captions, downloads the first three minutes, and measures the pacing, the motion, the light, and the sound.
+
+05:18.980 --> 05:26.980
+It takes a few minutes, and the download can look slow. That's normal. Let it run. Then you get.
+
+05:26.980 --> 05:35.980
+Here's what Studio saw. It recommends a recipe here, 2D life stories, and lists what makes the channel recognizable.
+
+05:35.980 --> 05:42.980
+Rigged stick figure characters, a new picture about every two seconds, hard cuts, a vignette,
+
+05:42.980 --> 05:49.980
+comic lettering, sound design, and a voice at about 190 words a minute.
+
+05:49.980 --> 05:52.980
+Leave written in code selected.
+
+05:52.980 --> 05:55.980
+Your Claude Code writes this channel's own renderer.
+
+05:55.980 --> 06:00.980
+This channel has a recurring presenter, so we said yes, design one for my channel.
+
+06:00.980 --> 06:02.980
+Click, looks right, continue.
+
+06:06.280 --> 06:08.680
+Make it yours. Give the style a name.
+
+06:08.680 --> 06:10.680
+We called it, Nobody Gets In.
+
+06:11.580 --> 06:15.080
+Next, it wants an example video you'd like to make.
+
+06:15.080 --> 06:18.080
+For ideas we took a screenshot of the channel's videos,
+
+06:18.080 --> 06:19.880
+pasted it into Claude,
+
+06:19.880 --> 06:23.380
+and asked for concepts that would appeal to the same audience.
+
+06:23.380 --> 06:27.280
+We picked 100 strangers, one bunker.
+
+06:27.280 --> 06:29.280
+Who survives 30 days?
+
+06:30.980 --> 06:37.660
+Paste it in as your example video.
+
+06:37.660 --> 06:40.500
+Open study limits and example length.
+
+06:40.500 --> 06:47.100
+We raise the study budget from 20 to 30 minutes and the most Claude requests from 40 to 80.
+
+06:47.100 --> 06:50.980
+More time gives Claude a better shot at matching the channel.
+
+06:50.980 --> 06:55.140
+Tick the box to approve the study with your Claude Code account and click study and build
+
+06:55.140 --> 06:58.620
+my style.
+
+06:58.620 --> 07:03.060
+If Studio says your study is ready to start, tick I approve continuing the saved reference
+
+07:03.060 --> 07:07.500
+study, and click continue saved study.
+
+07:07.500 --> 07:09.540
+Now Studio works through four stages.
+
+07:09.540 --> 07:11.580
+It designs around your brief.
+
+07:11.580 --> 07:14.060
+It inspects the reference frames and captions.
+
+07:14.060 --> 07:18.260
+It writes the picture style, the cast, and the voice, and then Claude writes the channel's
+
+07:18.260 --> 07:23.620
+animation and code, checking its test shots against the channel's real frames.
+
+07:23.620 --> 07:25.140
+You don't have to watch.
+
+07:25.140 --> 07:30.140
+Windows tells you when your new style is ready.
+
+07:30.140 --> 07:35.140
+Here's the finished style with Claude's test shots next to the channel's real frames
+
+07:35.140 --> 07:36.140
+and a score.
+
+07:36.140 --> 07:39.140
+Click use this style to make a video.
+
+07:39.140 --> 07:42.140
+Your example title is already filled in.
+
+07:42.140 --> 07:44.140
+Set the target duration.
+
+07:44.140 --> 07:46.140
+We picked one minute for a first test.
+
+07:46.140 --> 07:50.140
+Check the visual sources, the captions, and the creative direction.
+
+07:50.140 --> 07:52.140
+Then click create video.
+
+07:52.140 --> 07:59.260
+A quick look at the options, target duration goes from 30 seconds up to long videos.
+
+07:59.260 --> 08:03.420
+Under visual sources, sound design is on by default, and you can add stock footage or
+
+08:03.420 --> 08:05.420
+generated pictures.
+
+08:05.420 --> 08:10.660
+Under captions and publishing, you can burn captions into the video and add chapter markers.
+
+08:10.660 --> 08:14.900
+And creative direction lets you change the character or add a call to action.
+
+08:14.900 --> 08:18.460
+For a first video, the defaults are fine.
+
+08:18.460 --> 08:20.980
+Studio queues the project and works through it.
+
+08:20.980 --> 08:26.280
+It creates the narration times every word with Whisper on your computer, visualizes each
+
+08:26.280 --> 08:29.840
+scene with Claude Code, and renders the film.
+
+08:29.840 --> 08:33.140
+You can follow every step under production details.
+
+08:33.140 --> 08:37.180
+When it says ready to watch, open video, and exports.
+
+08:37.180 --> 08:50.260
+Here's the result.
+
+08:50.260 --> 08:58.860
+Day one, 6:42 PM, the bunker door seals behind you, and the lights hum on.
+
+08:58.860 --> 09:04.460
+You count heads, 100, you know none of them.
+
+09:04.460 --> 09:09.460
+The sign above the door reads, capacity, 40.
+
+09:09.460 --> 09:14.140
+You walk to the pantry, one clipboard hangs from a nail, someone has already done the
+
+09:14.140 --> 09:28.740
+math, 412 meals, 30 days. You do it again. 100 people, 3 meals each, 300 meals a day.
+
+09:28.740 --> 09:36.980
+The food lasts a day and a half. The water tank is next, 2,000 liters, 6 days if nobody
+
+09:36.980 --> 09:45.580
+washes. Then the air filter, one unit, rated for 40. At seven o'clock, a speaker on the
+
+09:45.580 --> 09:53.160
+wall clicks. A flat voice says one sentence. The hatch opens on day 30. Until then, the
+
+09:53.160 --> 10:01.280
+bunker decides who stays. Nobody speaks. A hundred people look at the same ceiling.
+
+10:01.280 --> 10:03.920
+By Day 3, there is a vote.
+
+10:03.920 --> 10:06.880
+By Day 4, there is a list.
+
+10:06.880 --> 10:10.680
+Your name is already on it.
+
+10:10.680 --> 10:11.680
+Want it better?
+
+10:11.680 --> 10:16.120
+Go to Style Library and click Improve this Style.
+
+10:16.120 --> 10:18.960
+Type one change in your own words.
+
+10:18.960 --> 10:22.000
+We wrote: too repetitive.
+
+10:22.000 --> 10:28.600
+Click Improve this Style and Claude studies the change and saves a new version.
+
+10:28.600 --> 10:33.080
+You can keep improving your style one change at a time.
+
+10:33.080 --> 10:36.720
+That's the whole thing from a brand new account to a finished video.
+
+10:36.720 --> 10:40.320
+If you get stuck anywhere, ask in the Discord, see you in the next one.
+

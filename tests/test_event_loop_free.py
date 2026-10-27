@@ -23,7 +23,7 @@ WEBAPP = Path(server.__file__).resolve().parent
 ASYNC_ON_PURPOSE = {
     # server.py: no blocking work at all (an in-memory answer, a cached page, a stat before FileResponse streams)
     "server.py": {"health", "landing", "favicon", "apple_touch_icon", "index", "privacy_page", "terms_page",
-                  "harness_3d_page", "money_niche_page", "money_niche_channel_check", "affiliates_page", "robots_txt",
+                  "harness_3d_page", "course_page", "money_niche_page", "money_niche_channel_check", "affiliates_page", "robots_txt",
                   "sitemap_xml", "get_client_config", "get_voices", "get_all_voices", "avatar_gen_cost", "serve_file",
                   "get_settings", "save_settings",
                   # await the request itself, then hand the blocking part to a thread

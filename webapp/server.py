@@ -2278,6 +2278,13 @@ async def terms_page():
     return web_assets.html_page(STATIC_DIR / "terms.html")
 
 
+# The owner's full course (2026-10-27): a new account to a finished video, recorded on Windows. Public, so it can be
+# shared in Discord and anywhere else; the video plays from the media CDN.
+@app.get("/course", response_class=HTMLResponse)
+async def course_page():
+    return web_assets.html_page(STATIC_DIR / "course.html")
+
+
 # Free guides linked from the owner's videos (lead magnets): public pages with their downloads beside them.
 @app.get("/3d-harness", response_class=HTMLResponse)
 async def harness_3d_page():
@@ -2395,7 +2402,7 @@ async def robots_txt():
 
 
 # The public pages search engines should list.
-SITEMAP_PAGES = ("/", "/money-niche", "/3d-harness", "/privacy", "/terms")
+SITEMAP_PAGES = ("/", "/course", "/money-niche", "/3d-harness", "/privacy", "/terms")
 
 
 @app.get("/sitemap.xml", include_in_schema=False)

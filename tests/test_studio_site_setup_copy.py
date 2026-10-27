@@ -30,8 +30,8 @@ def test_the_download_size_counts_what_setup_downloads_too():
 
 
 def test_the_windows_tab_drops_the_mac_only_chapter():
-    video = JS[JS.index("function setupVideo()"):JS.index("function setupSteps()")]
-    assert "CHAPTERS.filter(([,label])=>platform!=='windows'||!/\\bMac\\b/.test(label))" in video
+    video = JS[JS.index("const WALKS"):JS.index("function setupSteps()")]
+    assert "chapters.filter(([,label])=>platform!=='windows'||!/\\bMac\\b/.test(label))" in video
     assert "the Mac security prompt" in video and "platform==='windows'?" in video
 
 
