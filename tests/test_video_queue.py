@@ -180,8 +180,12 @@ def test_a_saved_project_resumes_while_another_is_made_once(env, monkeypatch):
 def test_account_changes_stay_refused_while_videos_wait(env):
     env.client.post("/api/run", headers=env.headers, json={"title": "Rome falls", "steps": ["video"]})
     assert env.studio._cr_activity.busy()
-    for path in ("/cr-connect", "/cr-hub", "/cr-voice", "/cr-brain"):
+    for path in ("/cr-connect", "/cr-hub", "/cr-voice", "/cr-claude/setup"):
         assert env.client.post(path, headers=env.headers, json={}).status_code == 409, path
+    switch = env.client.post("/cr-claude/setup", headers=env.headers, json={"action": "switch"})
+    assert switch.status_code == 409 and env.cfg["brain_mode"] == "channelrecipe"      # the waiting video's route
+    verify = env.client.post("/cr-claude/setup", headers=env.headers, json={"action": "verify"})
+    assert verify.status_code == 409 and "when it finishes" in verify.get_json()["error"]
 
 
 def test_the_disk_check_counts_what_the_videos_ahead_still_need(env, monkeypatch):
@@ -595,3 +599,39 @@ def test_shorts_held_on_used_up_watches_can_still_use_credits_after_a_claude_lim
     assert keeper.resume(use_credits=True) == 2
     shorts = [s for s in studio.QUEUE if cr_queue.is_ranking(s)]
     assert '"use_credits": true' in shorts[0]["extra"] and "use_credits" not in studio.QUEUE[1]["extra"]
+
+
+# ── Studio 110: the old API route switches to Claude Code at the next new video, once it is ready ────────────────
+
+def test_a_create_on_the_old_api_route_switches_to_claude_code_once_claude_code_is_ready(env, monkeypatch):
+    status = env.client.get("/cr-status", headers=env.headers).get_json()
+    assert status["api_route"] == {"ready_to_switch": False, "message": cr_studio.cr_readiness.SWITCH_TO_CLAUDE_CODE}
+    first = env.client.post("/api/run", headers=env.headers, json={"title": "Rome falls", "steps": ["video"]})
+    assert first.status_code == 200 and env.cfg["brain_mode"] == "channelrecipe"   # not ready: the API route stays
+    assert cr_studio.SWITCHED_NOTE not in (first.get_json().get("warnings") or [])
+    env.studio.QUEUE.clear()
+    env.studio.JOBS.clear()
+    # installed, signed in, connected and verified on the Claude Code route (cr_claude.ready_to_switch)
+    monkeypatch.setattr(cr_studio.cr_claude, "ready_to_switch", lambda cfg, cli: cfg.get("brain_mode") != "claudecode")
+    second = env.client.post("/api/run", headers=env.headers, json={"title": "Titanic", "steps": ["video"]})
+    assert second.status_code == 200, second.get_json()
+    assert second.get_json()["warnings"][0] == cr_studio.SWITCHED_NOTE           # said once, with the start
+    assert env.cfg["brain_mode"] == "claudecode" and env.cfg["switched_to_claude_code_at"]
+    assert env.cfg["general_model"] == cr_studio.cr_claude.GENERAL_MODEL
+    third = env.client.post("/api/run", headers=env.headers, json={"title": "Moon landing", "steps": ["video"]})
+    assert cr_studio.SWITCHED_NOTE not in (third.get_json().get("warnings") or [])
+
+
+def test_the_api_route_never_switches_under_a_video_being_made_waiting_or_held(env, monkeypatch):
+    monkeypatch.setattr(cr_studio.cr_claude, "ready_to_switch", lambda cfg, cli: cfg.get("brain_mode") != "claudecode")
+    env.studio.RUNNING["slug"] = "the-one-being-made"                 # an API-route video finishes as it started
+    env.client.post("/api/run", headers=env.headers, json={"title": "Rome falls", "steps": ["video"]})
+    assert env.cfg["brain_mode"] == "channelrecipe"
+    env.studio.RUNNING["slug"] = None
+    env.client.post("/api/run", headers=env.headers, json={"title": "Titanic", "steps": ["video"]})
+    assert env.cfg["brain_mode"] == "channelrecipe"                     # "Rome falls" still waits
+    env.studio.QUEUE.clear()
+    env.studio.JOBS.clear()
+    env.keeper.held.append(spec("Moon landing"))
+    env.client.post("/api/run", headers=env.headers, json={"title": "Pompeii", "steps": ["video"]})
+    assert env.cfg["brain_mode"] == "channelrecipe"                     # a held one carries on as it was checked

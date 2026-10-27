@@ -333,7 +333,8 @@ def setup_page(page):
     calls, pending = [], []
     # Tests drive every control, so they use the page's "Show all settings" mode.
     tab.add_init_script("localStorage.setItem('cr-setup-all','1')")
-    control = {"defer_save": False, "fail_save": False, "recovery_projects": [], "preset_blockers": []}
+    control = {"defer_save": False, "fail_save": False, "recovery_projects": [], "preset_blockers": [],
+               "fail_verify": ""}
 
     def finish_save(route, payload):
         if control["fail_save"]:
@@ -363,6 +364,8 @@ def setup_page(page):
         calls.append((path, payload))
         if path == "/cr-recover":
             return route.fulfill(json={"message": "One further stage attempt is allowed."})
+        if path == "/cr-hub":
+            return route.fulfill(json={"saved": True, "message": "Kie.ai connected."})
         if path == "/cr-claude/setup":
             action = payload["action"]
             if action == "select":
@@ -370,6 +373,14 @@ def setup_page(page):
                     pending.append((route, payload))
                     return
                 return finish_save(route, payload)
+            if action == "verify" and control["fail_verify"]:
+                return route.fulfill(status=409, json={"error": control["fail_verify"]})
+            if action == "switch":
+                state["brain_mode"] = "claudecode"
+                state["claude_code"]["models_verified"] = True
+                state["readiness"].update(ready=True, blockers=[])
+                return route.fulfill(json={"switched": True, "verified": True,
+                                           "message": "Switched: Studio now makes your videos with Claude Code."})
             if action == "verify":
                 state["claude_code"]["models_verified"] = True
                 state["readiness"].update(ready=True, blockers=[])
@@ -531,7 +542,6 @@ def test_failed_save_and_read_only_refresh_keep_unsaved_choice_blocked(setup_pag
 
 @pytest.mark.parametrize("purpose,button,approved,guidance", [
     ("video", "Allow one video-stage attempt", "Approved. Resume this video in the studio", "reused from cache"),
-    ("setup", "Allow one model-check attempt", "Approved. Repeat model verification", "Approval does not start verification"),
     (None, "Allow one stage attempt", "Approved. Return to the original controls", "original controls that started this work"),
 ])
 def test_recovery_approval_guidance_matches_work_purpose_without_generation(setup_page, purpose, button, approved, guidance):
@@ -555,6 +565,25 @@ def test_recovery_approval_guidance_matches_work_purpose_without_generation(setu
     assert [(path, body) for path, body in data["calls"] if path == "/cr-recover"] == [
         ("/cr-recover", {"project_id": "saved-project", "stage_id": "saved-stage", "acknowledge_costs": True})]
     assert not any(path in {"/api/run", "/cr-claude/setup"} for path, _ in data["calls"])
+
+
+def test_a_stopped_model_check_needs_no_approval_and_its_card_runs_a_new_check(setup_page):
+    data = setup_page
+    tab = data["page"]
+    data["state"]["claude_code"]["models_verified"] = False
+    data["state"]["readiness"].update(ready=False, blockers=["Your Claude models need their quick check."])
+    tab.evaluate("refresh()")
+    data["control"]["recovery_projects"] = [{"project_id": "saved-check", "title": "Claude model connection checks",
+        "purpose": "setup", "stages": [{"stage_id": "stopped-check", "kind": "text", "status": "failed", "can_retry": True}]}]
+    tab.locator("#load-recovery").click()
+    tab.wait_for_function("document.querySelector('#recovery-projects button')!==null")
+    assert "needs nothing approved here" in tab.locator("#recovery-projects").inner_text()
+    assert tab.locator("#recovery-projects input").count() == 0
+    tab.locator("#recovery-projects button").click()
+    tab.wait_for_function("document.getElementById('claude-quick-status').textContent.includes('set up for videos')")
+    assert [(path, body) for path, body in data["calls"] if path == "/cr-claude/setup"] == [
+        ("/cr-claude/setup", {"action": "verify"})]
+    assert not any(path == "/cr-recover" for path, _ in data["calls"])
 
 
 def test_creative_recovery_routes_to_original_controls_without_old_stage_replay(setup_page):
@@ -841,7 +870,13 @@ def test_a_fix_that_failed_before_the_page_opened_says_why_and_waits_for_fix_it(
     assert tab.locator("#connection").inner_text() == "Connect your ChannelRecipe account first."
     manual = tab.locator("#claude-signin-manual").text_content()               # inside the folded Details
     assert "Terminal" in manual and "PowerShell" not in manual, "a Mac names Terminal only"
-    assert "Mac security" in tab.locator("#walk-chapters").text_content()
+    # the full course plays first (owner, 2026-10-27); the three-minute setup, Mac chapter and all, is one click away
+    assert "Improve this style" in tab.locator("#walk-chapters").text_content()
+    tab.locator("#walk-setup").click()
+    tab.wait_for_function("document.querySelector('#walk-chapters').textContent.includes('Mac security')", timeout=5000)
+    assert tab.locator("#walk-title").inner_text() == "The whole setup, start to finish"
+    assert "studio-setup-walkthrough-v1.mp4" in tab.locator("#walk-video source").get_attribute("src")
+    tab.locator("#walk-close").click()
     assert tab.locator("#update").is_hidden(), "a newer Studio waits until setup is done"
     # every key field is masked text: no browser's password manager offers to save a Kie.ai key for 127.0.0.1
     assert tab.locator("input[type=password]").count() == 0
@@ -947,3 +982,74 @@ def test_setup_says_what_this_computer_has_and_a_small_one_keeps_the_tools_box_o
         assert "See note" in row and "3.4 GB is free on the disk Studio's videos go on" in row and "about 4 GB" in row
         assert "ok" not in tab.locator("#computer-row").get_attribute("class")
     assert errors == []
+
+
+# ── Studio 110: Claude Code only ───────────────────────────────────────────────────────────────────────────────────
+# The owner (2026-10-27): "We don't want them to make videos through Claude and Kie. We want them to make it through
+# Claude Code." Setup has no API brain option; a customer still on that route sees one Switch to Claude Code button.
+
+def test_setup_offers_only_claude_code_for_writing(setup_page):
+    tab = setup_page["page"]
+    for gone in ("#api-alternate", "#brain", "#brain-provider", "#brain-key", "#brain-status", "#hub-brain",
+                 "#hub-brain-model", "#hub-visual-model"):
+        assert tab.locator(gone).count() == 0, gone
+    text = tab.locator("body").inner_text()
+    assert "API brain" not in text and "API option" not in text and "pay-as-you-go" not in text
+    assert tab.locator("#api-route").is_hidden() and tab.locator("#claude-verify").inner_text() == "Verify my Claude models"
+    # the voice and image account form never asks for (or sends) a brain choice
+    tab.locator("#hub-key").fill("k" * 32)
+    tab.locator("#hub button[type=submit]").click()
+    tab.wait_for_function("document.getElementById('notice').textContent.includes('Kie.ai connected')")
+    hub = [body for path, body in setup_page["calls"] if path == "/cr-hub"]
+    assert len(hub) == 1 and not {"use_for_brain", "model", "visual_model"} & set(hub[0])
+
+
+def test_a_customer_on_the_old_api_route_sees_one_switch_and_it_switches(setup_page):
+    data = setup_page
+    tab = data["page"]
+    data["state"].update(brain_mode="channelrecipe", account={"version": "ui-fixture", "brain": {"connected": True}})
+    data["state"]["claude_code"]["models_verified"] = False
+    tab.evaluate("refresh()")
+    tab.wait_for_function("!document.getElementById('api-route').hidden")
+    assert "old API route" in tab.locator("#api-route").inner_text()
+    assert tab.locator("#switch-claude").inner_text() == "Switch to Claude Code (recommended)"
+    assert tab.locator("#claude-quick").is_hidden()
+    assert "Done" not in tab.locator('section[data-step="claude"] .step-state').inner_text()
+    assert "old API route" in tab.locator("#claude-status").inner_text()
+    tab.locator("#switch-claude").click()
+    tab.wait_for_function("document.getElementById('api-route').hidden")
+    assert [body for path, body in data["calls"] if path == "/cr-claude/setup"] == [{"action": "switch"}]
+    assert "Switched" in tab.locator("#notice").inner_text()
+    assert "Done" in tab.locator('section[data-step="claude"] .step-state').inner_text()
+    assert tab.locator("#claude-quick").is_visible()
+
+
+def test_a_failed_model_check_keeps_saying_why_beside_the_button(setup_page):
+    data = setup_page
+    tab = data["page"]
+    data["state"]["claude_code"]["models_verified"] = False
+    data["state"]["readiness"].update(ready=False, blockers=["Your Claude models need their quick check."])
+    reason = "Your Claude plan reached its usage limit, so the model check couldn't run. Verify again after it resets."
+    data["control"]["fail_verify"] = reason
+    tab.evaluate("refresh()")
+    tab.wait_for_function("document.getElementById('claude-quick').textContent==='Verify my Claude models'")
+    assert "lasts a day" in tab.locator("#claude-quick-status").inner_text()
+    tab.locator("#claude-quick").click()
+    tab.wait_for_function("document.getElementById('claude-quick-status').textContent.includes('usage limit')")
+    tab.evaluate("refresh()")                       # a later refresh never swaps the reason for the default line
+    assert tab.locator("#claude-quick-status").inner_text() == reason
+    data["control"]["fail_verify"] = ""
+    tab.locator("#claude-quick").click()            # pressing again runs a new check (Studio never refuses it now)
+    tab.wait_for_function("document.getElementById('claude-quick-status').textContent==='Claude is set up for videos.'")
+    assert [body["action"] for path, body in data["calls"] if path == "/cr-claude/setup"] == ["verify", "verify"]
+
+
+def test_a_signed_in_customer_with_an_old_claude_code_is_told_to_update_not_to_sign_in(setup_page):
+    data = setup_page
+    tab = data["page"]
+    message = "This Claude Code is too old for Studio (it needs 2.1.268 or newer). Open Terminal and run: claude update."
+    data["state"]["claude_code"].update(authenticated=False, outdated=True, message=message, models_verified=False)
+    data["state"]["readiness"].update(ready=False, blockers=[message])
+    tab.evaluate("refresh()")
+    tab.wait_for_function("document.getElementById('claude-quick-status').textContent.includes('claude update')")
+    assert tab.locator("#claude-signin").is_hidden()

@@ -119,6 +119,12 @@ _SECRET = re.compile(r"(cr_mcp_[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]{8,}|(?i:(?:key|to
 def redact(text):
     return _SECRET.sub("[hidden]", str(text))
 CONNECT_SECONDS = 900
+# Studio 110: every video is made with Claude Code on the customer's Claude plan. The old API brain route (an API
+# account relayed by ChannelRecipe) is closed to new setups; customers still on it switch from setup or Create.
+API_BRAIN_CLOSED = ("ChannelRecipe now makes every video with Claude Code on your Claude plan, so an API account can't "
+                    "be used as Studio's brain any more. Set up Claude in Setup, step 2.")
+SWITCHED_NOTE = ("From this video on, Studio makes your videos with Claude Code on your Claude plan. Your old API "
+                 "account stays saved but isn't used for new videos.")
 _graphics_check = {}
 
 
@@ -640,8 +646,9 @@ def create_app():
         if request.method in ("POST", "DELETE", "PUT", "PATCH"):
             if request.headers.get("X-CR-Local-Token") != token:
                 return jsonify(error="Refresh your studio page and try again."), 403
-        account_change = request.path in {"/cr-connect", "/cr-provider", "/cr-brain", "/cr-hub", "/cr-voice", "/cr-images", "/cr-claude/setup"}
-        if request.path == "/cr-claude/setup" and (request.get_json(silent=True) or {}).get("action") == "check":
+        account_change = request.path in {"/cr-connect", "/cr-provider", "/cr-hub", "/cr-voice", "/cr-images", "/cr-claude/setup"}
+        setup_action = (request.get_json(silent=True) or {}).get("action") if request.path == "/cr-claude/setup" else None
+        if setup_action == "check":
             account_change = False
         deferred = deferred_editor_request(studio, request.path)
         creative = creative_request(request.path) and not deferred
@@ -653,6 +660,11 @@ def create_app():
             g.cr_activity_locked = True
         if account_change and request.method == "POST":
             if activity.busy():
+                if setup_action == "verify":
+                    # the check shares Studio's current-project slot with the video being made
+                    return jsonify(error="Studio is making a video right now. Verify your Claude models when it "
+                                         "finishes: the videos already in the queue were checked when you added "
+                                         "them."), 409
                 return jsonify(error="Finish your current video before changing its accounts."), 409
         if request.path == "/api/run" and request.method == "POST":
             try:
@@ -663,13 +675,22 @@ def create_app():
                 # A video started while another is made joins the queue (cr_queue): its disk check counts what the
                 # videos before it still need, and its setup proof travels with it (g -> cr_submission).
                 checks = setup_status().get_json()
+                if (checks.get("api_route") or {}).get("ready_to_switch") and not activity.busy() \
+                        and not queue_keeper.held:
+                    # still on the old API route with Claude Code ready and verified: this new video (and every
+                    # one after it) is made with Claude Code, said once with its start. Never while another video
+                    # is made, waits or is held: those keep the route they were checked on.
+                    switch_to_claude_code(finish=False)
+                    checks = setup_status().get_json()
+                    g.cr_switched = SWITCHED_NOTE
                 preflight = cr_readiness.preset(studio,checks,data,queue_keeper.ahead_gb())
                 if not preflight["ready"]:
                     return jsonify(error="Complete this video's setup before starting.",**preflight),409
                 if preflight.get("manimgx_identity"):
                     data["manimgx_identity"] = preflight["manimgx_identity"]
                     request._cached_json = (data, data)
-                g.cr_warnings = preflight.get("warnings") or []   # said with the start (inject), never a stop
+                g.cr_warnings = ([g.cr_switched] if getattr(g, "cr_switched", None) else []) + \
+                    (preflight.get("warnings") or [])               # said with the start (inject), never a stop
                 g.cr_setup_proof = preflight["proof"]
                 cfg = cr_bridge.load_settings()
                 cfg["setup_proof"] = preflight["proof"]
@@ -800,6 +821,14 @@ def create_app():
         checks["brain_mode"] = readiness["brain_mode"]
         checks["claude_code"] = readiness.pop("claude_code")
         checks["readiness"] = readiness
+        if checks["brain_mode"] != "claudecode":
+            # still on the old API route: setup and Create offer Switch to Claude Code (recommended); with Claude
+            # Code installed, signed in, connected and verified, the next new video switches by itself (/api/run)
+            try:
+                switch = cr_claude.ready_to_switch(cfg, checks["claude_code"] or {})
+            except Exception:                               # noqa: BLE001 - can't tell: the button stays
+                switch = False
+            checks["api_route"] = {"ready_to_switch": bool(switch), "message": cr_readiness.SWITCH_TO_CLAUDE_CODE}
         try:                                                # where setup is stuck, for the team (check keys only)
             import cr_setup_report
             cr_setup_report.maybe_send(readiness, checks.get("local_version", ""),
@@ -862,6 +891,84 @@ def create_app():
         except Exception as error:
             return jsonify(error=str(error)),409
 
+    def release_version():
+        try:
+            return json.loads((HOME/"cr-release.json").read_text(encoding="utf-8"))["version"]
+        except (OSError, ValueError, KeyError):                # a development folder: no release file
+            return cr_bridge.load_settings().get("local_version") or "development"
+
+    def save_claude_profile(cfg, general=None, visual=None):
+        """The Claude Code route with these models (the saved ones, else the recommended Sonnet for writing and Opus
+        for visuals): every new video is written with Claude Code from here on. A saved API brain key stays saved."""
+        try:
+            profile = cr_claude.select_profile(general or cfg.get("general_model") or cr_claude.GENERAL_MODEL,
+                                               visual or cfg.get("visual_model") or cr_claude.VISUAL_MODEL)
+        except ValueError:
+            profile = cr_claude.select_profile()
+        if cfg.get("brain_mode") != "claudecode":
+            cfg["switched_to_claude_code_at"] = int(time.time())
+        cfg.update(profile)
+        cfg["local_version"] = release_version()
+        cfg.pop("setup_proof", None)
+        cr_bridge.save_settings(cfg)
+        cr_bridge.install(studio.mv)
+        last_status.clear()
+
+    def connect_tools(cfg):
+        """ChannelRecipe's tools in Claude Code (no Claude usage): '' when connected, else why not."""
+        try:
+            if cr_mcp.status(cfg)["connected"] and cr_mcp.is_registered(cfg):
+                return ""
+            connection = cr_mcp.register(cfg)
+        except Exception as error:                               # noqa: BLE001 - said, never a crash
+            return str(error) or "ChannelRecipe's tools didn't connect."
+        return "" if connection["connected"] else str(connection.get("why") or "ChannelRecipe's tools didn't connect.")
+
+    def run_model_check(*, auto=False):
+        checks = setup_status().get_json()
+        return cr_claude.verify_models(studio.mv, cr_bridge, cr_readiness.proof(checks, purpose="setup"), auto=auto)
+
+    def switch_to_claude_code(*, finish=True):
+        """Setup's and Create's "Switch to Claude Code (recommended)" for a customer on the old API route. The route
+        changes once Claude Code is installed and signed in (before that the customer's videos keep working on the
+        old route, and nothing could switch them back: /cr-brain is closed); its API key stays saved, unused by new
+        videos. Then the Claude setup steps that can run here run: ChannelRecipe's tools, the saved models, their
+        quick check. What's left is said in `next`. finish=False (the automatic switch, Claude Code verified): the
+        route only."""
+        cfg = cr_bridge.load_settings()
+        was_api = cfg.get("brain_mode") != "claudecode"
+        if finish:
+            local = cr_claude.status()
+            first = (" Your videos keep using your API account until then." if was_api else "")
+            again = " then press Switch to Claude Code again." if was_api else " then set up Claude."
+            if not local.get("installed"):
+                return {"switched": False, "brain_mode": cfg.get("brain_mode"), "verified": False, "next": "install",
+                        "message": "First install Claude Code: press Install Claude Code in setup, step 2, sign in,"
+                                   + again + first}
+            if not local.get("ready"):
+                return {"switched": False, "brain_mode": cfg.get("brain_mode"), "verified": False,
+                        "next": "update" if local.get("outdated") else "sign_in",
+                        "message": (local.get("message") if local.get("outdated") or local.get("slow")
+                                    else "First sign in to Claude Code: press Open the sign-in window in setup, "
+                                         "step 2, and sign in with your Claude Pro or Max account,"
+                                         + again) + first}
+        save_claude_profile(cfg)
+        said = ("Switched: Studio now makes your videos with Claude Code on your Claude plan. Your old API account "
+                "stays saved but isn't used for new videos. ") if was_api else ""
+        result = {"switched": True, "brain_mode": "claudecode", "verified": False}
+        if not finish:
+            return result
+        why = connect_tools(cfg)
+        if why:
+            return {**result, "next": "connect", "message": said + why}
+        try:
+            checked = run_model_check()
+        except (Exception, cr_claude.ClaudeStageStopped) as error:
+            return {**result, "next": "verify", "message": said + str(error)}
+        return {**result, "verified": True,
+                "message": (said + "Claude is set up for videos.") if was_api else
+                           checked.get("message", "Claude is set up for videos.")}
+
     @studio.app.post("/cr-claude/setup")
     def claude_setup():
         data=request.get_json(silent=True) or {}
@@ -872,6 +979,8 @@ def create_app():
                 return jsonify(message="Claude Code login and connection checks updated.",**setup_status().get_json())
             if not cfg.get("key") or not cfg.get("costs_accepted"):
                 raise RuntimeError("Connect CR and acknowledge account usage before connecting Claude Code.")
+            if action == "switch":
+                return jsonify(switch_to_claude_code())
             local=cr_claude.status()
             if not local["ready"]:
                 raise RuntimeError(local["message"])
@@ -892,13 +1001,18 @@ def create_app():
                 cr_bridge.install(studio.mv)
                 return jsonify(message="Your Claude Code route is selected. Verify both models, then check your preset.")
             if action == "verify":
-                if cfg.get("brain_mode") != "claudecode" or not cr_mcp.status(cfg)["connected"]:
-                    raise RuntimeError("Connect CR tools and save your Claude Code model choices first.")
+                # one click from Create or setup: whatever free step is missing first (ChannelRecipe's tools, the
+                # recommended models) is done here, then the two tiny checks
+                if cfg.get("brain_mode") != "claudecode":
+                    raise RuntimeError("Your videos still use the old API route. Press Switch to Claude Code "
+                                       "(recommended) first: it sets up and checks your Claude models too.")
+                why=connect_tools(cfg)
+                if why:
+                    raise RuntimeError(why)
                 if not all(cfg.get(key) for key in ("general_model","visual_model","local_version")):
-                    raise RuntimeError("Save your Claude Code model choices before verifying them.")
-                checks=setup_status().get_json()
-                result=cr_claude.verify_models(studio.mv,cr_bridge,cr_readiness.proof(checks,purpose="setup"))
-                return jsonify(result)
+                    save_claude_profile(cfg)
+                # auto: Create's run on page load and make_videos, not a press (a stopped check waits for one)
+                return jsonify(run_model_check(auto=bool(data.get("auto"))))
             return jsonify(error="Choose a supported setup action."),400
         except (Exception,cr_claude.ClaudeStageStopped) as error:
             return jsonify(error=str(error)),409
@@ -1058,7 +1172,8 @@ def create_app():
             "Claude Code: installed %s%s · signed in %s · tools connected %s · models verified %s" % (
                 tick(cli.get("installed")), (" " + str(cli["version"])) if cli.get("version") else "",
                 tick(cli.get("authenticated")), tick(cli.get("mcp_connected")), tick(cli.get("models_verified"))),
-            "Writing route: %s" % checks.get("brain_mode", "unknown"),
+            "Writing route: %s" % ("Claude Code" if checks.get("brain_mode") == "claudecode" else
+                                   "old API route (%s; setup offers Switch to Claude Code)" % checks.get("brain_mode", "unknown")),
             "Started from a Claude Code chat: %s" % chat_line(),
             "Voice and images: %s%s · narration %s" % (hub.get("provider", "none"),
                 (" (" + ", ".join(hub.get("tasks", [])) + ")") if hub.get("tasks") else "", tick(voice.get("connected"))),
@@ -1204,32 +1319,9 @@ def create_app():
 
     @studio.app.post("/cr-brain")
     def save_brain():
-        data = request.get_json(silent=True) or {}
-        cfg = cr_bridge.load_settings()
-        if not cfg.get("key") or not cfg.get("costs_accepted"):
-            return jsonify(error="Connect CR and review provider spending first."), 409
-        provider = data.get("provider")
-        info = cr_media.PROVIDERS.get(provider) if isinstance(provider, str) else None
-        if not info or not info.get("brain_models"):
-            return jsonify(error="Choose a supported brain account."), 400
-        supplied = str(data.get("key", "")).strip()
-        # Reusing a saved media key is explicit in the brain form. A direct
-        # Anthropic key is stored only in CR's encrypted per-user vault.
-        key = supplied or (os.getenv(info.get("key_env", ""), "").strip()
-                           if provider in ("kie", "atlas") else "")
-        if not 16 <= len(key) <= 512 or any(ch.isspace() for ch in key):
-            return jsonify(error="Paste your complete API key, or reuse your saved Kie or Atlas key."), 400
-        try:
-            result = cr_bridge.call("brain-key", {"provider": provider, "api_key": key,
-                                    "model": data.get("model"), "visual_model": data.get("visual_model")})
-        except Exception as error:
-            return jsonify(error=str(error)), 400
-        cfg["brain_mode"]="channelrecipe"
-        cfg.pop("setup_proof",None)
-        cr_bridge.save_settings(cfg)
-        cr_claude.uninstall()
-        cr_bridge.install(studio.mv)
-        return jsonify(saved=True, message=result.get("message", "Brain account connected."))
+        # The old API brain route is closed to new setups (Studio 110): videos are made with Claude Code on the
+        # customer's Claude plan. A saved API brain key stays saved; nothing is sent to ChannelRecipe from here.
+        return jsonify(error=API_BRAIN_CLOSED), 410
 
     def check_media_account(provider, key):
         # Read-only validation: no generated audio and no change to the CR brain.
@@ -1563,31 +1655,20 @@ def create_app():
                                      "key."), 400
         try:
             info = cr_media.PROVIDERS[provider]
-            if data.get("use_for_brain") is True:
-                # Explicit form consent: the same key is encrypted in CR for brain calls.
-                if not data.get("model"):
-                    return jsonify(error="Choose your brain models before replacing the current brain account."), 400
-                cr_bridge.call("brain-key", {"provider": provider, "api_key": key,
-                                            "model": data["model"], "visual_model": data.get("visual_model")})
-            else:
-                # Check the media account without generating content. Never send it to CR.
-                check_media_account(provider, key)
+            # Check the media account without generating content. Never send it to CR. An older page's "also use as
+            # my API brain" no longer reaches ChannelRecipe (API brains are closed, Studio 110): the voice and image
+            # key is saved all the same, and the answer says why the brain part didn't happen.
+            check_media_account(provider, key)
             write_provider(info["key_env"], key)
             cfg["media_hub"] = {"provider": provider, "tasks": sorted(set(tasks)), "voice": voice or info["default_voice"]}
             cfg.pop("voice_notice", None)
-            if data.get("use_for_brain") is True:
-                cfg["brain_mode"]="channelrecipe"
-                cfg.pop("setup_proof",None)
-                cr_claude.uninstall()
             cr_bridge.save_settings(cfg)
-            if data.get("use_for_brain") is True:
-                cr_bridge.install(studio.mv)
         except cr_media.AccountStop as e:
             return jsonify(error=str(e)), 400
         except Exception:
             return jsonify(error="This account could not be connected. Check its key and API access, then try again."), 400
         return jsonify(saved=True, message=info["label"] + " connected. Selected media tasks use this account." +
-                       (" Brain calls also use it through CR." if data.get("use_for_brain") is True else " Your brain account is unchanged."))
+                       (" " + API_BRAIN_CLOSED if data.get("use_for_brain") is True else ""))
 
     @studio.app.post("/cr-provider")
     def save_provider():

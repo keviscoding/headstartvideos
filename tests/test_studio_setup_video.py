@@ -48,3 +48,13 @@ def test_the_course_page_is_public_and_shareable():
     captions = client.get("/static/course/channelrecipe-full-course-v1.vtt")
     assert captions.status_code == 200 and captions.text.startswith("WEBVTT") and "Clawed" not in captions.text
     assert "/course" in server.SITEMAP_PAGES
+
+
+def test_studio_plays_the_full_course_in_setup_and_links_it_from_the_sidebar():
+    """The owner's full course (2026-10-27) plays in Studio's setup page like the setup walkthrough did (which stays
+    one click away), and the workspace sidebar links its page."""
+    root = Path(__file__).resolve().parents[1] / "local_runtime"
+    setup = (root / "cr_setup.html").read_text(encoding="utf-8")
+    assert "Watch the full course <small>10:49</small>" in setup and 'id="walk-setup"' in setup
+    assert "channelrecipe-full-course-v1.mp4" in setup and "COURSE_CHAPTERS" in setup and "openWalk('setup')" in setup
+    assert 'href="https://channelrecipe.com/course"' in (root / "cr_workspace.html").read_text(encoding="utf-8")

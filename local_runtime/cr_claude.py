@@ -180,6 +180,18 @@ def _fresh_allowance(result):
     return result
 
 
+def _update_command(exe) -> str:
+    """`claude update`, or with the full path when Studio found Claude Code outside PATH (the terminal wouldn't)."""
+    try:
+        on_path = shutil.which("claude")
+        same = bool(on_path) and os.path.normcase(os.path.realpath(on_path)) == os.path.normcase(os.path.realpath(exe))
+    except (OSError, ValueError):
+        same = False
+    if same:
+        return "claude update"
+    return f'& "{exe}" update' if os.name == "nt" else f'"{exe}" update'
+
+
 def _status(exe, *, run=None, environment=None):
     result = {"installed": bool(exe), "authenticated": False, "ready": False,
               "version": "", "auth_method": "none", "api_provider": "", "subscription_type": ""}
@@ -197,7 +209,11 @@ def _status(exe, *, run=None, environment=None):
             raise ValueError("version")
         result["version"] = match.group(0)
         if tuple(map(int, match.groups())) < MINIMUM_VERSION:
-            result["message"] = "Update Claude Code to version 2.1.268 or newer."
+            # signed in or not, setup must say "update", never "sign in": signing in again changes nothing
+            result["outdated"] = True
+            result["message"] = ("This Claude Code is too old for Studio (it needs 2.1.268 or newer). Open "
+                                 + ("PowerShell" if os.name == "nt" else "Terminal")
+                                 + " and run: " + _update_command(exe) + ". Then press Check my Claude Code login.")
             return result
         auth = invoke([exe, "--setting-sources", "", "auth", "status"],
                       capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
@@ -217,7 +233,7 @@ def _status(exe, *, run=None, environment=None):
         result["message"] = ("Your local Claude account is connected. Its usage limits apply."
                              if result["ready"] else "Sign in to Claude Code with your Claude subscription. API and cloud billing are not used in this mode.")
     except subprocess.TimeoutExpired:
-        result["timed_out"] = True
+        result["timed_out"] = result["slow"] = True      # "slow" stays: setup says this, not "sign in"
         result["message"] = ("Claude Code took more than a minute and a half to answer its sign-in check. Close other "
                              "heavy apps, then check again.")
     except (OSError, ValueError, TypeError, AttributeError):
@@ -579,7 +595,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.109")
+            installed_version=cfg.get("local_version","5.3-admin.110")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text(encoding="utf-8"))
@@ -847,6 +863,17 @@ def models_verified(settings, local, *, root=None):
     return _verification_marker(settings, local, root=root) is not None
 
 
+def ready_to_switch(settings, local, *, root=None) -> bool:
+    """A customer still on the old API route whose Claude Code is installed, signed in, connected to ChannelRecipe's
+    tools and has both saved models verified (a check is always made on the Claude Code route): their next new video
+    can use Claude Code with nothing more to do."""
+    if settings.get("brain_mode") == "claudecode" or not local.get("ready") or not local.get("mcp_connected"):
+        return False
+    if not all(settings.get(key) for key in ("general_model", "visual_model", "local_version")):
+        return False
+    return models_verified({**settings, "brain_mode": "claudecode"}, local, root=root)
+
+
 def preserve_model_verification(settings, local, *, root=None):
     """Persist a valid check before a setup action changes its adapter version."""
     marker = _verification_marker(settings, local, root=root)
@@ -899,7 +926,68 @@ def _finish_model_verification(bridge, probe, verification, profile, previous_id
         return False
 
 
-def verify_models(engine, bridge, proof):
+VERIFY_AGAIN = "Press Verify my Claude models to run the check again (one tiny request to each model)."
+
+
+def check_failure(reason) -> str:
+    """The model check's stop, in plain words, with the one thing to do next. A stage's own message talks about
+    "recovery" and "resuming", which a setup check never needs: pressing Verify again runs a new check."""
+    said = str(reason or "")
+    low = said.lower()
+    if "usage limit" in low:
+        return ("Your Claude plan reached its usage limit, so the model check couldn't run. Verify again after it "
+                "resets (Claude shows when).")
+    if "sign in again" in low or "sign in to claude code" in low:
+        return "Claude Code needs you to sign in again: press Open the sign-in window in step 2, then verify again."
+    if "could not use the selected model" in low:
+        return ("Your Claude account can't use one of the chosen models. Open Details and model choices in step 2, "
+                "choose models your plan includes, save them, then verify.")
+    if "went to sleep" in low:
+        return "This computer went to sleep during the model check. Keep it awake. " + VERIFY_AGAIN
+    if "too long" in low:
+        return "Claude took more than two minutes to answer the model check. Check your internet connection. " + VERIFY_AGAIN
+    if "connection or service failed" in low:
+        return "Claude's service didn't answer the model check (it may be busy). Wait a minute. " + VERIFY_AGAIN
+    if "already started or stopped" in low:
+        # the dead end before Studio 110: a check that stopped refused every later press
+        return "Your last model check stopped part-way. " + VERIFY_AGAIN
+    if "channelrecipe stopped this stage:" in low:
+        return "ChannelRecipe stopped the model check: " + said.split(":", 1)[1].replace(
+            " No new Claude request was made.", "").strip() + " " + VERIFY_AGAIN
+    if "could not authorize" in low or "could not save its receipt" in low:
+        return "Studio couldn't reach ChannelRecipe to record the model check. Check your connection. " + VERIFY_AGAIN
+    return ("Claude didn't finish the model check. " + VERIFY_AGAIN + " If it stops again, press Copy diagnostics at "
+            "the top of setup and paste it in Discord #help.")
+
+
+def _said_ok(text) -> bool:
+    """The check's answer: "OK", however it is dressed ("OK.", "**OK**", "ok")."""
+    return re.sub(r"[^a-z]", "", str(text or "").lower()) == "ok"
+
+
+def _check_to_continue(bridge, previous, identity):
+    """The saved check project to carry on, or None for a new one. Only a check whose own stages haven't stopped is
+    carried on (an approved retry runs in it). One that stopped would refuse every further press of Verify ("This
+    stage already started or stopped"): the customer's press is their yes, so it gets a new check instead."""
+    if previous.get("identity") != identity or previous.get("complete"):
+        return None
+    project_id = previous.get("project_id")
+    if not isinstance(project_id, str) or not re.fullmatch(r"crv_[a-f0-9]{24}", project_id):
+        return None
+    try:
+        progress = bridge.project_progress(project_id)
+    except Exception:                                    # noqa: BLE001 - can't tell: a new check
+        return None
+    if (progress.get("project") or {}).get("status") in ("done", "failed"):
+        return None
+    if any(stage.get("status") in ("failed", "authorized") for stage in progress.get("stages") or []):
+        return None
+    return project_id
+
+
+def verify_models(engine, bridge, proof, *, auto=False):
+    """The models' tiny check. `auto` (Create's own run on page load, make_videos): a saved check that stopped is
+    never run again by itself, only on the customer's press of Verify (a new check is a new Claude request)."""
     cfg = bridge.load_settings()
     profile = select_profile(cfg.get("general_model",GENERAL_MODEL),cfg.get("visual_model",VISUAL_MODEL))
     cfg = {**cfg, **profile}
@@ -919,29 +1007,40 @@ def verify_models(engine, bridge, proof):
                 "message":"Both selected Claude models already passed their connection checks." +
                     (" Reconnect CR to sync their saved completion record." if not saved else "")}
     if not local["ready"] or not cfg.get("costs_accepted"):
-        raise RuntimeError("Sign in to Claude Code and acknowledge its usage before checking models.")
+        raise RuntimeError(local.get("message") if local.get("outdated") or local.get("slow") else
+                           "Sign in to Claude Code (setup, step 2: Open the sign-in window), then verify your models.")
+    carry_on = _check_to_continue(bridge,previous,identity)
+    if (auto and carry_on is None and previous.get("identity") == identity and not previous.get("complete")
+            and previous.get("project_id")):
+        raise ClaudeStageStopped(check_failure("already started or stopped"))
     project = bridge.begin_project("Claude model connection checks","custom",
-        previous.get("project_id") if previous.get("identity")==identity and not previous.get("complete") else None,
+        carry_on,
         proof={**proof,**profile,"models_verified":False,"purpose":"setup"},purpose="setup")
     _private_write(marker,{"identity":identity,"project_id":project["id"]})
     install(engine,bridge)
     # Tiny access checks must not load the studio's interactive creative guide.
     # cwd is deliberately outside the request fingerprint, preserving recovery
     # of checks already reserved by an older adapter.
-    with tempfile.TemporaryDirectory(prefix="cr-model-check-") as check_cwd:
-        for role in ("general","visual"):
-            # The request identifies its original role; CR substitutes the pinned
-            # account model. This also verifies swapped or identical model choices.
-            requested=GENERAL_MODEL if role=="general" else VISUAL_MODEL
-            command=[find_executable(),"--print","--model",requested,"--output-format","json",
-                "--tools","","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}',
-                "--max-turns","1","--no-session-persistence"]
-            result=subprocess.run(command,input="Connection check: reply exactly OK.",capture_output=True,text=True,
-                                  encoding="utf-8",errors="replace",
-                                  env=clean_environment(),timeout=120,cwd=check_cwd)
-            _,text=_result(result.stdout,"json")
-            if json.loads(text).get("result","").strip() != "OK":
-                raise ClaudeStageStopped("Claude did not complete its model check. Review the saved check before retrying.")
+    try:
+        with tempfile.TemporaryDirectory(prefix="cr-model-check-") as check_cwd:
+            for role in ("general","visual"):
+                # The request identifies its original role; CR substitutes the pinned
+                # account model. This also verifies swapped or identical model choices.
+                requested=GENERAL_MODEL if role=="general" else VISUAL_MODEL
+                command=[find_executable(),"--print","--model",requested,"--output-format","json",
+                    "--tools","","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}',
+                    "--max-turns","1","--no-session-persistence"]
+                result=subprocess.run(command,input="Connection check: reply exactly OK.",capture_output=True,text=True,
+                                      encoding="utf-8",errors="replace",
+                                      env=clean_environment(),timeout=120,cwd=check_cwd)
+                _,text=_result(result.stdout,"json")
+                if not _said_ok(json.loads(text).get("result","")):
+                    raise ClaudeStageStopped("Claude answered the model check with something else.")
+    except ClaudeStageStopped as stopped:
+        raise ClaudeStageStopped(check_failure(stopped)) from None
+    except (subprocess.TimeoutExpired, ValueError, TypeError, AttributeError):
+        # a reply that isn't the check's JSON (ValueError) or a check Claude never answered
+        raise ClaudeStageStopped(check_failure("")) from None
     completed_probe = {"identity":identity,"project_id":project["id"],"complete":True}
     _private_write(marker,completed_probe)
     bridge._project=None

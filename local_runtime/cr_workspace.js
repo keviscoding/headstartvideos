@@ -371,11 +371,15 @@
     const needsPanels = !!state.selected?.panels && !state.panels;
     // While Studio makes a video (or learns a style), Create adds this one to the queue: Studio makes them one at a
     // time, so the creator can queue several and walk away (cr_queue).
-    const blocked = state.submitting || state.uploading || state.drawing || !state.catalog || !ready || (state.narration === 'own' && !state.audio) || needsPanels;
+    const blocked = state.submitting || state.uploading || state.drawing || state.claudeBusy || !state.catalog || !ready || (state.narration === 'own' && !state.audio) || needsPanels;
     $('crw-create').disabled = blocked;
     if (!state.submitting) createLabel();
-    let message = !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : queuing() ? queueNote() : 'Ready. Each Create starts a separate new project.';
+    let message = state.claudeBusy ? state.claudeBusy : !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : queuing() ? queueNote() : apiRoute() ? (state.setup.api_route?.ready_to_switch ? 'Ready. This video and the ones after it are made with Claude Code on your Claude plan; your old API route stops being used.' : 'Ready, on the old API route. Studio now makes every video with Claude Code on your Claude plan.') : 'Ready. Each Create starts a separate new project.';
     text('crw-readiness', message);
+    const action = readinessAction();
+    hide('crw-readiness-action', !action);
+    if (action) text('crw-readiness-action', action.label);
+    $('crw-readiness-action')?.classList.toggle('is-busy', !!state.claudeBusy);
     const status = $('crw-connection'); status.querySelector('span:last-of-type').textContent = ready ? 'Accounts connected' : 'Accounts need attention';
     status.querySelector('.crw-status-dot').className = `crw-status-dot ${ready ? 'is-ready' : 'is-warning'}`;
     cloudChoice();
@@ -886,7 +890,7 @@
           api(`/api/status/${encoded(was.slug)}`).then(st=>{if(st.done && st.state==='done')celebrate({...was,...(now||{})});}).catch(()=>{});
         }
       }
-      if (results[1].status==='fulfilled') {state.busy=results[1].value.busy===true || results[0].status==='fulfilled' && results[0].value.busy===true;state.studies=results[1].value.operations || [];}
+      if (results[1].status==='fulfilled') {state.activityLoaded=true;state.busy=results[1].value.busy===true || results[0].status==='fulfilled' && results[0].value.busy===true;state.studies=results[1].value.operations || [];}
       if (results[2].status==='fulfilled' && results[2].value) state.jobs=results[2].value.jobs || [];
       const active = state.studies.find(x=>x.state==='running') || state.queue.find(x=>['running','queued'].includes(x.state));
       const notice=$('crw-active-notice');notice.replaceChildren();notice.hidden=!state.busy;
@@ -1038,15 +1042,51 @@
     try{const result=await api('/api/products');for(const row of result.products||[]){const o=el('option','',row.title||row.name||row.slug);o.value=row.slug;$('crw-offer').append(o);} hide('crw-offer-section', !(result.products||[]).length);}catch(_){hide('crw-offer-section',true);}
     try{const result=await api(`/api/avatars?style=${encoded(state.selected?.name||'')}`);for(const row of result.avatars||[]){const o=el('option','',row.persona||row.id);o.value=row.id;$('crw-avatar-id').append(o);} if(result.seconds){$('crw-avatar-seconds').min=result.seconds.min;$('crw-avatar-seconds').max=result.seconds.max;}if(result.count)$('crw-avatar-count').max=result.count.max;}catch(_){text('crw-avatar-portraits','Presenter choices are available after account setup.');}
   }
-  // Studio's Claude model check lasts a day. When it is the only thing in the way, run it here (two tiny "reply OK"
-  // calls on the creator's Claude) instead of sending them back to setup every morning.
+  // Claude, one click from Create (Studio 110). Still on the old API route: Switch to Claude Code (recommended). Only the
+  // models' check in the way (it lasts a day; a new Claude Code or Studio asks again): Verify my Claude models. The
+  // rest of Claude's setup (install, sign-in): Finish setting up Claude, in setup.
+  function apiRoute() {const s = state.setup || {}; return !!s.connected && !!s.brain_mode && s.brain_mode !== 'claudecode';}
+  function failingChecks() {return (state.setup?.readiness?.checks || []).filter(c => c && c.ready === false);}
+  function modelsOnlyBlocker() {
+    const r = state.setup?.readiness || {}, failing = failingChecks();
+    if (r.ready === true) return false;
+    if (failing.length) return failing.every(c => c.key === 'models');
+    const b = r.blockers || []; return b.length > 0 && b.every(x => /Verify (both|my) Claude models/.test(x));
+  }
+  function readinessAction() {
+    if (!state.setup || !state.catalog || mustUpdate()) return null;
+    if (apiRoute()) return {kind: 'switch', label: 'Switch to Claude Code (recommended)'};
+    if (modelsOnlyBlocker()) return {kind: 'verify', label: 'Verify my Claude models'};
+    const failing = failingChecks();
+    if (failing.length && failing.every(c => ['claude', 'mcp', 'models'].includes(c.key))) return {kind: 'setup', label: 'Finish setting up Claude'};
+    return null;
+  }
+  async function claudeStep(kind, auto = false) {
+    if (state.claudeBusy) return;
+    if (kind === 'setup') {location.href = '/cr-setup'; return;}
+    state.claudeBusy = kind === 'switch' ? 'Switching to Claude Code and checking your Claude models (about a minute)…' : 'Checking your Claude models (a tiny check, about 20 seconds)…';
+    error(''); gate();
+    try {
+      const result = await api('/cr-claude/setup', {method: 'POST', body: {action: kind, ...(auto ? {auto: true} : {})}});
+      if (kind === 'switch' && !result.verified) error(result.message || 'Switched to Claude Code. Finish setting up Claude in setup.');
+      else toast(result.message || 'Your Claude models passed their check.');
+    } catch (e) {error(e.message);}
+    finally {
+      try {state.setup = await api('/cr-status');} catch (_) {/* the last check stands */}
+      state.claudeBusy = ''; gate();
+    }
+  }
+  $('crw-readiness-action')?.addEventListener('click', () => {const action = readinessAction(); if (action) claudeStep(action.kind);});
+  // When the models' check is the only thing in the way, it runs here by itself once (two tiny "reply OK" calls on the
+  // creator's Claude) instead of sending them back to setup every morning; if it stops, it says why and the button stays.
   async function autoVerify() {
-    const r = state.setup?.readiness || {}, b = r.blockers || [], cc = state.setup?.claude_code || {};
-    if (r.ready || state.autoVerified || b.length !== 1 || !/Verify both Claude models/.test(b[0]) || !cc.authenticated || !cc.mcp_connected) return;
-    state.autoVerified = true; text('crw-readiness', 'Checking your Claude models (a tiny check, about 20 seconds)…');
-    try {await api('/cr-claude/setup', {method: 'POST', body: {action: 'verify'}}); state.setup = await api('/cr-status');}
-    catch (_) {/* Setup explains what still needs attention. */}
-    finally {gate();}
+    const cc = state.setup?.claude_code || {};
+    // never while a video is made (the check shares its slot), nor before Studio has said whether one is: the next
+    // page load tries
+    if (state.autoVerified || !state.activityLoaded || state.busy || apiRoute() || !modelsOnlyBlocker() || !cc.authenticated || !cc.mcp_connected) return;
+    state.autoVerified = true;
+    // auto: a check that stopped before waits for the button (Studio says so), never runs again by itself
+    await claudeStep('verify', true);
   }
   async function start() {
     const draft=restore();
