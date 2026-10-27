@@ -478,6 +478,49 @@ def test_a_renderer_that_never_reaches_the_bar_is_saved_as_below_it(home, tmp_pa
     assert nothing["state"] == "failed"
 
 
+def test_a_judge_that_never_answers_saves_the_renderer_unjudged_never_as_zero(home, tmp_path):
+    """A customer's two studies (2026-10-27) were saved as 0/10 against a bar of 5.5: their plan's style checks were
+    used up by the looks, so every likeness call was refused, and each refusal was counted as a score of 0."""
+    refs = _frames(tmp_path / "refs")
+    seen, logged = [], []
+
+    def refused(references, candidates):
+        raise RuntimeError("You've used today's style checks. Try again tomorrow.")
+
+    def see(prompt, images):
+        seen.append(prompt)
+        return _answer(BEAN, BEAN_SCENE)
+    result = _chromium(lambda: a2d.build(tmp_path / "op", {}, {}, see=see, judge=refused, references=refs, home=home,
+                                         log=logged.append))
+    assert result["state"] == "unjudged" and result["overall"] is None and result["characters"] is None
+    assert "today's style checks" in result["why"] and result["bar"] == 5.5
+    assert len(seen) == a2d.MIN_ROUNDS, "without scores, the build stops once a draft draws what every video needs"
+    assert "could not score your test shots" in seen[1] and "0/10 overall" not in seen[1], "never told it scored 0"
+    assert not any("0/10" in m for m in logged) and any("no likeness score" in m for m in logged)
+    assert (tmp_path / "op/renderer/renderer.js").is_file(), "never block a clone: the renderer is kept"
+    style = {"name": "cr_clone_bean", "look": {"visuals": "cr_animated2d", "animated2d": {}}}
+    a2d.attach(style, tmp_path / "op", home)
+    saved = style["look"]["animated2d"]["renderer"]
+    assert saved["state"] == "unjudged" and saved["overall"] is None and "today's style checks" in saved["why"]
+    again = a2d.build(tmp_path / "op", {}, {}, see=lambda p, i: pytest.fail("never asked twice"), judge=refused,
+                      references=refs, home=home)
+    assert again["state"] == "unjudged", "a finished build is kept as it is"
+
+
+def test_a_scored_draft_ranks_over_an_unscored_one(home, tmp_path):
+    refs = _frames(tmp_path / "refs")
+    answers = iter([None, 4.0, None, None])                 # the held-out frame unscored, then draft 1 only
+
+    def judge(references, candidates):
+        score = next(answers)
+        if score is None:
+            raise RuntimeError("Style checking couldn't answer right now. Try again in a little while.")
+        return {"candidates": [{"overall": score, "characters": score}] * len(candidates)}
+    result = _chromium(lambda: a2d.build(tmp_path / "op", {}, {}, see=lambda p, i: _answer(BEAN, BEAN_SCENE),
+                                         judge=judge, references=refs, home=home, rounds=3, log=lambda m: None))
+    assert result["state"] == "below_bar" and result["round"] == 1 and result["overall"] == 4.0
+
+
 def test_a_first_draft_over_the_bar_is_still_revised_once_and_the_bar_comes_from_the_channels_usual_frames(home,
                                                                                                          tmp_path):
     refs = _frames(tmp_path / "refs", 9)
@@ -717,6 +760,19 @@ def test_the_likeness_check_of_an_animated_style_is_its_renderers_build(tmp_path
     assert result["state"] == "done" and result["verdict"] == "match" and result["cost_usd"] == 0.0
     assert result["dealbreakers"] == ["thinner limbs"] and (folder / "likeness" / "r0_0.jpg").is_file()
     assert "style_image" not in like.apply_saved(folder, json.loads(json.dumps(style)), tmp_path)["look"]
+
+
+def test_an_unjudged_build_is_a_skipped_likeness_check_never_a_score(tmp_path):
+    import cr_style_likeness as like
+    folder = tmp_path / "op"
+    (folder / "renderer").mkdir(parents=True)
+    (folder / "renderer" / "build.json").write_text(json.dumps({
+        "state": "unjudged", "round": 2, "overall": None, "bar": 5.5,
+        "why": "the likeness check couldn't run: You've used today's style checks. Try again tomorrow."}))
+    style = {"name": "cr_clone_x", "look": {"visuals": "cr_animated2d", "animated2d": {"schema": 1}}}
+    result = like.run(folder, {"look_id": "lk_x"}, style, lambda m: None, home=tmp_path,
+                      call=lambda *a, **k: pytest.fail("nothing is judged again"))
+    assert result["state"] == "skipped" and "style checks for today were used up" in result["why"]
 
 
 # ── the plugin, end to end, with a stand-in engine ──────────────────────────────────────────────────────────────

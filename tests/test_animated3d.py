@@ -648,3 +648,13 @@ def test_the_builder_ships_the_3d_kit(tmp_path):
     with pytest.raises(ValueError, match="incomplete"):
         builder.private_animated3d_resources(tmp_path)
     assert json.dumps(builder.ANIMATED3D_FILES)
+
+
+def test_a_3d_styles_progress_says_animated_3d_never_2d():
+    """A customer's 3D renderer (kit 3D three.js) showed "Animated 2D" in its progress log (2026-10-27)."""
+    assert a2d.kit_name({"dims": 3, "width": 1920}) == "Animated 3D"
+    assert a2d.kit_name({"width": 1920}) == a2d.kit_name(None) == "Animated 2D"
+    source = Path(a2d.__file__).read_text(encoding="utf-8")
+    import re
+    said = re.findall(r'(?:engine\.(?:step|log)|\blog)\(f?"[Aa]nimated [23]D:', source)
+    assert said == [], "every progress line names its kit by the style's dims"

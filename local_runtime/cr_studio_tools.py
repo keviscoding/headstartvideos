@@ -1334,6 +1334,11 @@ def clone_progress(operation: str) -> dict:
             out["next"] = ("Read what_to_tell_them to the creator. If they would rather have pictures in the channel's "
                            "look, open the page (open_in_studio page='style_clone' id=<this op id>) and press Use "
                            "pictures instead; never choose for them.")
+        if renderer.get("can_use_animation"):
+            out["animation"]["can_use_animation"] = True
+            out["next"] = ("This style draws pictures because Use pictures instead was chosen; its animation is kept. If "
+                           "they want it back, open the page (open_in_studio page='style_clone' id=<this op id>) and "
+                           "press Use Claude's animation again; never choose for them.")
     return out
 
 

@@ -121,6 +121,12 @@ def dims_of(spec) -> int:
     return 3 if isinstance(spec, dict) and spec.get("dims") == 3 else 2
 
 
+def kit_name(spec) -> str:
+    """How a video's progress names its kind of animation: "Animated 3D" for a renderer drawn in three.js (a 3D style's
+    log said "Animated 2D", 2026-10-27), else "Animated 2D". The work folder stays animated2d/ for videos already made."""
+    return "Animated 3D" if dims_of(spec) == 3 else "Animated 2D"
+
+
 def available3d(home=None) -> bool:
     """The 3D kit is installed, with the 2D kit's prompts and sounds it shares and the 3D engine's three.js."""
     root = Path(home or HERE)
@@ -863,7 +869,7 @@ def render(spec: dict, out: Path, code: str, *, workers: int = 2, home=None, log
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-framerate", str(FPS), "-i", str(tmp / "f_%05d.jpg"),
                         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
                         "-color_range", "tv", str(out)], check=True, capture_output=True)
-        log(f"animated 2D: {n} frames in {time.time() - started:.0f} s")
+        log(f"{kit_name(spec)}: {n} frames in {time.time() - started:.0f} s")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return [(round(float(t), 3), sound_file(name, own), float(db)) for t, name, db in marks if sound_file(name, own)]
@@ -1100,6 +1106,21 @@ def uses_plates(code: str) -> bool:
     return bool(PLATES_ON.search(str(code or "")))
 
 
+BUILT = ("passed", "below_bar", "unjudged", "failed")   # a build's verdicts; "unjudged": the judge never answered
+
+
+def unscored(row) -> bool:
+    """A draft (or a build) the likeness judge gave no score: its call failed (today's style checks used up, the
+    server busy), never a likeness of 0. A customer's two studies of 2026-10-27 were saved as 0/10 that way."""
+    return not isinstance((row or {}).get("overall"), (int, float))
+
+
+def _rank(row) -> float:
+    """How a draft ranks: its likeness (an unscored draft under every scored one), less ISSUE_COST while it can't yet
+    draw what every video needs."""
+    return (-10.0 if unscored(row) else float(row["overall"])) - ISSUE_COST * bool(row.get("issues"))
+
+
 def bar_for(control) -> float:
     """The likeness a channel's renderer must reach: judged against its own frames by the same judge, a little under
     what the channel's own held-out frame scores (every channel differs; so does the judge's reading of it)."""
@@ -1126,20 +1147,22 @@ def _own_rounds(out: Path, key: str):
 
 
 def build(folder, spec: dict, channel: dict, *, see, judge, references: list, home=None, log=print,
-          rounds: int = BUILD_ROUNDS, minutes: float = BUILD_MINUTES, names=()) -> dict:
+          rounds: int = BUILD_ROUNDS, minutes: float = BUILD_MINUTES, names=(), brief: str = "") -> dict:
     """Claude writes this channel's renderer; the kit draws its test shots; the judge scores them against the
     channel's frames; Claude revises it (at least once), until it reaches the channel's bar or the budget runs out.
     Saved in <folder>/renderer/ (each round's answer, the best renderer, its stills and build.json), so a recovery never
     repeats a Claude call. see(prompt, images) is one Claude vision call; judge(references, candidates) returns the
     judge's scores (style/compare); references: the channel's frames, spread over its videos (the last one or two are
     held out: the judge scores them on their own once, and the best sets the bar); names: the channel's title and
-    handle, which a renderer never writes on screen."""
+    handle, which a renderer never writes on screen; brief: what the creator asked the study for, in their words (a
+    customer's "ground-level battle shots with detailed units" never reached the renderer, which drew only maps).
+    The brief is not part of the build's key: a study's brief never changes, and a resumed build keeps its drafts."""
     out = Path(folder) / "renderer"
     out.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha256(json.dumps({"spec": spec, "channel": channel, "api": KIT_API,
                                      "refs": [Path(r).name for r in references]}, sort_keys=True).encode()).hexdigest()[:20]
     saved = _read(out / "build.json")
-    if saved.get("key") == key and saved.get("state") in ("passed", "below_bar", "failed"):
+    if saved.get("key") == key and saved.get("state") in BUILT:
         return saved
     _own_rounds(out, key)
     refs = [Path(r) for r in references if Path(r).is_file()]
@@ -1188,6 +1211,7 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
                       .replace("[ROUND]", f"{r + 1} of {rounds}").replace("[BAR]", f"{bar:g}")
                       .replace("[PREVIOUS]", previous or "(none yet: this is the first draft)")
                       .replace("[FEEDBACK]", feedback or "(none yet)").replace("[NAMES]", named)
+                      .replace("[BRIEF]", str(brief or "").strip()[:1500] or "(nothing more than the channel itself)")
                       .replace("[IMAGES]", f"The first {len(shown)} pictures are the channel's own frames"
                                + (f"; the last {len(prev_stills)} are your previous test shots, in order (any after "
                                   "the test shots are Studio's probes: your test scene's first still in an underground "
@@ -1250,32 +1274,47 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
         try:
             got = judge([str(p) for p in shown], [str(p) for p in stills],
                         **({"plates": True} if uses_plates(code) else {}))
+            unjudged = "" if got.get("candidates") else "the judge returned no scores"
         except Exception as error:                          # noqa: BLE001 - an unjudged draft is still a working one
-            got = {}
-            log(f"  renderer: the judge could not score draft {r + 1} ({str(error)[:120]})")
+            got, unjudged = {}, str(error)[:200] or type(error).__name__
+            log(f"  renderer: the judge could not score draft {r + 1} ({unjudged[:120]})")
         mine = [c if isinstance(c, dict) else {} for c in got.get("candidates") or []][:len(stills)]
-        overall = round(sum(float(c.get("overall") or 0) for c in mine) / max(1, len(mine)), 2) if mine else 0.0
-        characters = round(sum(float(c.get("characters") or 0) for c in mine) / max(1, len(mine)), 2) if mine else 0.0
+        overall = round(sum(float(c.get("overall") or 0) for c in mine) / max(1, len(mine)), 2) if mine else None
+        characters = round(sum(float(c.get("characters") or 0) for c in mine) / max(1, len(mine)), 2) if mine else None
         row.update(overall=overall, characters=characters, control=control, bar=bar,
                    dealbreakers=(got.get("dealbreakers") or [])[:6], fixes=(got.get("fixes") or [])[:6],
-                   stills=[str(Path(p).relative_to(out)) for p in stills])
+                   stills=[str(Path(p).relative_to(out)) for p in stills],
+                   **({"unjudged": unjudged or "no answer"} if not mine else {}))
         rows.append(row)
         issues = row.get("issues") or []
-        log(f"  renderer: draft {r + 1} scores {overall:g}/10 (the channel's own frame {row['control']}; bar {bar:g})"
+        log(f"  renderer: draft {r + 1} "
+            + (f"scores {overall:g}/10 (the channel's own frame {row['control']}; bar {bar:g})" if mine
+               else "has no likeness score (the judge didn't answer)")
             + (f"; {len(issues)} thing(s) every video needs still to fix" if issues else ""))
         # a draft that can't yet draw what every video needs (any place, crowds, words that fit, typed parameters)
-        # ranks below one that can, unless it is clearly closer to the channel
-        if best is None or overall - ISSUE_COST * bool(issues) > best["overall"] - ISSUE_COST * bool(best.get("issues")):
+        # ranks below one that can, unless it is clearly closer to the channel; of two unscored drafts the later one,
+        # which had the probes' advice, wins a tie
+        if best is None or _rank(row) > _rank(best) or (unscored(row) and unscored(best) and _rank(row) >= _rank(best)):
             best, best_code, best_scene = row, code, scene
-        if overall >= bar and r + 1 >= MIN_ROUNDS:        # the probes' advice went back at least once (MIN_ROUNDS);
+        if mine and overall >= bar and r + 1 >= MIN_ROUNDS:   # the probes' advice went back at least once (MIN_ROUNDS);
             break                                           # it ranks the drafts but never keeps the study going
-        feedback = (f"The judge compared your test shots with the channel's frames: {overall:g}/10 overall, characters "
-                    f"{characters:g}/10 (the channel's own held-out frames score {control}; the bar is {bar:g})."
-                    + (" That clears the bar: keep everything that works and make the shots closer still."
-                       if overall >= bar else "") + "\nWhat still differs:\n- " + "\n- ".join(str(x) for x in (row["dealbreakers"] or ["(not said)"]))
-                    + "\nThe judge's fixes:\n- " + "\n- ".join(str(x) for x in (row["fixes"] or ["(none)"]))
-                    + ("\nWhat every video needs that this draft doesn't do yet (Studio's own probes):\n- "
-                       + "\n- ".join(issues) if issues else ""))
+        if not mine and not issues and r + 1 >= MIN_ROUNDS:
+            log("  renderer: without the judge's scores another draft has nothing to aim at; this one draws what every "
+                "video needs")
+            break
+        if not mine:
+            feedback = ("The likeness judge could not score your test shots this time (" + row["unjudged"][:160] + "). "
+                        "Compare your test shots with the channel's frames yourself: keep what works and change what "
+                        "differs.")
+        else:
+            feedback = (f"The judge compared your test shots with the channel's frames: {overall:g}/10 overall, "
+                        f"characters {characters:g}/10 (the channel's own held-out frames score {control}; the bar is "
+                        f"{bar:g})." + (" That clears the bar: keep everything that works and make the shots closer "
+                                        "still." if overall >= bar else "")
+                        + "\nWhat still differs:\n- " + "\n- ".join(str(x) for x in (row["dealbreakers"] or ["(not said)"]))
+                        + "\nThe judge's fixes:\n- " + "\n- ".join(str(x) for x in (row["fixes"] or ["(none)"])))
+        feedback += ("\nWhat every video needs that this draft doesn't do yet (Studio's own probes):\n- "
+                     + "\n- ".join(issues) if issues else "")
         previous, prev_stills = code[:RENDERER_MAX], stills + [Path(out / p) for p in row.get("probes") or []]
     if best is None:
         result = {"key": key, "state": "failed", "rounds": rows,
@@ -1294,11 +1333,14 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
         found["examples"] = examples_from(best_scene.get("stress") if isinstance(best_scene, dict) else None, best_scene)
         if best.get("places") == "any":                     # it draws any place: a wrong place can be re-planned
             found["places"] = "any"
-    result = {"key": key, "state": "passed" if best["overall"] >= best.get("bar", bar) else "below_bar",
+    state = "unjudged" if unscored(best) else "passed" if best["overall"] >= best.get("bar", bar) else "below_bar"
+    result = {"key": key, "state": state,
               "round": best["round"], "overall": best["overall"], "characters": best["characters"],
               "bar": best.get("bar", bar), "control": best.get("control"), "rounds": rows,
               "sha256": hashlib.sha256(best_code.encode("utf-8")).hexdigest(), "manifest": found, "api": KIT_API,
-              "stills": best.get("stills") or [], "issues": best.get("issues") or []}
+              "stills": best.get("stills") or [], "issues": best.get("issues") or [],
+              **({"why": "the likeness check couldn't run: " + str(best.get("unjudged") or "no answer")}
+                 if state == "unjudged" else {})}
     _write(out / "build.json", result)
     return result
 
@@ -1310,7 +1352,7 @@ def attach(style: dict, folder, home) -> dict:
     source = Path(folder) / "renderer" / "renderer.js"
     look = style.setdefault("look", {})
     spec = look.setdefault("animated2d", {})
-    if built.get("state") not in ("passed", "below_bar") or not source.is_file():
+    if built.get("state") not in ("passed", "below_bar", "unjudged") or not source.is_file():
         spec["renderer"] = {"state": built.get("state") or "missing", "why": built.get("why") or
                             "the study wrote no working renderer"}
         return style
@@ -1324,7 +1366,8 @@ def attach(style: dict, folder, home) -> dict:
                         "state": built["state"],
                         "overall": built.get("overall"), "bar": built.get("bar"), "control": built.get("control"),
                         "round": built.get("round"), "manifest": built.get("manifest") or {},
-                        **({"issues": built["issues"]} if built.get("issues") else {})}
+                        **({"issues": built["issues"]} if built.get("issues") else {}),
+                        **({"why": built["why"]} if built.get("state") == "unjudged" and built.get("why") else {})}
     return style
 
 
@@ -2096,7 +2139,7 @@ def cast_and_sets(engine, script: str, job: Path, style: str, title: str = "", m
     if reply.is_file() and _read(folder / "casting-request.json").get("key") in known:
         text = reply.read_text(encoding="utf-8")
     else:
-        engine.step("Animated 2D: designing the cast and the places")
+        engine.step(f"{kit_name(spec)}: designing the cast and the places")
         prompt = (_prompt("cast.txt").replace("[TITLE]", title or (Path(job).name.split("--")[0].replace("-", " ")))
                   .replace("[SCRIPT]", script[:24000]).replace("[STYLE]", json.dumps(spec, ensure_ascii=False))
                   .replace("[CREATOR]", engine._extra_block() or "none")
@@ -2167,7 +2210,7 @@ def plates(engine, job: Path, casting: dict, spec: dict, *, upload=None, man: di
         if not (dest.is_file() and dest.stat().st_size > 5000):
             todo.append((ident, s, dest))
     if todo:
-        engine.step(f"Animated 2D: drawing {len(todo)} background plate(s) (about ${PLATE_USD * len(todo):.2f})")
+        engine.step(f"{kit_name(spec)}: drawing {len(todo)} background plate(s) (about ${PLATE_USD * len(todo):.2f})")
         first = next(iter(out.values()))
         ref = []
 
@@ -2187,11 +2230,11 @@ def plates(engine, job: Path, casting: dict, spec: dict, *, upload=None, man: di
                 import cr_media
                 ref.append((upload or (lambda path: cr_media.upload(path, task="images")))(first))
             except Exception as error:                  # noqa: BLE001 - drawn from the words alone then
-                engine.log(f"animated 2D: the first plate couldn't be shared as a style reference ({str(error)[:80]})")
+                engine.log(f"{kit_name(spec)}: the first plate couldn't be shared as a style reference ({str(error)[:80]})")
         with ThreadPoolExecutor(max_workers=min(4, max(1, len(todo)))) as ex:
             errors += [e for e in ex.map(lambda r: _try(draw, r), todo) if e]
         if errors:
-            engine.step(f"Animated 2D: {len(errors)} plate(s) could not be drawn ({errors[0][:120]}); those places use "
+            engine.step(f"{kit_name(spec)}: {len(errors)} plate(s) could not be drawn ({errors[0][:120]}); those places use "
                         "the renderer's own drawn background")
     return {k: v for k, v in out.items() if v.is_file() and v.stat().st_size > 5000}
 
@@ -2280,7 +2323,7 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
     if reply.is_file() and _read(request).get("key") in known:
         text = reply.read_text(encoding="utf-8")
     else:
-        engine.step(f"Animated 2D: choreographing {t0:.0f}-{t1:.0f} s" + (" again, from the frame check" if fix else ""))
+        engine.step(f"{kit_name(spec)}: choreographing {t0:.0f}-{t1:.0f} s" + (" again, from the frame check" if fix else ""))
         prompt = (template.replace("[TITLE]", title).replace("[STYLE]", json.dumps(spec, ensure_ascii=False))
                   .replace("[CAST]", json.dumps(casting["cast"], ensure_ascii=False))
                   .replace("[RECURRING]", ", ".join(k for k, c in casting["cast"].items() if c.get("recurring"))
@@ -2533,7 +2576,7 @@ def look_review(engine, job: Path, index: int, plan: dict, casting: dict, spec: 
     if reply.is_file() and _read(request).get("key") == key:
         text = reply.read_text(encoding="utf-8")
     elif _read(request).get("key") == key:                  # asked before and stopped mid-call: never asked twice
-        engine.log("animated 2D: the frame look of this stretch was interrupted before; it isn't asked again")
+        engine.log(f"{kit_name(spec)}: the frame look of this stretch was interrupted before; it isn't asked again")
         return None
     else:
         small = []
@@ -2556,14 +2599,14 @@ def look_review(engine, job: Path, index: int, plan: dict, casting: dict, spec: 
                            or recurring_words(man, spec))
                   .replace("[SETS]", _places_words({**casting.get("sets", {}), **(plan.get("sets") or {})}))
                   .replace("[MOMENTS]", moments))
-        engine.step(f"Animated 2D: Claude looks at {len(small)} frames of {t0:.0f}-{t1:.0f} s before they are drawn")
+        engine.step(f"{kit_name(spec)}: Claude looks at {len(small)} frames of {t0:.0f}-{t1:.0f} s before they are drawn")
         _write(request, {"key": key, "times": [t for t, _ in small]})
         try:
             text = see(prompt, [str(p) for _, p in small], max_tokens=3000)
         except KeyboardInterrupt:
             raise
         except BaseException as error:                      # noqa: BLE001 - the look is a check, never a stop
-            engine.log(f"animated 2D: the frame look could not run ({str(error)[:160]}); the video goes on")
+            engine.log(f"{kit_name(spec)}: the frame look could not run ({str(error)[:160]}); the video goes on")
             return None
         reply.write_text(str(text), encoding="utf-8")
     times = _read(request).get("times") or [t for t, _ in frames]
@@ -2690,7 +2733,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
         _write(job / "animated2d" / f"film-{index:03d}.json", film)
         out = folder / f"a2d_{index:03d}_{_digest([film, code_hash])[:8]}.mp4"
         if not (out.is_file() and out.stat().st_size > 10000) or force:
-            engine.step(f"Animated 2D: drawing {part[1] - part[0]:.0f} s of animation ({index + 1} of {len(parts)})")
+            engine.step(f"{kit_name(spec)}: drawing {part[1] - part[0]:.0f} s of animation ({index + 1} of {len(parts)})")
             marks = render(film, out, code, workers=max(1, min(3, int(getattr(engine, "MOTION_WORKERS", 2)) + 1)),
                            log=engine.log, own=own)
             _write(out.with_suffix(".sfx.json"), marks)
@@ -2698,7 +2741,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
         segments.append((part[0], str(out), round(part[1] - part[0], 6)))
     faults = [r for c in checked for r in c["renderer"]]
     if faults:
-        engine.step("Animated 2D: the frame check saw what this style's renderer itself draws wrong ("
+        engine.step(f"{kit_name(spec)}: the frame check saw what this style's renderer itself draws wrong ("
                     + "; ".join(faults[:3])[:400] + "). The video goes on; Improve this style on the style's page can fix "
                     "the renderer for the next videos.")
     _write(job / "animated2d" / "delivery.json", {"schema": SCHEMA, "parts": len(parts), "seconds": total,
@@ -2706,7 +2749,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
                                                  "plates": {k: str(v) for k, v in plate_paths.items()},
                                                  "review": checked})
     engine._save_motion_plan(job, timeline, segments)
-    engine.step("Animated 2D: assembling the film")
+    engine.step(f"{kit_name(spec)}: assembling the film")
     rendered = engine._render_astro_segments(timeline, job, force, white_fade=0.0, style=style)
     engine._concat_segments(rendered, job / "_visual.mp4")
     burn_subs = burn_subs and not spec.get("captions")      # the renderer draws the channel's own captions
