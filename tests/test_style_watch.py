@@ -158,6 +158,76 @@ def test_gemini_answers_wrapped_in_fences_still_parse():
         sw._parse("no json here")
 
 
+def test_small_slips_in_gemini_json_are_mended_for_free():
+    assert sw._parse('{"a": [1, 2,], "b": "two\nlines",}') == {"a": [1, 2], "b": "two\nlines"}
+    with pytest.raises(ValueError):
+        sw._parse('[1, 2]')
+
+
+def _answers(*texts):
+    """Gemini's model answering these texts in turn, each billed 100 tokens in and 10 out."""
+    calls = []
+
+    def post(url, headers=None, json=None, timeout=None):
+        calls.append(json)
+        text = texts[len(calls) - 1]
+        return SimpleNamespace(status_code=200, json=lambda: {
+            "candidates": [{"content": {"parts": [{"text": text}]}}],
+            "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 10}})
+    return post, calls
+
+
+# the customer's look of 2026-10-27: "0:00-3:00: Expecting ',' delimiter: line 6 column 27 (char 523)"
+BROKEN = '{"narration": "voiceover",\n "shots": [\n  {"t": "0:00" "len_s": 2.0}\n ]\n}'
+
+
+def test_an_unreadable_watch_is_asked_once_more_and_both_answers_are_billed():
+    post, calls = _answers(BROKEN, json.dumps(LOG))
+    log, tin, tout = sw.watch_once("dN_RMA8LVi0", 0, 180, post=post)
+    assert log == LOG and len(calls) == 2 and (tin, tout) == (200, 20)
+
+
+def test_twice_unreadable_says_so_plainly_never_in_the_parser_words():
+    post, calls = _answers(BROKEN, BROKEN)
+    with pytest.raises(sw.WatchFailed) as failed:
+        sw.watch_once("dN_RMA8LVi0", 0, 180, post=post)
+    assert len(calls) == 2 and (failed.value.tokens_in, failed.value.tokens_out) == (200, 20)
+    said = str(failed.value)
+    assert said == sw.UNREADABLE and "delimiter" not in said and "char" not in said
+
+
+def test_a_blocked_answer_is_not_asked_again():
+    post, calls = _answers("", json.dumps(LOG))
+    with pytest.raises(sw.WatchFailed) as failed:
+        sw.watch_once("dN_RMA8LVi0", 0, 180, post=post)
+    assert len(calls) == 1 and str(failed.value) == sw.UNANSWERED and failed.value.tokens_in == 100
+
+
+def test_a_failed_watch_job_shows_the_plain_message_and_records_what_google_billed(env, monkeypatch):
+    post, calls = _answers(BROKEN, BROKEN)
+    monkeypatch.setattr(sw.requests, "post", post)
+    job = watch(env).json()["job"]
+    env.pool.drain()
+    res = env.client.get(f"/api/studio/style/watch/{job}", headers={"x-test-user": "max"}).json()
+    assert res["status"] == "failed" and res["error"] == sw.UNREADABLE
+    with sw.db._conn() as conn:
+        row = conn.execute("SELECT tokens_in, cost_usd FROM style_watch_jobs WHERE id=?", (job,)).fetchone()
+    assert row["tokens_in"] == 200 and row["cost_usd"] > 0, "a billed answer counts towards the daily spend cap"
+
+
+def test_an_unreadable_likeness_answer_is_asked_again_only_when_there_is_time(monkeypatch):
+    good = json.dumps({"overall": 6, "candidates": [{"overall": 6}]})
+    post, calls = _answers(BROKEN, good)
+    verdict, tin, tout = sw.compare_once([b"\xff\xd8\xffref"], [b"\xff\xd8\xffcand"], post=post)
+    assert verdict["overall"] == 6 and len(calls) == 2 and tin == 200
+    clock = iter([0.0, sw.COMPARE_AGAIN_S + 1])
+    monkeypatch.setattr(sw.time, "monotonic", lambda: next(clock))
+    post, calls = _answers(BROKEN, good)
+    with pytest.raises(sw.WatchFailed):
+        sw.compare_once([b"\xff\xd8\xffref"], [b"\xff\xd8\xffcand"], post=post)
+    assert len(calls) == 1, "a slow first answer leaves no time under the gateway's 100 s"
+
+
 def test_the_prompt_names_the_window_and_the_fixed_vocabularies():
     text = sw.prompt(65, 185)
     assert "between 1:05 and 3:05" in text
