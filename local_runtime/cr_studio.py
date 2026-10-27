@@ -559,8 +559,7 @@ def tool_checks():
     return {"ffmpeg": not ffmpeg, "ffmpeg_reason": (ffmpeg + " " + cr_installs.fix_hint("ffmpeg")) if ffmpeg else "",
             "node": deno or node["ready"] or node_ready(), "node_youtube": node["ready"], "node_version": node["version"],
             "node_reason": (node["reason"] + " " + cr_installs.fix_hint("node")) if not node["ready"] else "",
-            "can_fix": {name: cr_installs.can_fix(name) for name in ("ffmpeg", "node", "claude")},
-            "auto_fix_tools": cr_installs.auto_fix_tools(cr_bridge.load_settings())}
+            "can_fix": {name: cr_installs.can_fix(name) for name in ("ffmpeg", "node", "claude")}}
 
 
 def fix_line():

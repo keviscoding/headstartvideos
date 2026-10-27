@@ -1,8 +1,7 @@
 """Setup's one-click Fix it for the tools Studio needs from outside Python: FFmpeg (with ffprobe), Node.js and the
 Claude Code command-line tool. Nothing installs until the creator presses Fix it (or asks Claude Code, whose fix tools
-call the same routes); FFmpeg and Node.js can start by themselves while the setup page is open only when
-AUTO_FIX_TOOLS (or the settings' auto_fix_tools) is on, which stays off until the owner decides. Claude Code installs
-only on Install Claude Code.
+call the same routes): FFmpeg and Node.js never start by themselves (owner, 2026-10-27: not needed). Claude Code
+installs only on Install Claude Code.
 
 FFmpeg and Node.js go into this Studio's own folder (tools/ffmpeg, tools/node): no password, no sudo, nothing in the
 computer's system folders, the creator's own FFmpeg or Node.js left as they are. Every download is pinned to one
@@ -255,18 +254,6 @@ def node_status(*, which=None, run=None) -> dict:
         return {"ready": False, "version": text, "reason": f"Node.js {text} is too old for the YouTube downloader "
                 f"(it needs {NODE_MINIMUM} or newer)."}
     return {"ready": True, "version": text, "reason": ""}
-
-
-# FFmpeg and Node.js starting their own Fix it while setup is open (the owner's Windows test, 2026-10-26): about 150 MB
-# of programs downloaded without a press, so it stays off until the owner decides; `auto_fix_tools: true` in the
-# settings (or this constant) turns it on.
-AUTO_FIX_TOOLS = False
-
-
-def auto_fix_tools(settings: dict | None = None) -> bool:
-    """Does setup start FFmpeg's and Node.js's Fix it by itself?"""
-    value = (settings or {}).get("auto_fix_tools")
-    return value if isinstance(value, bool) else AUTO_FIX_TOOLS
 
 
 def can_fix(name: str, key: str | None = None) -> bool:

@@ -1035,9 +1035,12 @@ def test_browser_a_channel_written_in_code_reads_plainly_from_the_look_to_the_sa
         if shots:
             page.screenshot(path=os.path.join(shots, "1-look-running.png"))
         saved = json.loads(looks["path"].read_text())
+        host = ["Yes, design one for my channel", "Yes, I'll upload mine", "No, a new cast for each story"]
         saved.update(state="done", phase="done", finished_at=_time.time(), sheets=[], not_watched=[],
                      profile={**tsm.animated(), "recognisable": ["Simple stick figure characters",
-                                                                 "Stick-figure characters", "Red cap mascot"]},
+                                                                 "Stick-figure characters", "Red cap mascot"],
+                              "questions": [{"id": "host", "ask": "Worker appears again and again. Should every "
+                                             "video keep one recurring character like that?", "options": host}]},
                      titles=["100 Strangers, 1 Bunker: Who Survives 30 Days", "Backup 1"])
         saved.pop("mapping", None)
         looks["path"].write_text(json.dumps(saved))
@@ -1055,6 +1058,17 @@ def test_browser_a_channel_written_in_code_reads_plainly_from_the_look_to_the_sa
         said = page.locator("#look-panel").inner_text()
         assert "Picture model" not in said and "What the pictures do" not in said, "no AI-picture rows for code"
         assert said.count("10 to 25 minutes") == 1 and "three.js" not in said and "picture costs yet" not in said
+        # written in code, the channel's character is drawn in code: nowhere to upload one, so "Yes, I'll upload
+        # mine" shows only for pictures, and going back to code puts the answer back on Studio's design
+        upload = page.locator("fieldset[data-q='host'] label", has_text="upload mine")
+        assert upload.is_hidden() and page.locator("input[name='q-host']").nth(0).is_checked()
+        made.nth(1).check()
+        upload.wait_for(state="visible", timeout=8000)
+        upload.locator("input").check()
+        assert page.evaluate("answers.host") == host[1]
+        made.nth(0).check()
+        upload.wait_for(state="hidden", timeout=8000)
+        assert page.locator("input[name='q-host']").nth(0).is_checked() and page.evaluate("answers.host") == host[0]
         if shots:
             page.screenshot(path=os.path.join(shots, "2-look-result.png"), full_page=True)
         page.locator("#look-next").click()
@@ -1078,6 +1092,7 @@ def test_browser_a_channel_written_in_code_reads_plainly_from_the_look_to_the_sa
         operation = page.evaluate("localStorage.getItem('cr.styleStudy')")
         _, saved_op = clone._saved(env.home, operation, env.bridge)
         assert saved_op["spec"]["renderer"] == "2d" and saved_op["spec"]["title"] == first + " (mine)"
+        assert saved_op["spec"]["answers"]["host"] == host[0]
 
         # the saved style: one score, one verdict, its test shots beside the channel's frames
         pics = []
