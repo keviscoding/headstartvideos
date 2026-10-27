@@ -391,6 +391,12 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
         env = child_env(CR_STUDIO=HOME, CR_SHORTS_ROOT=root)
         if extra:
             env["CR_SHORTS_EXTRA"] = str(extra)[:4000]
+        import cr_language
+        lang = cr_language.remember(job) or cr_language.style_language(info)
+        if lang != "en":
+            # the language the Short was asked for (its recipe's own: cr_language refuses another one before the
+            # Short starts), for the pipelines to read once they take one; Ranking follows its topic's language
+            env["CR_LANGUAGE"], env["CR_LANGUAGE_CODE"] = cr_language.BY_ID[lang]["name"], lang
         tone = str((info.get("shorts") or {}).get("tone") or "").strip().lower()
         if tone:
             env["CR_SHORTS_TONE"] = tone                         # dark: true crime / horror (the director's dark-story rules)

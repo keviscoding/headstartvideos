@@ -2255,7 +2255,10 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
     t0, t1, lines = part
     man = man or {}
     folder = Path(job) / "animated2d"
-    template = _prompt("director.txt")
+    import cr_language
+    # a video in another language: the words this stretch draws on screen are in it too (none of this for English, so
+    # an English video's saved plans keep their key)
+    template = cr_language.screen_rule(cr_language.of_job(job) or cr_language.current()) + _prompt("director.txt")
     beats = beats_text(lines)
     docs = {"actions": man.get("actions") or {}, "shots": man.get("shots") or [], "fx": man.get("fx") or {},
             "notes": man.get("notes") or "", "examples": man.get("examples") or {}}

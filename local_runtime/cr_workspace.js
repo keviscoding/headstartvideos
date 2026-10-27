@@ -5,7 +5,7 @@
   const all = selector => [...document.querySelectorAll(selector)];
   const boot = window.CR_WORKSPACE || {};
   const state = {catalog: null, setup: null, selected: null, inspected: null, input: 'idea', narration: 'ai',
-    audio: '', featureDrafts: {}, captionsDrafts: {}, page: 'create', family: 'all', projectFilter: 'all',
+    audio: '', featureDrafts: {}, captionsDrafts: {}, language: null, page: 'create', family: 'all', projectFilter: 'all',
     queue: [], jobs: [], studies: [], busy: false, submitting: false, uploading: false,
     openJob: null, currentOutput: null, timer: null, refresh: null, optionalLoaded: false, projectNodes: new Map()};
   const STORAGE = 'channelrecipe.workspace.v1';
@@ -271,6 +271,30 @@
       $('crw-panels-recent').dataset.loaded = '1';
     } catch (e) {text('crw-panels-status', e.message);}
   }
+  // The video's language (cr_language): its script, voice, captions and words on screen. Create starts at the language
+  // the creator chose last (Studio keeps it), else at the recipe's own; a choice here is kept for the next videos.
+  function languageName(id) {return (state.catalog?.languages || []).find(l => l.id === id)?.name || 'English';}
+  function languageView() {
+    // every recipe offers the languages all its fonts draw, plus its own (a Czech channel speaks Czech)
+    const box = $('crw-language'), own = state.selected?.language || 'en';
+    const list = (state.catalog?.languages || []).filter(l => l.offered !== false || l.id === own);
+    if (list.length && box.dataset.recipe !== own) {
+      box.replaceChildren(...list.map(l => {const o = el('option', '', l.native && l.native !== l.name ? `${l.name} · ${l.native}` : l.name); o.value = l.id; return o;}));
+      box.dataset.recipe = own;
+    }
+    // a ready-made Shorts recipe (its own pipeline writes, voices and captions it) speaks its own language for now
+    const pipelineShort = isShort(state.selected) && state.selected?.short_seconds != null;
+    const want = pipelineShort ? own : [state.language, state.catalog?.default_language, own, 'en'].find(id => id && [...box.options].some(o => o.value === id));
+    if (want && box.value !== want) box.value = want;
+    box.disabled = pipelineShort;
+    const lang = box.value || 'en', name = languageName(lang);
+    text('crw-language-help', pipelineShort && isRanking(state.selected) ? 'Ranking Shorts speak the language you type the topic in: type it in Spanish, for example, for a Short in Spanish.'
+      : pipelineShort ? `${state.selected.label || 'This Shorts recipe'} speaks ${name} for now: its Shorts are written, voiced and captioned by their own pipeline. Video recipes and styles written in code can be made in your language.`
+      : state.narration === 'own' ? `The language of your recording. Its captions are timed in ${name}, and the words on screen are in ${name}.`
+      : lang === 'en' ? 'The script, the voice, the captions and the words on screen. Studio keeps your choice for your next videos.'
+      : `The script, the voice, the captions and the words on screen are all in ${name}. Choose voice plays its samples in English; every voice reads your video in ${name}.`);
+    text('crw-summary-language', pipelineShort && isRanking(state.selected) ? 'The topic’s language' : name);
+  }
   function captionsNote() {
     const none = state.selected?.captions === false, cloud = state.renderOn === 'cloud' && state.cloudInfo?.available && !cloudBlock();
     text('crw-captions-note', !none ? '' : !checked('crw-captions') ? 'This style has no captions, like its channel. Switch this on to add them to a video.'
@@ -326,7 +350,7 @@
     if (narrator) text('crw-narration-name', state.selected?.narrator ? `${narrator} · this style's narrator` : narrator);
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : narrator || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
-    footageNote(); threedNote(); frameCheckNote();
+    footageNote(); threedNote(); frameCheckNote(); languageView();
   }
   // A 3D video's time is mostly Claude's: it directs every shot, then reviews them in rounds (a customer's 2-minute 3D
   // video spent 84 of its 116 minutes in Claude Opus, 2026-10-25). Said before Create, with Quicker 3D review. Sections
@@ -924,7 +948,8 @@
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
       threed_look:threedLook(features), threed_quick:!!(features.threed && !strict() && checked('crw-threed-quick')),
-      carry_on_after_reset:checked('crw-carry-on'), frame_check:state.selected?.frame_check?checked('crw-frame-check'):undefined};
+      carry_on_after_reset:checked('crw-carry-on'), frame_check:state.selected?.frame_check?checked('crw-frame-check'):undefined,
+      language:$('crw-language').value||'en'};
     if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
       // A Short to remake: any YouTube link form (Shorts, watch, youtu.be, m., any case), sent as one plain link, for one topic
       const pasted=$('crw-rank-reference').value.trim(), refId=(/(?:youtu\.be\/|youtube\.com\/(?:shorts\/|watch\?(?:[^#]*&)?v=|live\/|embed\/))([A-Za-z0-9_-]{11})/i.exec(pasted)||[])[1]||'';
@@ -962,6 +987,7 @@
     if(r.name==='folio')return 'FOLIO renders on this computer: every shot is drawn by your Claude Code.';
     if(state.narration==='own')return 'Your own recording renders on this computer.';
     if($('crw-character-image').value&&!strict())return 'A character picture of your own renders on this computer for now.';
+    if(($('crw-language').value||'en')!==(r.language||'en'))return `A video in ${languageName($('crw-language').value)} renders on this computer for now.`;
     return '';
   }
   function cloudChoice() {
@@ -1119,6 +1145,11 @@
   refreshFast();
   $('crw-form').addEventListener('input',()=>{error('');updateOptional();summary();save();cloudChoice();});
   $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
+  // the language chosen is kept as Studio's default for the next videos (any recipe); taken on its first event, before
+  // the form's own refresh (which starts the picker at the kept choice) sees it
+  $('crw-language').addEventListener('input',()=>{if(!$('crw-language').disabled)state.language=$('crw-language').value||'en';});
+  $('crw-language').addEventListener('change',async()=>{if($('crw-language').disabled)return;state.language=$('crw-language').value||'en';summary();cloudChoice();
+    try{await api('/cr-workspace/language',{method:'POST',body:{language:state.language}});}catch(e){toast(e.message);}});
   // the frame check's switch is Studio's own setting: kept for every coded style's new videos
   $('crw-frame-check').addEventListener('change',async()=>{const on=checked('crw-frame-check');
     for(const row of state.catalog?.channels||[])if(row.frame_check)row.frame_check.on=on;

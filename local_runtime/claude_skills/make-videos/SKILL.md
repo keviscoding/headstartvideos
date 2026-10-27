@@ -63,7 +63,13 @@ What they asked for: $ARGUMENTS
 
 - Options (all optional): captions, thumbnails, thumbnail_count, description, extra_instructions (creative
   direction), script (their own narration, one title), features {key: true/false} (the style's switches, shown by
-  `quote` under media), short_seconds, ranking {...} for Ranking Shorts.
+  `quote` under media), short_seconds, ranking {...} for Ranking Shorts, language.
+- **Another language** (Spanish, Portuguese, French, German and more: `list_styles` gives `languages`): pass
+  `options.language` (a name like Spanish, its own name like Español, or a code like es). The script, the voice,
+  the captions and the words on screen are all in it. Without it a video speaks the language the creator chose last
+  in Create, else its style's own (each card's `language`). Choose voice plays its samples in English; every voice
+  reads the video in its language. A video in another language than its style's renders on this computer for now.
+  To make a learned style speak another language by default (a Spanish channel's clone), use `edit_style` language.
 - **Captions** start at the style's own choice: a style card with `captions: false` has none by design, like its
   channel. If they want captions on such a style, pass `options.captions: true` and Studio burns them in anyway.
   When a video should have had captions but has none, `progress(id)` gives `captions_note` with the reason: tell them.

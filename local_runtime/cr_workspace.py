@@ -164,6 +164,9 @@ def install(studio, activity, *, token, home=None):
             study = ((info or {}).get("cr_style_clone") or {}).get("operation_id") if made.get("file") else None
             row["improve_study"] = study if isinstance(study, str) and _OPERATION.fullmatch(study) else None
             row["coded"] = look.get("visuals") in cr_animated2d.PLUGINS     # its own code draws every picture
+            # the language its videos speak by its own file; Create's Language starts here unless Studio has a default
+            import cr_language
+            row["language"] = cr_language.style_language(info)
             # a cloned style's own narrator (its channel's kind of voice, or the one chosen for it): Create shows it
             row["narrator"] = (cr_media.style_voice(row.get("name"), info if isinstance(info, dict) else {})
                                .get("voice") or None)
@@ -178,6 +181,10 @@ def install(studio, activity, *, token, home=None):
         data["footage_watch"] = [cr_watch.budget(minutes) for minutes in range(1, 61)]
         # the last video's footage watching when Kie's watcher failed in it (moved to ChannelRecipe's, or stopped)
         data["footage_watcher"] = cr_watch.last_outcome(home)
+        # the languages a video can speak, and the one Create starts at when the creator chose one before
+        import cr_language
+        data["languages"] = cr_language.choices(also={row.get("language") for row in data["channels"]})
+        data["default_language"] = cr_language.default(home) or None
         return cr_presentation.plain_copy(data)
 
     def selected_preset():
@@ -397,6 +404,17 @@ def install(studio, activity, *, token, home=None):
             return protect(send_file(path, mimetype="image/jpeg", conditional=False))
         except Exception as error:
             return panel_error(error)
+
+    @app.post("/cr-workspace/language")
+    def cr_workspace_language():
+        """Create's Language: the creator's choice is kept as Studio's default for their next videos."""
+        try:
+            local_access()
+            import cr_language
+            body = request.get_json(silent=True) or {}
+            return protect(jsonify(language=cr_language.set_default(home, body.get("language"))))
+        except Exception as error:
+            return failure(error)
 
     @app.post("/cr-workspace/frame-check")
     def cr_workspace_frame_check():

@@ -87,3 +87,4 @@ button.crw-inline-link{background:none;border:0;padding:0;color:var(--crw-violet
 .crw-footage-note{grid-column:1/-1;margin-top:14px;padding:9px 11px;border-left:3px solid #E2B05E;background:#2B2622;color:#EEDDBD;font-size:11px;line-height:1.6;border-radius:0 6px 6px 0}
 .crw-recovery-list{margin:6px 0 0 18px;padding:0;font-size:13px;line-height:1.6;color:var(--crw-muted)}.crw-recovery-list li{margin:4px 0}.crw-recovery-fix{margin-top:8px}.crw-recovery-ok{display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px}
 .crw-readiness-action{width:100%;margin-top:10px;font-size:13px}.crw-readiness-action.is-busy{opacity:.7;pointer-events:none}
+.crw-language-field{margin-top:0;margin-bottom:15px}

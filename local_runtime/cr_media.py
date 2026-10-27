@@ -1354,6 +1354,13 @@ def wrap_whisper(engine):
             def transcribe(self,audio,*args,**kwargs):
                 if isinstance(audio,(str,Path)):
                     audio=narration_audio(audio)
+                if "language" not in kwargs:
+                    try:
+                        import cr_language       # a video asked to speak a language: told, not guessed from its audio
+                        if cr_language.whisper_code():
+                            kwargs["language"]=cr_language.whisper_code()
+                    except ImportError:
+                        pass
                 return self.model.transcribe(audio,*args,**kwargs)
         def get_whisper():
             try:
@@ -1384,6 +1391,8 @@ def install(engine):
     wrap_whisper(engine)
     import cr_captions
     cr_captions.install(engine)                 # captions asked for are burned in, or the video says why not
+    import cr_language
+    cr_language.install(engine)                 # the language chosen for one video: script, voice, captions, screen
     global _native_images
     _native_images = engine._image_provider
     def hook(name, task, replacement):
