@@ -32,6 +32,9 @@ class ProviderBusy(ProviderFailure):
         self.retry_after = retry_after
 
 
+BUSY_STATUSES = (429, 500, 502, 503, 504, 529)
+
+
 def _retry_after(res, default=20):
     try:
         seconds = int(float((getattr(res, "headers", {}) or {}).get("retry-after", default)))
@@ -359,7 +362,11 @@ def generate(provider, key, model, parts, kind, max_tokens):
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=(15, READ_TIMEOUT),
                             allow_redirects=False, stream=claude or provider != "kie")
-        if res.status_code in (429, 503, 529):
+        # Turned away before any answer: busy (429), overloaded (503, 529) or a server error with no answer at all (500,
+        # 502, 504). Kie's Claude route answered HTTP 500 to five planning calls in 30 s (2026-10-27) and each was kept
+        # as a stopped step that Studio could never send again, so the customer's 3D video stopped twice; their next one,
+        # an hour later, went through. Nothing was generated, so it is sent again like any busy answer.
+        if res.status_code in BUSY_STATUSES:
             raise ProviderBusy(label, res.status_code, _retry_after(res))
         if res.status_code != 200:
             raise ProviderFailure(f"{label} could not complete this request (HTTP {res.status_code}). No other account was used.",

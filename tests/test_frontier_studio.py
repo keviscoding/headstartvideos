@@ -142,6 +142,26 @@ def test_provider_failure_is_recorded_and_cannot_silently_retry_on_cr_key(env, m
     assert retry.value.status_code == 409 and len(calls) == 1
 
 
+def test_a_server_error_with_no_answer_is_sent_again_never_kept_as_a_stopped_step(env, monkeypatch):
+    """A customer's 3D video stopped twice (2026-10-27): Kie's Claude route answered HTTP 500 to five planning calls in
+    30 s, each was kept as a stopped step ("This request stopped or is still running"), and Studio could never send it
+    again. A 500/502/504 with no answer generated nothing: it's released like a busy answer and the same request goes
+    through when sent again, counted once."""
+    env.connect(env.owner)
+    p = studio.create_project(env.owner, studio.ProjectRequest(title="Example"))
+    answers = [SimpleNamespace(status_code=500, headers={}, close=lambda: None), reply()]
+    calls = []
+    monkeypatch.setattr(studio.requests, "post", lambda *a, **kw: calls.append(kw) or answers.pop(0))
+    req = request_for(p["id"])
+    with pytest.raises(HTTPException) as busy:
+        studio.generate(env.owner, req)
+    assert busy.value.status_code == 429 and busy.value.headers.get("Retry-After")
+    with studio.db._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM frontier_requests WHERE id='request_123456'").fetchone()["n"] == 0
+    assert studio.generate(env.owner, req)["text"] == "An outline."
+    assert len(calls) == 2 and studio.project(env.owner, p["id"])["calls"] == 1
+
+
 def test_research_uses_grounding_and_images_are_bounded(env, monkeypatch):
     env.connect(env.owner)
     p = studio.create_project(env.owner, studio.ProjectRequest(title="Example"))
