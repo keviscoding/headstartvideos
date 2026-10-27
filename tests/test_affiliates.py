@@ -121,3 +121,28 @@ def test_the_affiliate_page_is_live_only_once_set_up(monkeypatch):
 def test_every_page_a_visitor_lands_or_pays_on_loads_the_tracker():
     for page in ("landing.html", "index.html", "money-niche.html", "affiliates.html"):
         assert "/static/cr-affiliate.js" in (ROOT / "webapp" / "static" / page).read_text(encoding="utf-8"), page
+
+
+def test_an_affiliate_or_ad_link_keeps_the_app_link_routable():
+    """The landing page copies ?via=/?utm_ onto its /app links; it must go before the #hash, or /app shows a blank page."""
+    import json
+    import re
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    html = (ROOT / "webapp" / "static" / "landing.html").read_text(encoding="utf-8")
+    script = next(s for s in re.findall(r"<script>(.*?)</script>", html, re.S) if "captureAttributionFromUrl" in s)
+    hrefs = ["/app", "/app#local-studio", "/app?signin=1#local-studio"]
+    harness = """
+const anchors = %s.map(h => ({ _h: h, getAttribute(k) { return this._h; }, setAttribute(k, v) { this._h = v; },
+                               addEventListener() {}, closest() { return null; } }));
+global.window = { location: { search: '?via=kev-tester' } };
+global.document = { querySelectorAll: () => anchors };
+%s
+console.log(JSON.stringify(anchors.map(a => a._h)));
+""" % (json.dumps(hrefs), script)
+    out = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == ["/app?via=kev-tester", "/app?via=kev-tester#local-studio", "/app?signin=1#local-studio"]

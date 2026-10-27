@@ -838,9 +838,12 @@
             var qs = window.location.search || '';
             if (qs) {
                 document.querySelectorAll('a[href="/app"], a[href^="/app"]').forEach(function (a) {
+                    // the query goes before any #hash: "/app#local-studio?via=x" would be a hash the app can't route
                     var href = a.getAttribute('href') || '/app';
-                    if (href.indexOf('?') >= 0) return;
-                    a.setAttribute('href', href + qs);
+                    var cut = href.indexOf('#');
+                    var path = cut >= 0 ? href.slice(0, cut) : href;
+                    if (path.indexOf('?') >= 0) return;
+                    a.setAttribute('href', path + qs + (cut >= 0 ? href.slice(cut) : ''));
                 });
             }
             document.querySelectorAll('a[href*="/app"]').forEach(function (a) {
