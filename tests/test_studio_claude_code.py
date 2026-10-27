@@ -303,6 +303,38 @@ def test_the_daily_model_check_is_run_once_when_it_is_the_only_blocker(studio):
     assert out["started"] and studio.posted("/cr-claude/setup") == [{"action": "verify"}]
 
 
+def test_the_model_check_is_found_by_its_check_key_whatever_its_words(studio):
+    # Studio 110 says "Verify my Claude models"; the readiness key "models" is what counts
+    studio.run_answers = [tools.Refused("Complete this video's setup before starting.", 409,
+                                        {"blockers": ["Your Claude models need their quick check: press Verify my "
+                                                      "Claude models."],
+                                         "checks": [{"key": "ffmpeg", "ready": True},
+                                                    {"key": "models", "ready": False, "message": "..."}]}),
+                          {"queued": [{"slug": "v", "title": "T"}], "warnings": ["From this video on, Studio makes "
+                                                                                 "your videos with Claude Code."]}]
+    q = ok("quote", {"style": "documentary"})
+    out = ok("make_videos", {"titles": ["T"], "style": "documentary", "where": "this_computer",
+                             "quote_id": q["quote_id"]})
+    assert out["started"] and studio.posted("/cr-claude/setup") == [{"action": "verify"}]
+    assert out["tell_them"] == ["From this video on, Studio makes your videos with Claude Code."]
+    assert tools.only_models_check({"checks": [{"key": "models", "ready": False}, {"key": "mcp", "ready": False}]}) \
+        is False
+
+
+@pytest.mark.parametrize("mode", ["channelrecipe", "claudecode"])
+def test_setup_check_says_when_a_customer_is_still_on_the_old_api_route(studio, monkeypatch, mode):
+    real_call = tools.call
+    monkeypatch.setattr(tools, "call", lambda method, path, body=None, **kw: {
+        "local_version": "5.3-admin.110", "readiness": {"ready": True, "blockers": []}, "brain_mode": mode,
+        "api_route": {"ready_to_switch": False}} if path == "/cr-status" else real_call(method, path, body, **kw))
+    out = ok("setup_check", {})
+    if mode == "claudecode":
+        assert "old_api_route" not in out
+    else:
+        assert out["old_api_route"]["on"] and "Switch to Claude Code (recommended)" in out["old_api_route"]["fix"]
+        assert out["old_api_route"]["next_video_switches_by_itself"] is False
+
+
 def test_other_blockers_are_read_out_not_worked_around(studio):
     studio.run_answers = [tools.Refused("Complete this video's setup before starting.", 409,
                                         {"blockers": ["Connect a Kie.ai key."]})]

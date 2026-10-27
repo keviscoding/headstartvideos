@@ -51,7 +51,8 @@ def workspace(browser):
                           local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}],
-                          cloud=None, cloud_starts=[], characters=[], drawn=[], active_lines=["ffmpeg: final render"])
+                          cloud=None, cloud_starts=[], characters=[], drawn=[], active_lines=["ffmpeg: final render"],
+                          claude_fails="")
     preview_lock = threading.Lock()
     image = io.BytesIO()
     Image.new("RGB", (160, 90), "#415573").save(image, "JPEG")
@@ -104,6 +105,18 @@ def workspace(browser):
 
     @app.get("/cr-status")
     def status():
+        if env.mode in ("models", "models_auto"):         # only the models' daily check is left (Studio 110)
+            why = "Your Claude models need their quick check: press Verify my Claude models."
+            return jsonify(local_version=env.local_version, account=env.account, brain_mode="claudecode",
+                           connected=True, readiness={"ready": False, "blockers": [why],
+                                                      "checks": [{"key": "models", "ready": False, "message": why}]},
+                           claude_code={"authenticated": True, "mcp_connected": env.mode == "models_auto"},
+                           narration={"voice": "My narrator", "label": "My media account"})
+        if env.mode == "api_route":                         # still on the old API route: its videos still start
+            return jsonify(local_version=env.local_version, account=env.account, brain_mode="channelrecipe",
+                           connected=True, readiness={"ready": True, "blockers": [], "checks": []},
+                           api_route={"ready_to_switch": False}, claude_code={},
+                           narration={"voice": "My narrator", "label": "My media account"})
         ready = env.mode not in ("needs_setup", "needs_update")
         blockers = [] if ready else ["A new Studio is out."] if env.mode == "needs_update" else ["Connect your narration account."]
         checks = [{"key": "release", "ready": False, "message": blockers[0]}] if env.mode == "needs_update" else []
@@ -111,6 +124,16 @@ def workspace(browser):
                        readiness={"ready": ready, "blockers": blockers, "checks": checks},
                        claude_code={"allowance": {"reported_limit": True, "blocked": False}},
                        narration={"voice": "My narrator", "label": "My media account"})
+
+    @app.post("/cr-claude/setup")
+    def claude_setup():
+        if env.claude_fails:
+            return jsonify(error=env.claude_fails), 409
+        action = request.json["action"]
+        env.mode = "ready"
+        return jsonify(verified=True, switched=action == "switch",
+                       message="Switched: Studio now makes your videos with Claude Code." if action == "switch"
+                       else "Both selected Claude models passed.")
 
     @app.get("/cr-diagnostics")
     def diagnostics():
@@ -1142,3 +1165,50 @@ def test_carry_on_says_why_the_videos_are_still_on_hold(workspace):
     assert "Connect ElevenLabs" in page.locator("#crw-toast").inner_text()
     assert "Nothing was on hold" not in page.locator("#crw-toast").inner_text()
     assert not env.errors
+
+
+# ── Studio 110: Claude, one click from Create ──────────────────────────────────────────────────────────────────────
+
+def test_create_offers_one_click_to_verify_the_claude_models(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "models"                                   # tools not connected yet: no check by itself, the button
+    env.open()
+    action = page.locator("#crw-readiness-action")
+    assert action.is_visible() and action.inner_text() == "Verify my Claude models"
+    assert page.locator("#crw-create").is_disabled()
+    assert not [p for p in env.posts if p["path"] == "/cr-claude/setup"]
+    action.click()
+    page.wait_for_function("!document.getElementById('crw-create').disabled")
+    assert [p["body"] for p in env.posts if p["path"] == "/cr-claude/setup"] == [{"action": "verify"}]
+    assert action.is_hidden() and "passed" in page.locator("#crw-toast").inner_text()
+
+
+def test_create_checks_the_models_by_itself_once_and_says_why_a_check_stopped(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "models_auto"
+    env.claude_fails = "Your Claude plan reached its usage limit, so the model check couldn't run."
+    env.open()
+    page.locator("#crw-error").wait_for(state="visible")
+    assert "usage limit" in page.locator("#crw-error").inner_text()
+    assert len([p for p in env.posts if p["path"] == "/cr-claude/setup"]) == 1      # once, never in a loop
+    action = page.locator("#crw-readiness-action")
+    assert action.is_visible() and action.inner_text() == "Verify my Claude models"
+    env.claude_fails = ""
+    action.click()
+    page.wait_for_function("!document.getElementById('crw-create').disabled")
+    assert len([p for p in env.posts if p["path"] == "/cr-claude/setup"]) == 2
+
+
+def test_create_on_the_old_api_route_offers_the_switch_without_stopping_videos(workspace):
+    env, page = workspace, workspace.page
+    env.mode = "api_route"
+    env.open()
+    assert not page.locator("#crw-create").is_disabled()                 # never stranded before switching
+    assert "old API route" in page.locator("#crw-readiness").inner_text()
+    action = page.locator("#crw-readiness-action")
+    assert action.inner_text() == "Switch to Claude Code (recommended)"
+    action.click()
+    page.wait_for_function("document.getElementById('crw-readiness-action').hidden")
+    assert [p["body"] for p in env.posts if p["path"] == "/cr-claude/setup"] == [{"action": "switch"}]
+    assert "Switched" in page.locator("#crw-toast").inner_text()
+    assert "old API route" not in page.locator("#crw-readiness").inner_text()

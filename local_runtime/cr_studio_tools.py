@@ -503,6 +503,17 @@ def tool_carry_on_queue(args):
     return out
 
 
+def only_models_check(data) -> bool:
+    """The models' daily check is the only thing in the way (readiness key "models"; older Studios: its words)."""
+    data = data or {}
+    failing = [c for c in data.get("checks") or [] if isinstance(c, dict) and c.get("ready") is False]
+    if failing:
+        return all(c.get("key") == "models" for c in failing)
+    blockers = data.get("blockers") or []
+    return bool(blockers) and all("Verify both Claude models" in str(b) or "Verify my Claude models" in str(b)
+                                  for b in blockers)
+
+
 def tool_setup_check(args):
     try:
         status = call("GET", "/cr-status", timeout=60)
@@ -523,10 +534,18 @@ def tool_setup_check(args):
         cloud = {"available": False, "why": "Studio Cloud's status didn't load."}
     blockers = readiness.get("blockers") or []
     speech = status.get("speech_model") or {}
-    only_verify = bool(blockers) and all("Verify both Claude models" in b for b in blockers)
+    only_verify = bool(blockers) and only_models_check(readiness)
     return {"running": True, "studio_version": str(status.get("local_version") or "").replace("5.3-admin.", ""),
             "ready": bool(readiness.get("ready")), "blockers": blockers,
             "fixes_itself": "make_videos runs the tiny daily Claude model check itself." if only_verify else "",
+            # a customer still on the old API route (an API account as Studio's brain): Studio makes every video
+            # with Claude Code now; the switch is one button in setup (it also checks their Claude models)
+            **({"old_api_route": {"on": True, "next_video_switches_by_itself":
+                                  bool((status.get("api_route") or {}).get("ready_to_switch")),
+                                  "fix": "Tell the creator Studio now makes every video with Claude Code on their "
+                                         "Claude plan, and ask them to press Switch to Claude Code (recommended) "
+                                         "on the setup page, step 2 (setup_page). Their API key stays saved."}}
+               if status.get("brain_mode") and status.get("brain_mode") != "claudecode" else {}),
             "setup_page": link("/cr-setup"),
             "graphics_browser": {"ready": bool(status.get("browser")), "why": status.get("browser_reason") or "",
                                  "fix": "" if status.get("browser") else
@@ -891,8 +910,8 @@ def tool_make_videos(args):
         blockers = (error.data or {}).get("blockers") or []
         if (error.data or {}).get("resume_first"):
             return resume_first_answer(error.data["resume_first"], error.data.get("others") or [])
-        if blockers and all("Verify both Claude models" in b for b in blockers):
-            call("POST", "/cr-claude/setup", {"action": "verify"}, timeout=180)
+        if blockers and only_models_check(error.data):
+            call("POST", "/cr-claude/setup", {"action": "verify"}, timeout=300)   # two tiny checks, up to 2 min each
             result = call("POST", "/api/run", payload, timeout=120)
         elif blockers:
             raise Refused(" ".join(blockers) + f" Setup: {link('/cr-setup')}", error.status, error.data) from None
@@ -907,6 +926,8 @@ def tool_make_videos(args):
             f"They're in Studio's queue behind {before} video{'s' if before != 1 else ''} and start by themselves, one "
             "at a time: the creator doesn't need to wait. " if before else "Studio makes them one at a time. ")
     return {"started": True, "where": "this_computer", "videos": queued, "quote": q["summary"],
+            # what Studio said with the start (a disk with little to spare; switched to Claude Code): tell them
+            **({"tell_them": result["warnings"]} if result.get("warnings") else {}),
             "next": said + ("" if held else "Check with progress(id) every few minutes (don't wait in a loop); Studio "
                             "shows a notification when each one is done. open_in_studio(page='projects') shows them "
                             "on the Studio page.")}

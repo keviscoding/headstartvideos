@@ -104,19 +104,25 @@ def main():
         assert status.json["providers"]["PEXELS_API_KEY"]
         assert "test-local-provider-key" not in status.text
         assert (root / ".env").stat().st_mode & 0o077 == 0
-        # One form entry connects local media and, with explicit consent, the CR brain.
-        saved = client.post("/cr-hub", headers=protected, json={"provider": "atlas", "key": "test-hub-provider-key",
-                            "tasks": ["images", "narration", "motion", "avatars"], "use_for_brain": True,
-                            "model": "google/gemini-3.8-flash", "visual_model": "google/gemini-3.8-flash"})
+        # One form entry connects local media. API brains are closed (Studio 110): an old page's "use for brain" is
+        # never sent to CR, and the media key is saved all the same (its read-only account check is stubbed here).
+        import requests
+        import cr_media
+        real_get, real_data = requests.get, cr_media._data
+        requests.get, cr_media._data = (lambda *a, **k: None), (lambda response, provider: {"data": 10})
+        try:
+            saved = client.post("/cr-hub", headers=protected, json={"provider": "atlas", "key": "test-hub-provider-key",
+                                "tasks": ["images", "narration", "motion", "avatars"], "use_for_brain": True,
+                                "model": "google/gemini-3.8-flash", "visual_model": "google/gemini-3.8-flash"})
+        finally:
+            requests.get, cr_media._data = real_get, real_data
         assert saved.status_code == 200 and "test-hub-provider-key" not in saved.text
-        assert ("brain-key", {"provider": "atlas", "api_key": "test-hub-provider-key", "model": "google/gemini-3.8-flash",
-                              "visual_model": "google/gemini-3.8-flash"}) in calls
+        assert not any(path == "brain-key" for path, _ in calls)
         before_brain = len(calls)
         brain = client.post("/cr-brain", headers=protected, json={"provider": "kie", "key": "test-owned-brain-key",
                             "model": "claude-sonnet-5-5", "visual_model": "claude-opus-5-5"})
-        assert brain.status_code == 200 and "test-owned-brain-key" not in brain.text
-        assert len(calls) == before_brain + 1 and calls[-1] == ("brain-key", {"provider": "kie",
-                            "api_key": "test-owned-brain-key", "model": "claude-sonnet-5-5", "visual_model": "claude-opus-5-5"})
+        assert brain.status_code == 410 and "test-owned-brain-key" not in brain.text
+        assert len(calls) == before_brain
         assert os.getenv("KIE_API_KEY", "") != "test-owned-brain-key", "A brain key alone must not replace media keys"
         status = client.get("/cr-status", headers=local)
         assert status.json["media_hub"]["connected"] and "test-hub-provider-key" not in status.text
@@ -226,7 +232,7 @@ def main():
         # Account changes are blocked while a video is active.
         studio.RUNNING["slug"] = "busy"
         assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 409
-        assert client.post("/cr-brain", headers=protected, json={"provider": "kie"}).status_code == 409
+        assert client.post("/cr-brain", headers=protected, json={"provider": "kie"}).status_code == 410   # closed
         assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 409
         assert client.post("/cr-images", headers=protected, json={"provider": "inherit"}).status_code == 409
         studio.RUNNING["slug"] = None

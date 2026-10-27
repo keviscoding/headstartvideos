@@ -108,6 +108,14 @@ Studio through its own checks, so nothing needs the Studio web page.
   the Claude desktop app. Call `fix_claude_cli`: Studio runs Anthropic's official installer itself. Never install
   Claude Code from your own shell; call the fix tool. Then they sign in once: setup page, step 2, **Open the sign-in
   window**, and the browser login with their Claude Pro or Max account. Never ask for or handle their password.
+- Studio makes every video with Claude Code on the customer's Claude plan; there is no API-account option. If
+  `setup_check` says `old_api_route`, this customer still uses the old route (an API account as Studio's brain): ask
+  them to press **Switch to Claude Code (recommended)** on the setup page, step 2. It connects Claude Code, picks the
+  models and checks them; their API key stays saved but new videos don't use it. Never set up an API brain for them.
+- `setup_check`'s `claude_code.models_verified` false: the models' tiny check (one request to each, on their Claude
+  plan) lasts a day, and a new Claude Code or Studio asks for it again. When it's the only blocker, `make_videos` runs
+  it itself; on the Studio page it's Create's **Verify my Claude models** button. A check that stopped never needs
+  approving: pressing Verify again runs a new one.
 - `setup_check`'s `speech_model` not ready: while it says downloading or checking, Studio is fetching it by itself;
   otherwise call `fix_speech_model` (same rule: never install it from your shell).
 - `setup_check`'s `network` lists services this computer can't reach. Tell them in plain words: `blocked` ones stop
