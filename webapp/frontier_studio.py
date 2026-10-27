@@ -441,8 +441,20 @@ def _supported_model(provider, model):
     return model in {m["id"] for m in providers.PROVIDERS[provider]["brain_models"]}
 
 
+# Videos are written with Claude Code on the creator's own Claude plan (the owner, 2026-10-27: "We don't want them to
+# make videos through Claude and Kie. We want them to make it through Claude Code"). The API brain (this relay to an
+# Anthropic, Kie, Atlas or Gemini key) finished 1 of 10 customers' videos in a week while 42 customers made theirs with
+# Claude Code: a customer one step from verifying Claude Code saved their Kie key here instead and three videos stopped
+# on Kie's errors. No new API brain key is saved; a key saved before keeps working for the work it started, and Studio
+# moves its owner to Claude Code. Admins can still save one for support.
+API_BRAIN_CLOSED = ("ChannelRecipe now makes every video with Claude Code on your Claude plan, not an API account. "
+                    "In Studio's setup, press Set up Claude for videos (step 2) and finish its steps.")
+
+
 def save_key(user: dict, req: BrainKey) -> dict:
     require_studio_user(user)
+    if not is_admin(user):
+        raise HTTPException(409, API_BRAIN_CLOSED)
     _vault()  # Fail before any provider lookup if secure storage is unavailable.
     key = req.api_key.strip()
     if any(c.isspace() for c in key):

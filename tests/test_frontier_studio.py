@@ -610,3 +610,14 @@ def test_model_requests_are_shared_fairly(monkeypatch):
     assert studio._take_slot(2), "others still get through"
     studio._give_slot(1)
     assert studio._take_slot(1)
+
+
+def test_a_customer_can_no_longer_save_an_api_brain_and_is_sent_to_claude_code(env):
+    """The owner (2026-10-27): videos are made with Claude Code, never an API brain. A Max customer one step from
+    verifying Claude Code saved a Kie key here instead; three videos stopped on Kie's errors."""
+    customer = {"id": 7, "email": "customer@example.com", "plan": "studio_max"}
+    with pytest.raises(HTTPException) as closed:
+        studio.save_key(customer, studio.BrainKey(api_key="customer-hub-key-for-test", provider="kie",
+                                                  model="claude-opus-5-5"))
+    assert closed.value.status_code == 409 and "Claude Code" in closed.value.detail
+    assert "Set up Claude for videos" in closed.value.detail
