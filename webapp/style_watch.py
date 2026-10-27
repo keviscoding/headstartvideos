@@ -54,6 +54,12 @@ MAX_UPLOAD_BYTES = 30 * 1024 * 1024             # a light copy of a test video (
 UPLOAD_MIMES = ("video/mp4", "video/webm", "video/quicktime")
 # A day's watches per account. A study watches up to three references: the opening, the middle, and a call to action.
 DAILY_WATCHES = {"daily": 20, "studio_pro": 40, "studio_max": 60}
+# A day's likeness checks per account, apart from the watches (the owner, 2026-10-27): a customer's three looks used all
+# 20 watches, so both of their studies' renderers went unjudged. A study judges its renderer about five times and its
+# pictures a few more, Style Lab and Improve this style once a version; each check is about $0.003, so a day's checks
+# cost at most $0.18 / $0.36 / $0.60, under the same global daily spend cap.
+DAILY_CHECKS = {"daily": 60, "studio_pro": 120, "studio_max": 200}
+CHECK_PREFIX = "cmp_"                           # a likeness check's video_id: "cmp_" + its pictures' digest
 _ready = set()
 _ready_lock = threading.Lock()
 _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="style-watch")
@@ -192,10 +198,19 @@ def initialize():
         _ready.add(key)
 
 
-def _daily_limit(user: dict) -> int | None:
+def _daily_limit(user: dict, allowance: dict = DAILY_WATCHES) -> int | None:
     if is_admin(user):
         return None
-    return DAILY_WATCHES.get(plans.tier_of(user.get("plan")), 0)
+    return allowance.get(plans.tier_of(user.get("plan")), 0)
+
+
+def _used_today(conn, user: dict, checks: bool, now: float) -> int:
+    """The account's watches (checks=False) or likeness checks (checks=True) in the last 24 h, each against its own
+    allowance; a window someone had already watched (cached) is free."""
+    same = "=" if checks else "<>"
+    return conn.execute(db._q(f"""SELECT COUNT(*) AS n FROM style_watch_jobs WHERE user_id=? AND cached=0
+        AND created_at>? AND substr(video_id, 1, {len(CHECK_PREFIX)}) {same} ?"""),
+        (user["id"], now - 86400, CHECK_PREFIX)).fetchone()["n"]
 
 
 def _spent_today(conn) -> float:
@@ -440,8 +455,8 @@ def _score(value) -> float:
 
 
 def compare(user: dict, references: list, candidates: list, context: str = "", *, post=None) -> dict:
-    """Studio's likeness check: decoded and checked here, counted with the style watches (the same daily allowance
-    and the same global daily spend cap), answered at once."""
+    """Studio's likeness check: decoded and checked here, counted against its own daily allowance (DAILY_CHECKS, apart
+    from the watches) and the style watches' global daily spend cap, answered at once."""
     if not _key():
         raise HTTPException(503, "Style checking isn't available right now.")
     refs, cands = [], []
@@ -460,18 +475,15 @@ def compare(user: dict, references: list, candidates: list, context: str = "", *
     now = time.time()
     digest = hashlib.sha256(b"".join(refs + cands) + (context or "").encode()).hexdigest()[:24]
     with db._conn() as conn:
-        limit = _daily_limit(user)
-        if limit is not None:
-            used = conn.execute(db._q("""SELECT COUNT(*) AS n FROM style_watch_jobs WHERE user_id=? AND cached=0
-                AND created_at>?"""), (user["id"], now - 86400)).fetchone()["n"]
-            if used >= limit:
-                raise HTTPException(402, "You've used today's style checks. Try again tomorrow.")
+        limit = _daily_limit(user, DAILY_CHECKS)
+        if limit is not None and _used_today(conn, user, True, now) >= limit:
+            raise HTTPException(402, "You've used today's likeness checks. They come back within a day.")
         if _spent_today(conn) >= _env_float("STYLE_WATCH_DAILY_USD", 15.0):
             raise HTTPException(503, "Style checking is busy today. Try again later.")
         job = "sc_" + secrets.token_hex(10)
         conn.execute(db._q("""INSERT INTO style_watch_jobs (id,user_id,video_id,start_s,end_s,prompt_version,model,
             status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'running',?,?)"""),
-            (job, user["id"], "cmp_" + digest, 0, 0, 1000 + COMPARE_VERSION, model(), now, now))
+            (job, user["id"], CHECK_PREFIX + digest, 0, 0, 1000 + COMPARE_VERSION, model(), now, now))
     try:
         verdict, tin, tout = compare_once(refs, cands, context, post=post)
     except Exception as exc:                                  # noqa: BLE001 - said to Studio, which goes on without it
@@ -549,13 +561,10 @@ def start(user: dict, video_id: str, start_s: float, end_s: float, *, submit=Non
         if same:                                                # someone is watching this window right now
             return public(dict(same), is_admin(user))
         limit = _daily_limit(user)
-        if limit is not None:
-            used = conn.execute(db._q("""SELECT COUNT(*) AS n FROM style_watch_jobs WHERE user_id=? AND cached=0
-                AND created_at>?"""), (user["id"], now - 86400)).fetchone()["n"]
-            if used >= limit:
-                # 402, not 429: Studio retries a 429 within seconds, and this limit lasts until tomorrow
-                raise HTTPException(402, "You've used today's style watching. The study continues with its own "
-                                         "measurements, or try again tomorrow.")
+        if limit is not None and _used_today(conn, user, False, now) >= limit:
+            # 402, not 429: Studio retries a 429 within seconds, and this limit lasts until tomorrow
+            raise HTTPException(402, "You've used today's style watching. The study continues with its own "
+                                     "measurements, or try again tomorrow.")
         if _spent_today(conn) >= _env_float("STYLE_WATCH_DAILY_USD", 15.0):
             raise HTTPException(503, "Style watching is busy today. The study continues with its own measurements.")
         job = "sw_" + secrets.token_hex(10)
