@@ -187,7 +187,8 @@
     text('crw-batch-label', rk ? 'Queue more topics (up to 15, one per line)' : 'Create several videos');
     $('crw-batch-titles').placeholder = rk ? 'Ranking the Funniest Dog Moments\nRanking the Best Bunny Moments' : 'One additional title per line';
     hide('crw-short-duration', !s || rk); hide('crw-long-duration', s); hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
-    text('crw-canvas-label', s ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', s ? '9:16 vertical' : '16:9 landscape');
+    const tall = s || !!state.selected?.vertical;   // a style learned from Shorts is vertical too, at any length
+    text('crw-canvas-label', tall ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', tall ? '9:16 vertical' : '16:9 landscape');
     if (s) for (const id of SHORT_ONLY_HIDDEN) hide(id, true);
   }
   function selectRecipe(recipe, persist = true) {
