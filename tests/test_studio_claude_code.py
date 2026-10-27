@@ -300,7 +300,26 @@ def test_the_daily_model_check_is_run_once_when_it_is_the_only_blocker(studio):
     q = ok("quote", {"style": "documentary"})
     out = ok("make_videos", {"titles": ["T"], "style": "documentary", "where": "this_computer",
                              "quote_id": q["quote_id"]})
-    assert out["started"] and studio.posted("/cr-claude/setup") == [{"action": "verify"}]
+    assert out["started"] and studio.posted("/cr-claude/setup") == [{"action": "verify", "auto": True}]
+
+
+def test_a_stopped_model_check_is_not_run_again_by_make_videos(studio, monkeypatch):
+    """make_videos runs the daily check itself (auto); one that stopped before waits for the creator's press of
+    Verify my Claude models: Claude reads them Studio's words and the setup link, and no video starts."""
+    studio.run_answers = [tools.Refused("Complete this video's setup before starting.", 409,
+                                        {"blockers": ["Verify my Claude models in setup."]})]
+    real_call = tools.call
+
+    def call(method, path, body=None, **kw):
+        if path == "/cr-claude/setup":
+            raise tools.Refused("Your last model check stopped part-way. Press Verify my Claude models to run the "
+                                "check again (one tiny request to each model).", 409, {})
+        return real_call(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", call)
+    q = ok("quote", {"style": "documentary"})
+    with pytest.raises(tools.Refused, match="Press Verify my Claude models.*Setup: .*/cr-setup"):
+        tools.tool_make_videos({"titles": ["T"], "style": "documentary", "where": "this_computer",
+                           "quote_id": q["quote_id"]})
 
 
 def test_the_model_check_is_found_by_its_check_key_whatever_its_words(studio):
@@ -315,7 +334,7 @@ def test_the_model_check_is_found_by_its_check_key_whatever_its_words(studio):
     q = ok("quote", {"style": "documentary"})
     out = ok("make_videos", {"titles": ["T"], "style": "documentary", "where": "this_computer",
                              "quote_id": q["quote_id"]})
-    assert out["started"] and studio.posted("/cr-claude/setup") == [{"action": "verify"}]
+    assert out["started"] and studio.posted("/cr-claude/setup") == [{"action": "verify", "auto": True}]
     assert out["tell_them"] == ["From this video on, Studio makes your videos with Claude Code."]
     assert tools.only_models_check({"checks": [{"key": "models", "ready": False}, {"key": "mcp", "ready": False}]}) \
         is False

@@ -924,31 +924,40 @@ def create_app():
             return str(error) or "ChannelRecipe's tools didn't connect."
         return "" if connection["connected"] else str(connection.get("why") or "ChannelRecipe's tools didn't connect.")
 
-    def run_model_check():
+    def run_model_check(*, auto=False):
         checks = setup_status().get_json()
-        return cr_claude.verify_models(studio.mv, cr_bridge, cr_readiness.proof(checks, purpose="setup"))
+        return cr_claude.verify_models(studio.mv, cr_bridge, cr_readiness.proof(checks, purpose="setup"), auto=auto)
 
     def switch_to_claude_code(*, finish=True):
-        """Setup's and Create's "Switch to Claude Code (recommended)" for a customer on the old API route: the route
-        changes at once (its API key stays saved, unused by new videos), then the Claude setup steps that can run
-        here run: ChannelRecipe's tools, the saved models, their quick check. What's left is said in `next`."""
+        """Setup's and Create's "Switch to Claude Code (recommended)" for a customer on the old API route. The route
+        changes once Claude Code is installed and signed in (before that the customer's videos keep working on the
+        old route, and nothing could switch them back: /cr-brain is closed); its API key stays saved, unused by new
+        videos. Then the Claude setup steps that can run here run: ChannelRecipe's tools, the saved models, their
+        quick check. What's left is said in `next`. finish=False (the automatic switch, Claude Code verified): the
+        route only."""
         cfg = cr_bridge.load_settings()
         was_api = cfg.get("brain_mode") != "claudecode"
+        if finish:
+            local = cr_claude.status()
+            first = (" Your videos keep using your API account until then." if was_api else "")
+            again = " then press Switch to Claude Code again." if was_api else " then set up Claude."
+            if not local.get("installed"):
+                return {"switched": False, "brain_mode": cfg.get("brain_mode"), "verified": False, "next": "install",
+                        "message": "First install Claude Code: press Install Claude Code in setup, step 2, sign in,"
+                                   + again + first}
+            if not local.get("ready"):
+                return {"switched": False, "brain_mode": cfg.get("brain_mode"), "verified": False,
+                        "next": "update" if local.get("outdated") else "sign_in",
+                        "message": (local.get("message") if local.get("outdated") or local.get("slow")
+                                    else "First sign in to Claude Code: press Open the sign-in window in setup, "
+                                         "step 2, and sign in with your Claude Pro or Max account,"
+                                         + again) + first}
         save_claude_profile(cfg)
         said = ("Switched: Studio now makes your videos with Claude Code on your Claude plan. Your old API account "
                 "stays saved but isn't used for new videos. ") if was_api else ""
         result = {"switched": True, "brain_mode": "claudecode", "verified": False}
         if not finish:
             return result
-        local = cr_claude.status()
-        if not local.get("installed"):
-            return {**result, "next": "install",
-                    "message": said + "Next: press Install Claude Code in setup, step 2, then sign in."}
-        if not local.get("ready"):
-            return {**result, "next": "update" if local.get("outdated") else "sign_in",
-                    "message": said + "Next: " + (local.get("message") if local.get("outdated") or local.get("slow")
-                                                  else "press Open the sign-in window in setup, step 2, and sign in "
-                                                       "with your Claude Pro or Max account.")}
         why = connect_tools(cfg)
         if why:
             return {**result, "next": "connect", "message": said + why}
@@ -1002,7 +1011,8 @@ def create_app():
                     raise RuntimeError(why)
                 if not all(cfg.get(key) for key in ("general_model","visual_model","local_version")):
                     save_claude_profile(cfg)
-                return jsonify(run_model_check())
+                # auto: Create's run on page load and make_videos, not a press (a stopped check waits for one)
+                return jsonify(run_model_check(auto=bool(data.get("auto"))))
             return jsonify(error="Choose a supported setup action."),400
         except (Exception,cr_claude.ClaudeStageStopped) as error:
             return jsonify(error=str(error)),409

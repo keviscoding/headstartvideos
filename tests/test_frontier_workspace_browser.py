@@ -47,7 +47,7 @@ def browser():
 
 @pytest.fixture
 def workspace(browser):
-    env = SimpleNamespace(mode="ready", status_lines=None, creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
+    env = SimpleNamespace(mode="ready", busy=False, status_lines=None, creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
                           local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}],
@@ -120,7 +120,7 @@ def workspace(browser):
         ready = env.mode not in ("needs_setup", "needs_update")
         blockers = [] if ready else ["A new Studio is out."] if env.mode == "needs_update" else ["Connect your narration account."]
         checks = [{"key": "release", "ready": False, "message": blockers[0]}] if env.mode == "needs_update" else []
-        return jsonify(local_version=env.local_version, account=env.account, brain_mode="claude_code",
+        return jsonify(local_version=env.local_version, account=env.account, brain_mode="claudecode", connected=True,
                        readiness={"ready": ready, "blockers": blockers, "checks": checks},
                        claude_code={"allowance": {"reported_limit": True, "blocked": False}},
                        narration={"voice": "My narrator", "label": "My media account"})
@@ -265,7 +265,7 @@ def workspace(browser):
 
     @app.get("/cr-workspace/activity")
     def activity():
-        return jsonify(busy=env.mode in ("active", "queue"), operations=[])
+        return jsonify(busy=env.busy or env.mode in ("active", "queue"), operations=[])
 
     @app.get("/api/jobs")
     def jobs():
@@ -1190,13 +1190,25 @@ def test_create_checks_the_models_by_itself_once_and_says_why_a_check_stopped(wo
     env.open()
     page.locator("#crw-error").wait_for(state="visible")
     assert "usage limit" in page.locator("#crw-error").inner_text()
-    assert len([p for p in env.posts if p["path"] == "/cr-claude/setup"]) == 1      # once, never in a loop
+    # once, never in a loop, and marked auto: a check that stopped before waits for the button
+    assert [p["body"] for p in env.posts if p["path"] == "/cr-claude/setup"] == [{"action": "verify", "auto": True}]
     action = page.locator("#crw-readiness-action")
     assert action.is_visible() and action.inner_text() == "Verify my Claude models"
     env.claude_fails = ""
     action.click()
     page.wait_for_function("!document.getElementById('crw-create').disabled")
-    assert len([p for p in env.posts if p["path"] == "/cr-claude/setup"]) == 2
+    assert [p["body"] for p in env.posts if p["path"] == "/cr-claude/setup"][1:] == [{"action": "verify"}]   # a press
+
+
+def test_create_never_checks_the_models_by_itself_while_a_video_is_made(workspace):
+    env, page = workspace, workspace.page
+    env.mode, env.busy = "models_auto", True
+    env.open()
+    action = page.locator("#crw-readiness-action")
+    action.wait_for(state="visible")
+    page.wait_for_timeout(600)
+    assert not [p for p in env.posts if p["path"] == "/cr-claude/setup"]
+    assert not page.locator("#crw-error").is_visible()
 
 
 def test_create_on_the_old_api_route_offers_the_switch_without_stopping_videos(workspace):
