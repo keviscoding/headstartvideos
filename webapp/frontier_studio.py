@@ -441,8 +441,20 @@ def _supported_model(provider, model):
     return model in {m["id"] for m in providers.PROVIDERS[provider]["brain_models"]}
 
 
+# Videos are written with Claude Code on the creator's own Claude plan (the owner, 2026-10-27: "We don't want them to
+# make videos through Claude and Kie. We want them to make it through Claude Code"). The API brain (this relay to an
+# Anthropic, Kie, Atlas or Gemini key) finished 1 of 10 customers' videos in a week while 42 customers made theirs with
+# Claude Code: a customer one step from verifying Claude Code saved their Kie key here instead and three videos stopped
+# on Kie's errors. No new API brain key is saved; a key saved before keeps working for the work it started, and Studio
+# moves its owner to Claude Code. Admins can still save one for support.
+API_BRAIN_CLOSED = ("ChannelRecipe now makes every video with Claude Code on your Claude plan, not an API account. "
+                    "In Studio's setup, press Set up Claude for videos (step 2) and finish its steps.")
+
+
 def save_key(user: dict, req: BrainKey) -> dict:
     require_studio_user(user)
+    if not is_admin(user):
+        raise HTTPException(409, API_BRAIN_CLOSED)
     _vault()  # Fail before any provider lookup if secure storage is unavailable.
     key = req.api_key.strip()
     if any(c.isspace() for c in key):
@@ -478,7 +490,7 @@ class ProjectRequest(BaseModel):
 def create_project(user: dict, req: ProjectRequest) -> dict:
     require_studio_user(user)
     if not credential(user["id"]):
-        raise HTTPException(409, "Connect a model account in Local studio first.")
+        raise HTTPException(409, "Connect a model account in Local studio first." if is_admin(user) else API_BRAIN_CLOSED)
     project_id = "crv_" + secrets.token_hex(12)
     now = time.time()
     with db._conn() as conn:
@@ -600,6 +612,27 @@ def _record_failure(req, attempt, error):
                 (time.time(), failure.get("input_tokens", 0), failure.get("output_tokens", 0), req.project_id))
 
 
+# A fast server error (frontier_providers.FAST_ERROR_STATUSES) releases its request like a busy answer, and the row is
+# deleted; this count keeps how often one request was turned away that way (coordinator review, 2026-10-27: Studio
+# resends a busy answer for up to 15 minutes, so a 500 that always repeats would have cost ~40 sends, then "busy").
+# The FAST_5XX_LIMIT-th is a recorded stop, as every 500 was before. Per server process, forgotten after an hour.
+FAST_5XX_LIMIT = 3
+_fast_5xx = {}
+_fast_5xx_lock = threading.Lock()
+
+
+def _fast_5xx_again(request_id) -> bool:
+    """Count this request's fast server error; whether it may be sent again (under FAST_5XX_LIMIT so far)."""
+    now = time.time()
+    with _fast_5xx_lock:
+        for key, (_, first) in list(_fast_5xx.items()):
+            if now - first > 3600:
+                _fast_5xx.pop(key, None)
+        count, first = _fast_5xx.get(request_id, (0, now))
+        _fast_5xx[request_id] = (count + 1, first)
+        return count + 1 < FAST_5XX_LIMIT
+
+
 def _release_busy(req, attempt, retried):
     with db._conn() as conn:
         if retried:
@@ -645,7 +678,7 @@ def generate(user: dict, req: BrainRequest) -> dict:
     c = credential(user["id"])
     key = decrypt_secret(c["key_enc"]) if c else ""
     if not key:
-        raise HTTPException(409, "Reconnect your model account in Local studio.")
+        raise HTTPException(409, "Reconnect your model account in Local studio." if is_admin(user) else API_BRAIN_CLOSED)
     model = (c.get("visual_model") or c["model"]) if req.model_role == "visual" else c["model"]
     parts = [{"text": req.prompt}]
     size = 0
@@ -730,8 +763,20 @@ def generate(user: dict, req: BrainRequest) -> dict:
                 status=CASE WHEN EXISTS (SELECT 1 FROM frontier_requests WHERE project_id=? AND status='needs_review')
                 THEN 'needs_review' ELSE 'ready' END,updated_at=? WHERE id=?"""),
                          (incoming, outgoing, req.project_id, time.time(), req.project_id))
+        with _fast_5xx_lock:
+            _fast_5xx.pop(req.request_id, None)
         return result
     except providers.ProviderBusy as busy:
+        status = busy.diagnostics.get("upstream_http")
+        if status in providers.FAST_ERROR_STATUSES and not _fast_5xx_again(req.request_id):
+            # the same server error again and again: a recorded stop, as before fast errors were resent
+            failure = providers.ProviderFailure(
+                f"{providers.PROVIDERS[c['provider']]['label']} answered HTTP {status} {FAST_5XX_LIMIT} times for this step. Nothing "
+                "else was sent; open Local studio in CR to review it.", "upstream_http", upstream_http=status,
+                repeated=FAST_5XX_LIMIT)
+            if reserved:
+                _record_failure(req, attempt, failure)
+            raise HTTPException(502, failure.detail) from None
         # Turned away at the door: nothing was generated or charged. Release the
         # request so the creator's Studio can simply send it again.
         if reserved:
