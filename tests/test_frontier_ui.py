@@ -841,7 +841,13 @@ def test_a_fix_that_failed_before_the_page_opened_says_why_and_waits_for_fix_it(
     assert tab.locator("#connection").inner_text() == "Connect your ChannelRecipe account first."
     manual = tab.locator("#claude-signin-manual").text_content()               # inside the folded Details
     assert "Terminal" in manual and "PowerShell" not in manual, "a Mac names Terminal only"
-    assert "Mac security" in tab.locator("#walk-chapters").text_content()
+    # the full course plays first (owner, 2026-10-27); the three-minute setup, Mac chapter and all, is one click away
+    assert "Improve this style" in tab.locator("#walk-chapters").text_content()
+    tab.locator("#walk-setup").click()
+    tab.wait_for_function("document.querySelector('#walk-chapters').textContent.includes('Mac security')", timeout=5000)
+    assert tab.locator("#walk-title").inner_text() == "The whole setup, start to finish"
+    assert "studio-setup-walkthrough-v1.mp4" in tab.locator("#walk-video source").get_attribute("src")
+    tab.locator("#walk-close").click()
     assert tab.locator("#update").is_hidden(), "a newer Studio waits until setup is done"
     # every key field is masked text: no browser's password manager offers to save a Kie.ai key for 127.0.0.1
     assert tab.locator("input[type=password]").count() == 0
