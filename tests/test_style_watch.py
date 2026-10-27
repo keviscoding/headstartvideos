@@ -110,6 +110,32 @@ def test_each_account_has_a_daily_number_of_watches(env, monkeypatch):
     assert watch(env, who="max", start=400, end=520).status_code == 200, "another account is unaffected"
 
 
+def test_likeness_checks_have_their_own_daily_allowance_apart_from_the_watches(env, monkeypatch):
+    """A customer's three looks (2026-10-27) used all 20 watches, so every likeness check of both their studies was
+    refused and the renderers went unjudged. The checks now count against their own allowance."""
+    monkeypatch.setitem(sw.DAILY_WATCHES, "daily", 2)
+    monkeypatch.setitem(sw.DAILY_CHECKS, "daily", 3)
+    assert sw.DAILY_CHECKS == {"daily": 3, "studio_pro": 120, "studio_max": 200}
+    for start in (0, 200):
+        assert watch(env, start=start, end=start + 120).status_code == 200
+    assert watch(env, start=400, end=520).status_code == 402, "the watches are used up"
+    jpeg = __import__("base64").b64encode(b"\xff\xd8\xff" + b"0" * 64).decode()
+    good = json.dumps({"overall": 6, "candidates": [{"overall": 6}]})
+    monkeypatch.setattr(sw.requests, "post", lambda url, headers=None, json=None, timeout=None: SimpleNamespace(
+        status_code=200, json=lambda: {"candidates": [{"content": {"parts": [{"text": good}]}}],
+                                       "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 10}}))
+    user = env.users["creator"]
+    for k in range(3):                                  # each check is new pictures: none is answered from the cache
+        assert sw.compare(user, [jpeg], [__import__("base64").b64encode(b"\xff\xd8\xff" + bytes([k]) * 64).decode()]
+                          )["overall"] == 6
+    with pytest.raises(sw.HTTPException) as refused:
+        sw.compare(user, [jpeg], [jpeg])
+    assert refused.value.status_code == 402 and "likeness checks" in refused.value.detail
+    assert "within a day" in refused.value.detail
+    monkeypatch.setitem(sw.DAILY_WATCHES, "daily", 3)
+    assert watch(env, start=400, end=520).status_code == 200, "the checks never count against the watches"
+
+
 def test_the_global_daily_budget_stops_new_watches(env, monkeypatch):
     monkeypatch.setenv("STYLE_WATCH_DAILY_USD", "0.01")
     watch(env)
