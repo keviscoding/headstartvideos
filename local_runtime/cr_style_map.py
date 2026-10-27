@@ -20,7 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 110         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: every clone is written in code unless the creator chooses Studio's ready-made pictures; 110: a Shorts channel is vertical however it's made); older saved plans are made again
+ROUTER = 111         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code; 103: 3D characters rendered by Claude's own 3D renderer; 104: every clone is written in code unless the creator chooses Studio's ready-made pictures; 111: a Shorts channel is vertical however it's made); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
@@ -1066,7 +1066,7 @@ def _animated3d(plan: Plan, original: dict):
 def _vertical(plan: Plan):
     """A Shorts channel made with Studio's own engine instead of code (its pictures, footage or 3D engine): vertical
     too. The pictures that fill the frame are drawn tall, and what the engine draws only for wide frames is fitted
-    whole across the middle or left out (cr_vertical). Before Studio 110 these clones made regular 16:9 videos."""
+    whole across the middle or left out (cr_vertical). These clones used to make regular 16:9 videos."""
     plan.set("look.aspect", "9:16", area="Look", label="Format",
              why="the references are vertical Shorts (measured from their frames)", source="measured",
              show="vertical 1080x1920: pictures drawn tall, captions above the Shorts buttons, graphics made for wide "

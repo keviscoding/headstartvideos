@@ -971,7 +971,7 @@ def test_a_finished_look_suggests_the_closest_styles_and_a_paid_try_first_withou
     assert out["similar_styles"][0]["picture_url"].startswith("http://localhost:7860/cr-workspace/preview/")
     assert "suggestions only, never a reason not to study" in out["next"]
     assert "Either way the style makes vertical Shorts" in out["shorts_note"] and "16:9" not in out["shorts_note"], \
-        "a Shorts study says what its style makes: vertical however it's made (Studio 110)"
+        "a Shorts study says what its style makes: vertical however it's made"
 
 
 def test_clone_style_takes_a_bounded_study_budget_and_says_what_a_shorts_study_makes(studio, more, monkeypatch):

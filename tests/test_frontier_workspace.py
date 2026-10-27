@@ -111,7 +111,7 @@ def test_a_style_learned_from_shorts_is_listed_as_vertical(env):
     env.studio.styles.STYLES["cr_clone_abcdef"]["look"] = {"aspect": "9:16"}
     rows = {row["name"]: row for row in env.get("/cr-workspace/catalog").json["channels"]}
     assert rows["cr_clone_abcdef"]["vertical"] is True and rows["3d"]["vertical"] is False, \
-        "Create's canvas says 9:16 vertical for a style learned from Shorts, however it's made (Studio 110)"
+        "Create's canvas says 9:16 vertical for a style learned from Shorts, however it's made"
     script = (Path(__file__).parents[1] / "local_runtime" / "cr_workspace.js").read_text(encoding="utf-8")
     assert "state.selected?.vertical" in script
 

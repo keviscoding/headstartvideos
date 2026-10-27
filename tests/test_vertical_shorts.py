@@ -1,4 +1,4 @@
-"""Vertical Shorts on every route (Studio 110): a Shorts channel cloned with Studio's ready-made pictures, footage or
+"""Vertical Shorts on every route: a Shorts channel cloned with Studio's ready-made pictures, footage or
 3D engine instead of code once came out as a regular 16:9 video. Its style now asks for 9:16 like the code routes,
 its pictures are drawn tall, captions sit above the Shorts buttons, and what the engine draws only for wide frames is
 fitted whole across the middle or left out (cr_vertical)."""
@@ -31,7 +31,7 @@ def test_a_shorts_channel_made_without_code_is_vertical_too(monkeypatch):
     assert other["overrides"]["look"]["aspect"] == "9:16", "Studio's ready-made pictures make vertical Shorts too"
     row = next(r for r in other["settings"] if r["path"] == "look.aspect")
     assert row["label"] == "Format" and "pictures drawn tall" in row["value"]
-    assert other["router"] == cm.ROUTER >= 110, "looks saved by an older router are planned again"
+    assert other["router"] == cm.ROUTER >= 111, "looks saved by an older router are planned again"
     wide = cm.plan_style(tsm.profile({"generated": 0.9, "graphic": 0.1}), tsm.STYLES, answers={"made": cm.MADE_OTHER})
     assert "aspect" not in wide["overrides"].get("look", {}), "a channel of long videos stays 16:9"
 
