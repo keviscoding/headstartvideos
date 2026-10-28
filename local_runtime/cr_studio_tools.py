@@ -806,8 +806,15 @@ def character_choice(row: dict, options: dict, where: str) -> tuple:
     picture = str(options.get("character_picture") or "").strip()
     if not (words or picture):
         return "", ""
-    if kind(row) == "short":
-        raise Refused("Shorts keep their own host. A character of your own works in the long-video styles.")
+    use = row.get("character_picture") or {}
+    if kind(row) == "short" and use.get("use") != "avatar":
+        raise Refused("Shorts keep their own host. A character of your own works in the long-video styles"
+                      " and Roblox Story Shorts (a picture of your avatar).")
+    if kind(row) == "short" and words and not picture:
+        raise Refused("Roblox Story Shorts build the main character from a picture of their avatar: give "
+                      "character_picture (words alone go in extra).")
+    if use.get("use") == "none" and (words or picture):
+        raise Refused(use.get("say") or "This style can't use a character of your own.")
     if row.get("visual_policy") == "reference_only":
         raise Refused(f"{row.get('label') or row['name']} draws every scene with its learned animation kit, so its "
                       "character can't be changed for one video.")
@@ -827,6 +834,9 @@ def character_choice(row: dict, options: dict, where: str) -> tuple:
 def character_note(row: dict, options: dict) -> str:
     """What a new character adds to a quote: one drawn picture when the style carries a character picture."""
     words, picture = str(options.get("character") or "").strip(), str(options.get("character_picture") or "").strip()
+    use = row.get("character_picture") or {}
+    if (words or picture) and use.get("use") in ("avatar", "partial"):
+        return str(use.get("say") or "")                       # a 3D cast: what the picture will and won't do
     if picture:
         return "Your picture replaces the style's character in every picture of these videos."
     if words and row.get("character_image"):

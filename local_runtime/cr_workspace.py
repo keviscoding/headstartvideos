@@ -165,6 +165,8 @@ def install(studio, activity, *, token, home=None):
             row["improve_study"] = study if isinstance(study, str) and _OPERATION.fullmatch(study) else None
             row["coded"] = look.get("visuals") in cr_animated2d.PLUGINS     # its own code draws every picture
             row["vertical"] = look.get("aspect") == "9:16"      # a style learned from Shorts: Create's canvas says so
+            import cr_character                             # what a character picture does here (Create says so)
+            row["character_picture"] = cr_character.picture_use(info)
             # a cloned style's own narrator (its channel's kind of voice, or the one chosen for it): Create shows it
             row["narrator"] = (cr_media.style_voice(row.get("name"), info if isinstance(info, dict) else {})
                                .get("voice") or None)

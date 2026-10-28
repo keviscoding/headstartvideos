@@ -348,8 +348,21 @@ def stop_message(work: Path, output: list) -> str:
             "it again to carry on from where it stopped. The details are in the project's short/stopped.log.")
 
 
-def run_short(engine, title: str, style: str, info: dict, *, features=None, sink=None, extra: str = "") -> Path:
-    """Make the Short for `title` with the Shorts recipe `style`; returns the job folder."""
+def hero_picture(character_image: str) -> Path | None:
+    """The creator's character picture (the job spec's character_image: "characters/<file>" under assets), or None."""
+    rel = str(character_image or "").strip().replace("\\", "/")
+    name = rel[len("characters/"):] if rel.startswith("characters/") else ""
+    if not name or "/" in name or ".." in name:
+        return None
+    path = HOME / "assets" / "characters" / name
+    return path if path.is_file() else None
+
+
+def run_short(engine, title: str, style: str, info: dict, *, features=None, sink=None, extra: str = "",
+              character: str = "", character_image: str = "") -> Path:
+    """Make the Short for `title` with the Shorts recipe `style`; returns the job folder. A Roblox Story Short reads the
+    creator's character picture (character_image) into its main character's avatar; the other pipelines can't use one,
+    and Create and the tools say so before (cr_character.picture_use)."""
     pipe = str((info.get("shorts") or {}).get("pipeline") or "zack3d")
     if pipe not in PIPELINES:
         raise RuntimeError(f"Unknown Shorts pipeline {pipe!r}.")
@@ -400,6 +413,16 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
             picked = ranking_voice(style)
             if picked:
                 env["CR_RBX_VOICE"] = picked.split(":", 1)[1]    # the ElevenLabs voice chosen for this recipe
+            hero = hero_picture(character_image)
+            if hero is not None:                                 # the creator's avatar: the main character in every shot
+                env["CR_RBX_HERO_IMAGE"] = str(hero)
+                import cr_character
+                said = str(character or "").strip()
+                if said and cr_character.norm(said) != cr_character.norm(cr_character.UPLOADED):
+                    env["CR_RBX_HERO_WORDS"] = said[:1500]       # the creator's own words about them, not Studio's default
+            elif character_image:
+                _say(sink, engine, "Short: your character picture isn't in this Studio any more, so the director designs "
+                                   "the main character from words.")
         args = [sys.executable, str(root / folder / script), str(HOME), str(work), title]
         args += (["auto", str(seconds)] if pipe == "photo2d" else [str(seconds)])
         _say(sink, engine, f"Short: {info.get('label') or style}, " + (f"{ranking.get('ranks', 5)} ranks" if pipe == "ranking"
@@ -454,6 +477,7 @@ def install(engine):
             if not is_short(info):
                 return _original(title, minutes, *args, **kwargs)
             return run_short(engine, title, style, info, features=kwargs.get("features"), sink=kwargs.get("sink"),
-                             extra=kwargs.get("extra") or "")
+                             extra=kwargs.get("extra") or "", character=kwargs.get("character") or "",
+                             character_image=kwargs.get("character_image") or "")
         wrapped._cr_shorts = True
         setattr(engine, name, wrapped)

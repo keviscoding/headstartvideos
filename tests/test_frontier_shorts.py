@@ -239,6 +239,79 @@ def test_the_roblox_pipeline_uses_the_pack_the_recipes_voice_and_plain_progress_
         assert any(line.startswith(words) for line in said), words
 
 
+def test_a_roblox_short_gets_the_creators_avatar_picture_and_never_drops_it(tmp_path, monkeypatch):
+    """A customer's first Roblox Story Short (2026-10-28) drew generic kids although they had uploaded their avatar:
+    Studio's Shorts path dropped the job's character picture. It now reaches the pipeline, which reads it once into the
+    main character's avatar (shorts/roblox hero())."""
+    import types
+    monkeypatch.syspath_prepend(str(ROOT / "local_runtime"))
+    root = tmp_path / "shorts"
+    (root / "roblox").mkdir(parents=True)
+    (root / "roblox" / "make_roblox.py").write_text(
+        "import json, os, sys, pathlib\n"
+        "work = pathlib.Path(sys.argv[2])\n"
+        "(work / 'seen.json').write_text(json.dumps({k: os.environ.get(k) for k in ('CR_RBX_HERO_IMAGE', 'CR_RBX_HERO_WORDS')}))\n"
+        "(work / 'short.mp4').write_bytes(b'mp4')\n")
+    monkeypatch.setenv("CR_SHORTS_ROOT", str(root))
+    monkeypatch.setattr(shorts, "ensure_pack", lambda *a, **k: None)
+    monkeypatch.setattr(shorts, "ready", lambda home=None: [])
+    monkeypatch.setitem(sys.modules, "voices", types.SimpleNamespace(picks=lambda: {}))
+    home = tmp_path / "studio"
+    (home / "assets" / "characters").mkdir(parents=True)
+    picture = home / "assets" / "characters" / "my-avatar-1a2b3c.png"
+    picture.write_bytes(b"png")
+    monkeypatch.setattr(shorts, "HOME", home)
+    import cr_character
+    said = []
+
+    class Engine:
+        def __init__(self):
+            self.calls = []
+
+        def job_dir(self, title, style):
+            return str(tmp_path / ("job-" + str(len(said))))
+
+        def run_custom(self, title, minutes=20, **kwargs):
+            self.calls.append(kwargs)
+    info = {"format": "short", "label": "Roblox Story Shorts", "shorts": {"pipeline": "roblox", "seconds": 40}}
+    job = shorts.run_short(Engine(), "Everyone has a hat", "cr-shorts-roblox", info, sink=said.append,
+                           character=cr_character.UPLOADED, character_image="characters/my-avatar-1a2b3c.png")
+    seen = json.loads((job / "short" / "seen.json").read_text())
+    assert seen == {"CR_RBX_HERO_IMAGE": str(picture), "CR_RBX_HERO_WORDS": None}, "Studio's own words aren't theirs"
+    said.append("x")
+    job = shorts.run_short(Engine(), "Everyone has a hat 2", "cr-shorts-roblox", info, sink=said.append,
+                           character="She always wears her lucky hat", character_image="characters/my-avatar-1a2b3c.png")
+    assert json.loads((job / "short" / "seen.json").read_text())["CR_RBX_HERO_WORDS"] == "She always wears her lucky hat"
+    said.clear()
+    job = shorts.run_short(Engine(), "Everyone has a hat 3", "cr-shorts-roblox", info, sink=said.append,
+                           character_image="characters/gone.png")
+    assert json.loads((job / "short" / "seen.json").read_text())["CR_RBX_HERO_IMAGE"] is None
+    assert any("isn't in this Studio any more" in line for line in said), "a picture that's gone is said"
+    assert shorts.hero_picture("../secrets.png") is None and shorts.hero_picture("characters/../x.png") is None
+    # the engine's run_custom hands the job's character on (it was dropped here before)
+    engine = Engine()
+    engine.STYLE_INFO = {"cr-shorts-roblox": info}
+    got = {}
+    monkeypatch.setattr(shorts, "run_short", lambda *a, **k: got.update(k))
+    shorts.install(engine)
+    engine.run_custom("t", 1, style="cr-shorts-roblox", character="w", character_image="characters/a.png")
+    assert got["character"] == "w" and got["character_image"] == "characters/a.png"
+
+
+def test_what_a_character_picture_does_is_said_per_recipe(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "local_runtime"))
+    import cr_character as cc
+    roblox = cc.picture_use({"format": "short", "shorts": {"pipeline": "roblox"}})
+    assert roblox["use"] == "avatar" and "blocky 3D avatar" in roblox["say"] and "no picture is paid for" in roblox["say"]
+    for pipe in ("zack3d", "photo2d", "ranking"):
+        assert cc.picture_use({"format": "short", "shorts": {"pipeline": pipe}})["use"] == "none"
+    assert "in 3D from the story's words" in cc.picture_use({"format": "short", "shorts": {"pipeline": "zack3d"}})["say"]
+    coded = cc.picture_use({"look": {"visuals": "cr_animated3d"}})
+    assert coded["use"] == "none" and "animation code draws its characters" in coded["say"]
+    assert cc.picture_use({"look": {"threed": {"designed": {"plan": "orb"}}}})["use"] == "partial"
+    assert cc.picture_use({"look": {"character_image": "characters/x.png"}}) == {"use": "stills", "say": ""}
+
+
 def test_the_roblox_recipe_runs_the_roblox_pipeline():
     recipe = ROOT / "data" / "frontier" / "recipes" / "cr-shorts-roblox" / "style.json"
     if not recipe.is_file():

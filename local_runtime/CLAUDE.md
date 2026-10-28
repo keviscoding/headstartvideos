@@ -148,7 +148,10 @@ Studio through its own checks, so nothing needs the Studio web page.
   Creative direction → Character (type new words and press Draw this character, or upload a picture). Prefer it to
   Extra instructions: those can change the look, but the style's picture of its old character still goes with every
   picture, so nothing keeps the new face the same. New words are drawn once in the style's look (one picture, about
-  $0.02). Shorts keep their own host, and 3D scenes follow the words as closely as the 3D figures allow.
+  $0.02). Roblox Story Shorts take a picture of the creator's own avatar (options.character_picture): their Claude
+  Code reads it once and the main character wears it in every shot (what a blocky avatar can't show, the progress
+  says). The other Shorts keep their own host, and a style written in code draws its characters from words: the tools
+  refuse a character picture there, and the quote's `character` says what a picture will and won't do.
 - `make_videos` returns ids at once. Check `progress` now and then, never in a tight loop; Studio shows a desktop
   notification when a video is done. `list_videos` has each finished video's file and watch link.
 - The queue: this computer makes one video at a time, and every video joins Studio's queue, even while another is
