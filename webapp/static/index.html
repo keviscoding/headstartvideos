@@ -1865,6 +1865,13 @@
                 </div>
             </div>
 
+            <!-- Studio Cloud balance (shown only when Studio Cloud is open to this account) -->
+            <div id="billing-cloud-section" class="hidden" style="background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
+                <h3 style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Studio Cloud balance: <span id="billing-cloud-balance">$0.00</span></h3>
+                <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">Pays for cloud renders, by the minute: a ChannelRecipe machine renders your video instead of your computer. Each video reserves its most before it starts and you pay only what it used; the rest stays in your balance.</p>
+                <div id="billing-cloud-chunks" style="display: flex; gap: 12px; flex-wrap: wrap;"></div>
+            </div>
+
             <!-- Manage subscription -->
             <div id="billing-manage-section" class="hidden" style="background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
                 <h3 style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Manage subscription</h3>

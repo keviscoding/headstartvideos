@@ -1377,7 +1377,8 @@ def _stripe_webhook_sync(payload: bytes, sig: str) -> dict:
 
 # The events _apply_stripe_event acts on; anything else is acknowledged without touching the database.
 _STRIPE_EVENTS_APPLIED = frozenset({
-    "checkout.session.completed", "checkout.session.expired", "invoice.payment_failed", "invoice.paid",
+    "checkout.session.completed", "checkout.session.async_payment_succeeded", "checkout.session.expired",
+    "invoice.payment_failed", "invoice.paid",
     "customer.subscription.deleted", "customer.subscription.updated",
 })
 # One webhook at a time in this container: each one waiting for the database lock holds a pooled connection.
@@ -1538,6 +1539,11 @@ def _apply_stripe_event(event_dict: dict) -> dict:
                         kind="trial_start",
                         checkout_session_id=session_id,
                     )
+
+    elif evt_type == "checkout.session.async_payment_succeeded":
+        # a delayed payment (a bank debit) for a Studio Cloud top-up has cleared: credited now, once per session
+        if (obj.get("metadata") or {}).get("cloud_topup_cents") and _cloud_wallet.on_checkout_completed(obj):
+            print(f"[stripe] User {(obj.get('metadata') or {}).get('user_id')} Studio Cloud top-up cleared later")
 
     elif evt_type == "checkout.session.expired":
         meta = obj.get("metadata") or {}
