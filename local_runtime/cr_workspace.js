@@ -371,10 +371,10 @@
     const needsPanels = !!state.selected?.panels && !state.panels;
     // While Studio makes a video (or learns a style), Create adds this one to the queue: Studio makes them one at a
     // time, so the creator can queue several and walk away (cr_queue).
-    const blocked = state.submitting || state.uploading || state.drawing || state.claudeBusy || !state.catalog || !ready || (state.narration === 'own' && !state.audio) || needsPanels;
+    const blocked = state.submitting || state.uploading || state.drawing || state.claudeBusy || !state.catalog || !ready || (state.narration === 'own' && !state.audio) || needsPanels || cloudShort();
     $('crw-create').disabled = blocked;
     if (!state.submitting) createLabel();
-    let message = state.claudeBusy ? state.claudeBusy : !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : queuing() ? queueNote() : apiRoute() ? (state.setup.api_route?.ready_to_switch ? 'Ready. This video and the ones after it are made with Claude Code on your Claude plan; your old API route stops being used.' : 'Ready, on the old API route. Studio now makes every video with Claude Code on your Claude plan.') : 'Ready. Each Create starts a separate new project.';
+    let message = state.claudeBusy ? state.claudeBusy : !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : cloudShort() ? 'Top up your Studio Cloud balance first (under Where it renders), or render this one on this computer.' : queuing() ? queueNote() : apiRoute() ? (state.setup.api_route?.ready_to_switch ? 'Ready. This video and the ones after it are made with Claude Code on your Claude plan; your old API route stops being used.' : 'Ready, on the old API route. Studio now makes every video with Claude Code on your Claude plan.') : 'Ready. Each Create starts a separate new project.';
     text('crw-readiness', message);
     const action = readinessAction();
     hide('crw-readiness-action', !action);
@@ -389,7 +389,7 @@
     const cloud = state.renderOn === 'cloud' && state.cloudInfo?.available && !cloudBlock();
     return !cloud && (state.busy || state.heldScope === 'all' && state.queue.some(q => q.state === 'held'));
   }
-  function createLabel() {$('crw-create').textContent = queuing() ? 'Add to queue' : 'Create video';}
+  function createLabel() {$('crw-create').textContent = cloudShort() ? 'Top up to render in the cloud' : queuing() ? 'Add to queue' : 'Create video';}
   function queueNote() {
     const waiting = state.queue.filter(q => q.state === 'queued').length, held = state.queue.filter(q => q.state === 'held');
     if (held.length && state.heldScope === 'all') return `The queue is on hold: ${state.heldReason || 'something every video needs stopped.'} A video you add now waits with them; Carry on starts them again.`;
@@ -840,6 +840,8 @@
     if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
   }
   document.addEventListener('visibilitychange', () => {if (!document.hidden && state.readyTitle) {state.readyTitle = ''; tabStatus();}});
+  // back from a top-up tab: the balance (and so the cloud choice) is read again
+  window.addEventListener('focus', () => {if (state.renderOn === 'cloud') {state.cloudQuoteKey = ''; refreshCloud();}});
   // Shorts on hold (cr_queue): a long batch stops on what every Short would hit (clip watches used up, YouTube or
   // Claude limits), or a Studio closed before they started. Nothing of theirs was spent; the creator decides.
   function drawHeld(q) {
@@ -982,6 +984,45 @@
     text('crw-cloud-note', why || (state.renderOn==='cloud'
       ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; a ChannelRecipe machine${gpu?' with a graphics card renders the 3D scenes and':''} does the heavy rendering at $${rate} an hour${gpu?'':' (a 10-minute video is usually under $1)'}. It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
       : `${suggest}Or render on a ChannelRecipe machine at about $${rate} an hour and keep your computer free. Balance: $${balance}.`));
+    if (state.renderOn==='cloud' && !why) cloudQuote(); else hide('crw-cloud-topup', true);
+  }
+  // Top up first (owner, 2026-10-28): with Studio Cloud chosen, Create shows what these videos reserve against the
+  // balance before anything starts, and a balance that doesn't cover it offers the top-up chunks instead of starting.
+  function cloudQuote() {
+    const titles=[$('crw-title').value.trim(),...$('crw-batch-titles').value.split('\n').map(v=>v.trim())].filter(Boolean);
+    const body={style:state.selected?.name||'',minutes:number('crw-minutes',10,1,60),features:featureValues(),titles:Math.max(1,titles.length)}, key=JSON.stringify(body);
+    if (state.cloudQuoteKey===key && state.cloudQuote) {cloudQuoteShow(); return;}
+    clearTimeout(cloudQuote.timer);
+    cloudQuote.timer=setTimeout(async()=>{
+      state.cloudQuoteKey=key;
+      let q; try {q=await api('/cr-cloud/quote',{method:'POST',body});} catch(e) {q={available:false,why:e.message};}
+      if (state.cloudQuoteKey!==key) return;
+      state.cloudQuote=q; cloudQuoteShow(); gate();
+    },400);
+  }
+  function cloudShort() {const q=state.cloudQuote; return state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() && !!q && q.available!==false && q.short_by_usd>0;}
+  function cloudQuoteShow() {
+    const q=state.cloudQuote; if (!q || state.renderOn!=='cloud' || cloudBlock()) {hide('crw-cloud-topup', true); return;}
+    const usd=v=>`$${Number(v||0).toFixed(2)}`, these=q.titles>1?`These ${q.titles} videos`:'This video';
+    text('crw-cloud-note', q.available===false ? (q.why||'Studio Cloud can\'t price this right now.')
+      : `${these}: usually about ${usd(q.expected_usd)} of machine time, at ${usd((q.cents_per_min||0)*0.6)} an hour on a ChannelRecipe machine${q.machine==='gpu'?' with a graphics card for the 3D scenes':''}. ${q.titles>1?'They reserve':'It reserves'} up to ${usd(q.most_reserved_usd)} before ${q.titles>1?'their machines start':'its machine starts'}, and you pay only what it used. Balance: ${usd(q.balance_usd)}. The script, voice and pictures are made here with your Claude Code first; keep Studio open while it renders.`);
+    const short=cloudShort(); hide('crw-cloud-topup', !short); if (!short) return;
+    text('crw-cloud-topup-note', `Top up first: your balance is ${usd(q.balance_usd)}, ${usd(q.short_by_usd)} short of what ${these.toLowerCase()} ${q.titles>1?'reserve':'reserves'}. Nothing is made until it covers it. You pay on channelrecipe.com (Stripe), and the balance is spent only on cloud renders.`);
+    const box=$('crw-cloud-chunks'); box.replaceChildren();
+    for (const amount of q.chunks_usd||[]) {
+      const b=el('button',amount===q.topup_usd?'crw-primary-button':'crw-secondary-button',`Top up $${amount}`); b.type='button';
+      b.addEventListener('click',()=>cloudTopUp(amount,b)); box.append(b);
+    }
+  }
+  async function cloudTopUp(amount, button) {
+    const tab=window.open('about:blank','_blank');           // opened on the click itself, so no popup blocker stops it
+    button.disabled=true;
+    try {
+      const d=await api('/cr-cloud/topup',{method:'POST',body:{usd:amount}});
+      if (tab) {tab.opener=null; tab.location.href=d.url;} else window.open(d.url,'_blank','noopener');
+      toast('Finish paying in the new tab. Your balance updates here as soon as it lands.');
+      state.cloudQuoteKey='';
+    } catch(e) {if (tab) tab.close(); toast(e.message);} finally {button.disabled=false;}
   }
   async function refreshCloud() {
     try {state.cloudInfo=await api('/cr-cloud');} catch(_) {state.cloudInfo=null;}
@@ -1013,7 +1054,7 @@
     if(state.renderOn==='cloud'&&state.cloudInfo?.available&&!cloudBlock()){
       state.submitting=true;gate();$('crw-create').textContent='Starting in the cloud…';
       try {await api('/cr-cloud/start',{method:'POST',body:p});save();showPage('projects');toast('Studio is preparing your video here. A ChannelRecipe machine renders it next.');await cloudPanel();}
-      catch(e){error(e.message);} finally{state.submitting=false;gate();}
+      catch(e){error(e.message);if(e.details?.quote){state.cloudQuote=e.details.quote;cloudQuoteShow();}} finally{state.submitting=false;gate();}
       return;
     }
     state.submitting=true;gate();$('crw-create').textContent='Checking your video…';
@@ -1114,7 +1155,7 @@
   for(const b of all('[data-project-filter]'))b.addEventListener('click',()=>{state.projectFilter=b.dataset.projectFilter;chooseGroup('[data-project-filter]','projectFilter',state.projectFilter);renderProjects();});
   for(const b of all('[data-family]'))b.addEventListener('click',()=>{state.family=b.dataset.family;chooseGroup('[data-family]','family',state.family);gallery();});
   $('crw-form').addEventListener('submit',submit);
-  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();summary();captionsNote();});
+  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;gate();summary();captionsNote();});
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
   $('crw-form').addEventListener('input',()=>{error('');updateOptional();summary();save();cloudChoice();});

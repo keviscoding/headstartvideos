@@ -26,6 +26,7 @@ import hashlib
 import json
 import math
 import mimetypes
+import os
 import re
 import shutil
 import sys
@@ -507,10 +508,12 @@ def _page3d(spec: dict, code: str, home=None, mode: str = "render") -> str:
             f"<script type=\"module\">{boot}</script></body></html>")
 
 
-# Chromium with the GPU (WebGL), as Studio's 3D engine renders: Metal on a Mac, Chromium's own ANGLE elsewhere
+# Chromium with the GPU (WebGL), as Studio's 3D engine renders: Metal on a Mac, Chromium's own ANGLE elsewhere, and on a
+# Studio Cloud GPU machine the flags it sets for the 3D engine (F3D_CHROMIUM_ARGS: the NVIDIA L4 through Vulkan)
 GL_ARGS = ["--enable-gpu", "--ignore-gpu-blocklist", "--force-color-profile=srgb", "--hide-scrollbars", "--mute-audio",
            "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
-           "--disable-backgrounding-occluded-windows"] + (["--use-angle=metal"] if sys.platform == "darwin" else [])
+           "--disable-backgrounding-occluded-windows"] + (["--use-angle=metal"] if sys.platform == "darwin" else
+                                                          os.environ.get("F3D_CHROMIUM_ARGS", "").split())
 # no way out besides requests (which the page's CSP and the route refuse): WebRTC sends no UDP and no name is looked up
 NO_NET_ARGS = ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--host-resolver-rules=MAP * ~NOTFOUND"]
 

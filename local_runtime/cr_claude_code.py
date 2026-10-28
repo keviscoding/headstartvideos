@@ -485,14 +485,9 @@ def install(studio, token: str, home=None) -> dict:
             why = cloud_note({**rows[style], "features": {"on": [k for k, v in features.items() if v]}})
             if why:
                 return protect(jsonify(available=False, why=why, blocked=True))
-            machine = "gpu" if cr_cloud.wants_gpu({"style": style, "features": features}) else "cpu"
-            base, key = cr_cloud._connection(home)
-            r = requests.post(base + "/api/studio/cloud/quote", json={"minutes": minutes, "machine": machine},
-                              headers={"Authorization": "Bearer " + key}, timeout=20)
-            if not r.ok:
-                return protect(jsonify(available=False, why="channelrecipe.com couldn't price this right now."))
-            return protect(jsonify(available=True, balance_usd=info.get("balance_usd"), topup_url=info.get("topup_url"),
-                                   **r.json()))
+            # one video's price (the tools multiply by their titles): Studio Cloud's own quote, as Create's page asks it
+            return protect(jsonify(cr_cloud.quote({"style": style, "minutes": minutes, "features": features}, home,
+                                                  http=requests)))
         except Exception as error:                                 # noqa: BLE001
             return failure(error)
 

@@ -197,9 +197,20 @@ _THREED = []          # the engine's own "does this job make 3D scenes" (app._th
 _LOCAL = threading.local()
 
 
+def _look(style: str) -> dict:
+    styles = getattr(getattr(_STUDIO[0], "styles", None), "STYLES", None) if _STUDIO else None
+    info = styles.get(style) if isinstance(styles, dict) else None
+    look = (info or {}).get("look") if isinstance(info, dict) else None
+    return look if isinstance(look, dict) else {}
+
+
 def wants_gpu(spec: dict) -> bool:
-    """A job that renders 3D scenes needs the machine with a graphics card (three.js in Chromium)."""
+    """A job that renders 3D scenes needs the machine with a graphics card (three.js in Chromium): the 3D engine's
+    scenes, or a channel's own 3D renderer written in code (cr_animated3d)."""
     try:
+        look = _look(str(spec.get("style") or ""))
+        if look.get("visuals") == "cr_animated3d" or ((look.get("animated2d") or {}).get("dims") == 3):
+            return True
         return bool(_THREED and _THREED[0](str(spec.get("style") or ""), spec.get("features")))
     except Exception:                                       # noqa: BLE001 - when in doubt, the CPU machine
         return False
@@ -263,6 +274,7 @@ class CloudPods:
         settings = studio_settings(self.home)
         if settings:
             env = {**env, "CR_STUDIO_SETTINGS": json.dumps(settings)}
+        env = {**env, **video_size(str(spec.get("style") or ""))}
         machine = "gpu" if wants_gpu(spec) else "cpu"
         job = self._call("POST", "/jobs", {"machine": machine, "minutes": float(spec.get("minutes") or 10),
                                            "slug": env.get("FARM_SLUG", ""), "title": env.get("FARM_TITLE", ""),
@@ -309,6 +321,12 @@ class CloudPods:
 
 
 _STUDIO = []
+
+
+def video_size(style: str) -> dict:
+    """VIDEO_W/VIDEO_H for a style that makes vertical Shorts, as this computer's worker gets them
+    (cr_video_cancel.video_size): without them the machine rendered a 9:16 style at the engine's 1920x1080."""
+    return {"VIDEO_W": "1080", "VIDEO_H": "1920"} if _look(style).get("aspect") == "9:16" else {}
 
 
 def _farm_running() -> bool:
@@ -412,6 +430,21 @@ def answer(request: dict) -> str:
 # ── wiring the farm to Studio Cloud ───────────────────────────────────────────────────────────────────────────
 
 OVERLAY_SKIP_TOP = {"shorts", "models"}      # the Shorts pack and downloaded models: fetched again where needed
+LEARNED = ("assets/styles/learned/", "learned/")
+VIDEO_FILES = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")
+
+
+def ship_learned(skip):
+    """The farm's skip with learned styles' own files let through. farm._skip leaves out every folder called
+    "learned" (meant for the style copier's reference videos), which also left behind each learned style's files: a
+    coded clone's renderer (renderer-vN.js), a picture clone's style and character pictures, a studied graphics kit.
+    The machine then stopped on "renderer is missing" after the voice and pictures were paid for, or drew a clone
+    without its look. Those go now; videos never do, and the farm's other rules still apply to them."""
+    def keep(rel: str) -> bool:
+        if rel.startswith(LEARNED) and not rel.lower().endswith(VIDEO_FILES):
+            return skip("/".join("styles-learned" if part == "learned" else part for part in rel.split("/")))
+        return skip(rel)
+    return keep
 
 
 def release_version(home: Path = HOME) -> str:
@@ -521,7 +554,8 @@ def install(home: Path = HOME) -> bool:
 
     def bundle(bucket, quiet: bool = False, sink=None):
         if isinstance(bucket, BrokerBucket) and release_version(home) and (home / "cr-files.json").is_file():
-            return overlay_bundle(bucket, home, getattr(ff, "_skip", None), None if quiet else sink)
+            return overlay_bundle(bucket, home, ship_learned(getattr(ff, "_skip", None) or (lambda rel: False)),
+                                  None if quiet else sink)
         return original_bundle(bucket, quiet=quiet, sink=sink)
 
     fc.Config.__init__, fc.Config.checklist, fc.Config.missing_for_mac = init, check, missing
@@ -564,10 +598,144 @@ def blocked(p: dict) -> str:
     return ""
 
 
+CHUNKS_USD = (5, 10, 25, 50)    # the server's top-up chunks (webapp/cloud_wallet.py), when its status doesn't list them
+
+
+def quote(p: dict, home: Path = HOME, http=None) -> dict:
+    """What these videos would cost on Studio Cloud, against this account's balance, before anything starts.
+
+    The owner (2026-10-28): a creator tops up before their first cloud video, and a cloud choice never fails half-way.
+    Each video reserves its most when its machine starts and settles at most that, so a balance that covers every
+    title's most covers the whole batch, whatever order the machines start and end in. `short_by_usd` is what's
+    missing, and `topup_usd` the smallest top-up chunk that covers it."""
+    info = status(force=True, home=home)
+    out = {"available": bool(info.get("available")), "why": info.get("why") or "",
+           "balance_usd": round(float(info.get("balance_usd") or 0), 2), "topup_url": info.get("topup_url") or "",
+           "chunks_usd": list(info.get("chunks_usd") or CHUNKS_USD)}
+    if not out["available"]:
+        out["why"] = out["why"] or "Studio Cloud isn't available on this account."
+        return out
+    why = blocked(p)
+    if why:
+        return {**out, "available": False, "why": why, "blocked": True}
+    titles = max(1, len([t for t in str(p.get("title") or "").split("\n") if t.strip()]) or int(p.get("titles") or 1))
+    minutes = max(1, min(int(float(p.get("minutes") or 10)), 60))
+    machine = "gpu" if wants_gpu({"style": p.get("style"), "features": p.get("features")}) else "cpu"
+    base, key = _connection(home)
+    try:
+        r = (http or requests).post(base + "/api/studio/cloud/quote", json={"minutes": minutes, "machine": machine},
+                                    headers={"Authorization": "Bearer " + key}, timeout=20)
+        each = r.json() if r.ok else None
+    except (requests.RequestException, ValueError):
+        each = None
+    if not isinstance(each, dict) or "max_cents" not in each:
+        return {**out, "available": False, "why": "channelrecipe.com couldn't price this right now. Try again shortly."}
+    most = round(each["max_cents"] * titles / 100, 2)
+    short = round(max(0.0, most - out["balance_usd"]), 2)
+    chunk = next((c for c in sorted(out["chunks_usd"]) if c >= short), max(out["chunks_usd"])) if short else 0
+    return {**out, **each, "titles": titles, "minutes": minutes,
+            "expected_usd": round(each["expected_cents"] * titles / 100, 2), "most_reserved_usd": most,
+            "short_by_usd": short, "topup_usd": chunk}
+
+
+def short_message(q: dict) -> str:
+    """The words for a batch the balance can't cover (nothing was started or spent)."""
+    videos = f"{q['titles']} videos reserve" if q.get("titles", 1) > 1 else "This video reserves"
+    return (f"{videos} up to ${q['most_reserved_usd']:.2f} of machine time (usually about ${q['expected_usd']:.2f}), "
+            f"and your Studio Cloud balance is ${q['balance_usd']:.2f}. Top up first (${q['topup_usd']} covers it); "
+            "nothing has started and nothing was spent.")
+
+
+def topup_link(usd: int, home: Path = HOME, http=None) -> str:
+    """A Stripe Checkout page for one top-up chunk of this account's cloud balance, made by channelrecipe.com with
+    this Studio's account connection, so the creator needn't sign in on the website first."""
+    base, key = _connection(home)
+    if not base:
+        raise RuntimeError("Connect your ChannelRecipe account in Setup first.")
+    try:
+        r = (http or requests).post(base + "/api/studio/cloud/topup", json={"usd": int(usd)},
+                                    headers={"Authorization": "Bearer " + key}, timeout=30)
+    except requests.RequestException:
+        raise RuntimeError("channelrecipe.com didn't answer. Try again shortly.")
+    if not r.ok:
+        raise RuntimeError(_detail(r) or "The top-up page couldn't be opened.")
+    url = str((r.json() or {}).get("url") or "")
+    if not url.startswith("https://"):
+        raise RuntimeError("The top-up page couldn't be opened.")
+    with _STATUS_LOCK:
+        _STATUS.update(at=0.0)          # the balance is read again on the next look
+    return url
+
+
+RUN_SPEC = "cr_run_spec"         # farm_payload's key for this video's run_spec choices (written beside the job, not queued)
+
+
+def run_spec_choices(p: dict) -> dict:
+    """This video's choices that Studio's adjustments read from its run_spec.json, as cr_submission keeps them for a
+    video made here: call to action, pictures a minute, the 3D look and the quicker 3D review, captions on or off,
+    the frame check, the YouTube description and the product to sell. The farm's spec has no place for them, so a cloud
+    video quietly lost every one. Raises ValueError for a choice Create would refuse."""
+    import cr_cta
+    import cr_threed_look
+    out = {k: p[k] for k in ("style", "minutes", "features", "burn_subs", "character", "extra") if k in p}
+    cta, look = cr_cta.clean(p.get("cta")), cr_threed_look.clean(p.get("threed_look"))
+    if cta:
+        out["cr_cta"] = cta
+    if look:
+        out["cr_threed_look"] = look
+    ppm = p.get("pictures_per_min")
+    if ppm not in (None, "", 0):
+        import cr_media
+        allowed = cr_media.picture_range((getattr(getattr(_STUDIO[0], "styles", None), "STYLES", {}) or {})
+                                         .get(p.get("style")) or {}) if _STUDIO else None
+        try:
+            ppm = float(ppm)
+        except (TypeError, ValueError):
+            ppm = None
+        if not allowed or ppm is None or not allowed[0] <= ppm <= allowed[2]:
+            raise ValueError(f"Choose between {allowed[0]:g} and {allowed[2]:g} pictures a minute." if allowed
+                             else "This recipe sets its own pictures.")
+        out["cr_pictures_per_min"] = ppm
+    if p.get("burn_subs") is False:
+        out["cr_captions"] = "off"
+    elif p.get("cr_captions") == "on":
+        out["cr_captions"] = "on"
+    if p.get("threed_quick") is True:
+        out["cr_threed_quick"] = True
+    if isinstance(p.get("frame_check"), bool):
+        out["cr_frame_check"] = "on" if p["frame_check"] else "off"
+    if p.get("desc"):
+        def count(key, low, high):
+            try:
+                return max(low, min(high, int(p.get(key) or 0)))
+            except (TypeError, ValueError):
+                return low
+        out["meta"] = {"chapters": count("chapters", 0, 20), "sources": count("sources", 0, 10)}
+    if p.get("offer"):
+        out["offer"], out["offer_plugs"] = str(p["offer"])[:60], p.get("offer_plugs") or 0
+    return out
+
+
 def farm_payload(p: dict) -> dict:
     out = {k: p[k] for k in FARM_FIELDS if k in p}
     out["thumb"] = "thumbnail" in (p.get("steps") or [])
+    out[RUN_SPEC] = run_spec_choices(p)
     return out
+
+
+def write_run_specs(engine, body: dict) -> None:
+    """Each title's run_spec.json in its job folder before the farm prepares it: read here while the script, voice and
+    pictures are made, and packed with them for the machine (farm/assets.py sends the job folder's small files)."""
+    choices = body.get(RUN_SPEC)
+    if not isinstance(choices, dict) or engine is None:
+        return
+    for title in [t.strip() for t in str(body.get("title") or "").splitlines() if t.strip()]:
+        try:
+            folder = Path(engine.job_dir(title, str(body.get("style") or "")))
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "run_spec.json").write_text(json.dumps(choices, indent=1, default=str), encoding="utf-8")
+        except Exception:                                   # noqa: BLE001 - the video still renders, as before
+            pass
 
 
 BUSY = "Finish the current studio request"
@@ -639,10 +807,20 @@ def install_routes(studio, token: str, home: Path = HOME) -> None:
 
             def farm_queue(*args, **kwargs):
                 _LOCAL.cloud_queue = active(home)
+                engine = getattr(studio, "mv", None)
+                body = request.get_json(silent=True) or {}
+                choices = body.get(RUN_SPEC) if _LOCAL.cloud_queue else None
+                offer = isinstance(choices, dict) and choices.get("offer") and hasattr(engine, "set_offer")
                 try:
+                    if _LOCAL.cloud_queue:
+                        write_run_specs(engine, body)
+                    if offer:                               # the script is written here: it sells this product
+                        engine.set_offer(choices["offer"], choices.get("offer_plugs", 0))
                     return queue_view(*args, **kwargs)
                 finally:
                     _LOCAL.cloud_queue = False
+                    if offer:
+                        engine.set_offer("", 0)
             app.view_functions[endpoint] = farm_queue
 
     @app.post("/cr-cloud/start")
@@ -657,11 +835,45 @@ def install_routes(studio, token: str, home: Path = HOME) -> None:
         why = blocked(p)
         if why:
             return jsonify(error=why), 400
+        try:
+            run_spec_choices(p)                             # a choice Create would refuse stops here, before any work
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
         titles = [x for x in str(p.get("title") or "").split("\n") if x.strip()]
         if len(titles) > MAX_TITLES:
             return jsonify(error=f"Studio Cloud takes up to {MAX_TITLES} titles at once; they render side by side."), 400
+        # Top up first: nothing is written, voiced or drawn here for a batch whose machines the balance can't start.
+        q = quote(p, home)
+        if not q.get("available"):
+            return jsonify(error=q.get("why") or "Studio Cloud isn't available.", quote=q), 409
+        if q.get("short_by_usd"):
+            return jsonify(error=short_message(q), quote=q, top_up=True), 402
         threading.Thread(target=start, args=(app.test_client(), token, p), daemon=True, name="cr-cloud-start").start()
         return jsonify(started=True), 202
+
+    @app.post("/cr-cloud/quote")
+    def cr_cloud_quote():
+        """Create's cloud choice: these videos' expected cost and most, against the balance, before anything starts."""
+        if request.headers.get("X-CR-Local-Token") != token:
+            return jsonify(error="Refresh your studio page and try again."), 403
+        return jsonify(quote(request.get_json(silent=True) or {}, home))
+
+    @app.post("/cr-cloud/topup")
+    def cr_cloud_topup():
+        """A top-up chunk's checkout page, for the page to open in the creator's browser."""
+        if request.headers.get("X-CR-Local-Token") != token:
+            return jsonify(error="Refresh your studio page and try again."), 403
+        try:
+            usd = int((request.get_json(silent=True) or {}).get("usd") or 0)
+        except (TypeError, ValueError):
+            usd = 0
+        chunks = status(home=home).get("chunks_usd") or CHUNKS_USD
+        if usd not in chunks:
+            return jsonify(error=f"Choose a top-up of ${', $'.join(str(c) for c in chunks)}."), 400
+        try:
+            return jsonify(url=topup_link(usd, home))
+        except RuntimeError as e:
+            return jsonify(error=str(e)), 502
 
     @app.get("/cr-cloud/progress")
     def cr_cloud_progress():
@@ -708,6 +920,7 @@ def _relay_claude() -> None:
             def exec_module(module):
                 run(module)
                 _studio_adjustments(module)
+                _from_run_spec(module)
                 original = module._claude_endpoint
 
                 def endpoint(provider):
@@ -723,6 +936,29 @@ def _relay_claude() -> None:
 
 
 ENGINE_ADJUSTMENTS = ("cr_media", "cr_render", "cr_style_delivery", "cr_shorts")
+
+
+def _from_run_spec(engine) -> None:
+    """On the machine: what this computer's Studio passes the engine from a video's run_spec (app._run_spec) and the farm's
+    runner doesn't: the YouTube description with its chapters and sources, and the product this video sells."""
+    original = getattr(engine, "run_custom", None)
+    if original is None:
+        return
+
+    def run_custom(*args, **kwargs):
+        title = kwargs.get("title") if "title" in kwargs else (args[0] if args else "")
+        try:
+            spec = json.loads((Path(engine.job_dir(title, kwargs.get("style") or "")) / "run_spec.json")
+                              .read_text(encoding="utf-8"))
+        except Exception:                                   # noqa: BLE001 - no run_spec: the farm's spec as it is
+            spec = {}
+        if isinstance(spec, dict):
+            if kwargs.get("meta") is None and isinstance(spec.get("meta"), dict):
+                kwargs["meta"] = spec["meta"]
+            if spec.get("offer") and hasattr(engine, "set_offer"):
+                engine.set_offer(spec["offer"], spec.get("offer_plugs", 0))
+        return original(*args, **kwargs)
+    engine.run_custom = run_custom
 
 
 def _studio_adjustments(engine) -> None:
