@@ -166,7 +166,11 @@ def checkout_session(user: dict, usd: int, base_url: str, *, stripe=None):
 
 
 def on_checkout_completed(obj: dict) -> bool:
-    """The Stripe webhook's part: a completed Studio Cloud top-up is credited once. True when this was one."""
+    """The Stripe webhook's part: a completed Studio Cloud top-up is credited once. True when this was one.
+
+    A card pays at once (checkout.session.completed, payment_status "paid"). A delayed method such as a bank debit
+    completes the checkout unpaid and pays later (checkout.session.async_payment_succeeded, now "paid"): it is credited
+    then, once, under the same session id."""
     meta = obj.get("metadata") or {}
     cents = meta.get("cloud_topup_cents")
     if not cents:
@@ -191,6 +195,9 @@ def make_router(access) -> APIRouter:
 
     @router.post("/topup")
     def post_topup(req: TopupRequest, request: Request, user=Depends(access)):
+        from webapp import cloud_jobs                       # its gate: no balance is sold before Studio Cloud opens
+        if not cloud_jobs.public(user):
+            raise HTTPException(403, "Studio Cloud is in testing with ChannelRecipe's team.")
         return checkout_session(user, req.usd, str(request.base_url).rstrip("/"))
 
     return router

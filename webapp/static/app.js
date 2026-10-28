@@ -1446,12 +1446,24 @@ function maybeShowWelcomeCelebration() {
     const params = new URLSearchParams(window.location.search);
     const welcome = params.get('welcome');
     const topup = params.get('topup');
-    if (!welcome && !topup) return;
+    const cloudTopup = params.get('cloud_topup');
+    if (!welcome && !topup && !cloudTopup) return;
     // Clean URL without losing hash
     const hash = window.location.hash || '#pipeline';
     window.history.replaceState({}, '', window.location.pathname + hash);
     // Wait a beat for auth/UI to settle, then celebrate
     setTimeout(async () => {
+        if (cloudTopup) {
+            // Stripe's webhook may land a moment after the redirect: the balance card reads it again
+            for (let i = 0; i < 4; i++) { await new Promise((r) => setTimeout(r, 1000)); await loadCloudBalance(); }
+            const overlay = document.getElementById('credit-notice-overlay');
+            const title = document.getElementById('credit-notice-title');
+            const body = document.getElementById('credit-notice-body');
+            if (title) title.textContent = 'Studio Cloud balance topped up';
+            if (body) body.textContent = 'Go back to Studio: its Create page sees the new balance, and your cloud video can start.';
+            if (overlay) { overlay.classList.remove('hidden'); overlay.style.display = 'flex'; }
+            return;
+        }
         if (topup) {
             // Stripe webhook may land a second after redirect — poll briefly.
             for (let i = 0; i < 6; i++) {
@@ -1770,6 +1782,49 @@ async function proceedToCheckout(tier = 'daily') {
         return;
     }
     await _doCheckout(`${tier}_${cycle}`);
+}
+
+// Studio Cloud's own balance (webapp/cloud_wallet.py): dollars in chunks, spent by the minute on cloud renders. The
+// card shows only when Studio Cloud is open to this account, and the server refuses a top-up before then too.
+async function loadCloudBalance() {
+    const sec = document.getElementById('billing-cloud-section');
+    if (!sec) return;
+    let info = null;
+    try {
+        const res = await fetch('/api/studio/cloud/status');
+        info = res.ok ? await res.json() : null;
+    } catch (_) { info = null; }
+    if (!info || !info.available) { sec.classList.add('hidden'); return; }
+    document.getElementById('billing-cloud-balance').textContent = '$' + Number(info.balance_usd || 0).toFixed(2);
+    const box = document.getElementById('billing-cloud-chunks');
+    box.replaceChildren();
+    for (const usd of info.chunks_usd || []) {
+        const b = document.createElement('button');
+        b.className = 'btn-secondary';
+        b.style.cssText = 'font-size: 14px; padding: 10px 20px; flex: 1; min-width: 110px;';
+        b.textContent = `Top up $${usd}`;
+        b.addEventListener('click', () => proceedToCloudTopup(usd, b));
+        box.append(b);
+    }
+    sec.classList.remove('hidden');
+}
+
+async function proceedToCloudTopup(usd, button) {
+    if (!currentUser) { showAuthModal(); return; }
+    track('cloud_topup_started', { amount: usd });
+    if (button) button.disabled = true;
+    try {
+        const res = await fetch('/api/studio/cloud/topup', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usd }),
+        });
+        const data = await res.json();
+        if (res.ok && data.url) window.location.href = data.url;
+        else alert(data.detail || 'Could not start the top-up.');
+    } catch (e) {
+        alert('Top-up failed: ' + e.message);
+    } finally {
+        if (button) button.disabled = false;
+    }
 }
 
 async function proceedToTopup(amount) {
@@ -6818,6 +6873,7 @@ async function handleLogout() {
 // ---------------------------------------------------------------------------
 function loadBillingPage() {
     if (!currentUser) return;
+    loadCloudBalance();
     document.getElementById('billing-plan-name').textContent = planLabel(currentUser.plan);
     if (isTrialUser()) {
         document.getElementById('billing-credits').textContent = currentUser.credits + ' of ' + trialCredits() + ' trial videos';

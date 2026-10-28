@@ -58,3 +58,28 @@ def test_a_topup_page_is_one_of_the_chunks_and_carries_the_cents(wallet, monkeyp
     assert customers == [{"email": "a@b.c", "idempotency_key": "cr-customer-7"}], "one Stripe customer per account"
     with pytest.raises(Exception):
         wallet.checkout_session(user, 7, "https://cr", stripe=stripe)
+
+
+def test_a_delayed_payment_is_credited_when_it_clears_once(wallet):
+    session = {"id": "cs_9", "payment_status": "unpaid", "metadata": {"user_id": "7", "cloud_topup_cents": "2500"}}
+    wallet.on_checkout_completed(session)
+    assert wallet.balance_cents(7) == 0, "a bank debit completes the checkout before it pays"
+    cleared = {**session, "payment_status": "paid"}             # checkout.session.async_payment_succeeded
+    assert wallet.on_checkout_completed(cleared) and wallet.on_checkout_completed(cleared)
+    assert wallet.balance_cents(7) == 2500
+
+
+def test_no_balance_is_sold_before_studio_cloud_opens(wallet, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from webapp import cloud_jobs
+    user = {"id": 7, "email": "a@b.c"}
+    app = FastAPI()
+    app.include_router(wallet.make_router(lambda: user))
+    monkeypatch.setattr(wallet, "checkout_session", lambda u, usd, base, **kw: {"url": f"https://pay/{usd}"})
+    monkeypatch.setattr(cloud_jobs, "public", lambda u: False)
+    client = TestClient(app)
+    r = client.post("/api/studio/cloud/topup", json={"usd": 10})
+    assert r.status_code == 403 and "testing" in r.json()["detail"]
+    monkeypatch.setattr(cloud_jobs, "public", lambda u: True)
+    assert client.post("/api/studio/cloud/topup", json={"usd": 10}).json() == {"url": "https://pay/10"}

@@ -224,3 +224,17 @@ def test_a_delivery_that_cant_get_the_database_lock_answers_503_and_frees_its_tu
     assert answer.status_code == 503 and waits and 1.0 <= waits[0] <= server.STRIPE_LOCK_WAIT_SECONDS
     assert server._stripe_event_lock.acquire(timeout=1), "this container's turn was given back"
     server._stripe_event_lock.release()
+
+
+def test_a_cloud_top_up_paid_by_a_delayed_method_is_credited_once_it_clears(stripe_sends):
+    from webapp import cloud_wallet
+    user_id = _customer()
+    session = {"id": "cs_" + uuid.uuid4().hex[:8], "amount_total": 1000, "currency": "usd", "payment_status": "unpaid",
+               "metadata": {"user_id": str(user_id), "cloud_topup_cents": "1000"}}
+    assert stripe_sends({"id": "evt_" + uuid.uuid4().hex, "type": "checkout.session.completed",
+                         "data": {"object": session}}).status_code == 200
+    assert cloud_wallet.balance_cents(user_id) == 0, "completed, not paid yet"
+    cleared = {"id": "evt_" + uuid.uuid4().hex, "type": "checkout.session.async_payment_succeeded",
+               "data": {"object": {**session, "payment_status": "paid"}}}
+    assert stripe_sends(cleared).status_code == 200 and stripe_sends(cleared).status_code == 200
+    assert cloud_wallet.balance_cents(user_id) == 1000, "credited once, when the money cleared"
