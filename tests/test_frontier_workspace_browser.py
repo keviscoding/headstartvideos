@@ -1330,6 +1330,8 @@ def test_roblox_story_shorts_take_my_recording_and_the_other_shorts_say_they_voi
     own.click()
     assert page.locator("#crw-narration-own").is_visible()
     assert page.locator("#crw-short-duration").is_hidden(), "the recording sets the Short's length"
+    # the summary refreshes once the voiceover list has loaded (setNarration awaits it); Windows CI was slower than that
+    page.wait_for_function("() => document.getElementById('crw-summary-duration').textContent === 'Length of your recording'")
     assert page.inner_text("#crw-summary-duration") == "Length of your recording"
     assert page.locator("#crw-create").is_disabled() and "Choose a narration recording" in page.inner_text("#crw-readiness")
     page.evaluate("""() => {const s = document.getElementById('crw-audio-recent'), o = document.createElement('option');
