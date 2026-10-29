@@ -1566,6 +1566,67 @@ def use_animation(home, operation_id, bridge):
     return status(home, operation_id, bridge)
 
 
+VERTICAL_ROW = {"area": "Look", "label": "Format", "value": "vertical 1080x1920",
+                "why": "the references are vertical Shorts (measured from their frames); set when Studio updated"}
+
+
+def vertical_upgrade(home) -> list:
+    """Styles learned from a vertical Shorts channel before Studio 111 through Studio's own engines (pictures, footage,
+    its 3D engine) were saved 16:9, and an update never changed them: Create said "16:9 landscape" and every video
+    came out wide (Mac7834's Roblox story clone, 2026-10-29). Once at start, each learned style without a format whose
+    look measured vertical frames gets look.aspect 9:16, exactly as a study today gives it; a style drawn by its own
+    renderer only when that renderer draws tall (a wide one is left as it is). The old file is kept in
+    output/cr-style-edits/, and the study that saved the style keeps owning it. Returns the styles changed."""
+    import cr_animated2d
+    import cr_style_edit
+    import cr_style_look
+    import cr_style_map
+    changed = []
+    for path in sorted((Path(home) / "styles").glob("*.json")):
+        if path.stem.startswith("_") or path.is_symlink():
+            continue
+        style = _read(path)
+        learned = (style.get("cr_style_clone") or {}).get("learned_v2")
+        look = style.get("look") if isinstance(style.get("look"), dict) else {}
+        if (not isinstance(learned, dict) or not learned.get("look_id") or look.get("aspect")
+                or str(style.get("family") or "") == "Shorts" or style.get("name") != path.stem):
+            continue
+        try:
+            folder = cr_style_look.folder(home, learned["look_id"])
+        except ValueError:
+            continue
+        looked = _read(folder / "look.json")
+        profile = looked.get("profile") if isinstance(looked.get("profile"), dict) else None
+        if looked.get("state") != "done" or profile is None:
+            continue
+        if "vertical" in (profile.get("format") or {}):
+            tall = cr_style_map.vertical(profile)
+        else:
+            share = cr_style_look.measured_vertical(folder, looked.get("references") or [])[0]
+            tall = share is not None and share >= 0.5
+        if not tall:
+            continue
+        if look.get("visuals") in cr_animated2d.PLUGINS:
+            drawn = look.get("animated2d") if isinstance(look.get("animated2d"), dict) else {}
+            try:
+                if not int(drawn.get("height") or 0) > int(drawn.get("width") or 0):
+                    continue                                    # its renderer draws wide frames: left as it is
+            except (TypeError, ValueError):
+                continue
+        before = _file_hash(path)
+        out = json.loads(json.dumps(style))
+        out.setdefault("look", {})["aspect"] = "9:16"
+        rows = out["cr_style_clone"]["learned_v2"].setdefault("settings", [])
+        if isinstance(rows, list) and not any(isinstance(r, dict) and r.get("label") == "Format" for r in rows):
+            rows.append(dict(VERTICAL_ROW))
+        _write(Path(home) / "output" / "cr-style-edits" / path.stem / (time.strftime("%Y%m%d-%H%M%S")
+                                                                       + f"-{before[:8]}-before-9x16.json"), style)
+        _write(path, out)
+        cr_style_edit._owned(home, out, path, before)
+        changed.append(path.stem)
+    return changed
+
+
 def republish(folder, saved, style):
     """A saved style changed by the creator's own action (pictures instead, a renderer saved from Style Lab), written
     with its study's receipt, so the study still knows the style as its own."""
