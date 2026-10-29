@@ -38,7 +38,7 @@ them must say so.
     "hero_views_per_sub": 100,
     "one_hit_top_share": 0.60,
     "min_bangers": 2,
-    "judge_after_days": 3,
+    "judge_after_days": 7,
     "window_days": 60,
     "search_min_views": 30000,
     "min_minutes": 4
@@ -60,7 +60,7 @@ them must say so.
     "hero_views_per_sub": 100,
     "one_hit_top_share": 0.60,
     "min_bangers": 2,
-    "judge_after_days": 2,
+    "judge_after_days": 3,
     "window_days": 60,
     "search_min_views": 300000,
     "min_minutes": 0
@@ -82,7 +82,8 @@ them must say so.
 4. **Banger : flop over the recent uploads** ([D], [K1]): 7:1 is the bar, 10:1 is ideal on fewer than 30 videos.
    CityEons was 4:0 and Latos Charts 19:0 [K1]. A high ratio means "a winning format with so much demand and not enough
    supply" [D]. A banger is 50K+ long-form views; a flop is under 5K or under 10% of the channel's median [N]. Videos
-   younger than 3 days are still growing: never count them as flops.
+   still growing never count as flops: younger than 7 days for long-form, 3 days for Shorts (a default set on
+   2026-10-29 so a new upload of a hot channel isn't called a flop; the owner can change it).
 5. **Cadence** ([N], [K1]): the proof channel posted 3+ videos in the last 30 days. The winners posted about 3 a week;
    the flopping copycats posted 1–2 a day.
 6. **Recent average views beat lifetime totals** (the owner, 2026-10-29). Judge a channel by its newest uploads.
