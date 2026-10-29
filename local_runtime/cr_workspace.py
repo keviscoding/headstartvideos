@@ -106,6 +106,8 @@ def install(studio, activity, *, token, home=None):
         if not isinstance(data, dict) or not isinstance(data.get("channels"), list):
             raise RuntimeError("The local recipe catalogue is unavailable.")
         data = dict(data)
+        import cr_media
+        cr_media.price_catalog(data)       # picture prices at the creator's Setup image model
         styles = getattr(studio.styles, "STYLES", {})
         automatic = next((row for row in data["channels"]
                           if row.get("name") == "documentary" and row.get("auto_style") is True), None)

@@ -256,10 +256,23 @@
     if (pics) {const r = $('crw-pictures'); r.min = pics.floor; r.max = pics.ceiling; r.value = pics.default; showPictures();}
     updateOptional(); summary(); gate(); if (persist) save();
   }
+  // one AI picture at the creator's Setup image model (the catalog's picture_price: Nano Banana Pro is ~$0.09)
+  function pictureUsd() {const v = Number(state.catalog?.picture_price?.usd || state.catalog?.prices?.picture); return v > 0 ? v : 0.02;}
+  // The YouTube thumbnails, said in the summary with their cost and a one-click Turn off/on (Swapnil, 2026-10-29: he
+  // didn't want them, to save Kie credits, and the switch sat folded away under Captions & publishing). The choice
+  // is remembered with the others; a video made without them shows a frame of itself in Projects and the library.
+  function thumbsSummary() {
+    const r = state.selected, on = checked('crw-thumbnails'), n = number('crw-thumbnail-count', 2, 1, 4);
+    hide('crw-summary-thumbs-row', !r || isShort(r));
+    const usd = n * pictureUsd();
+    text('crw-summary-thumbs', on ? `${n} YouTube thumbnail${n === 1 ? '' : 's'} (about $${usd.toFixed(2)} in pictures)` : 'Off: none made, no picture credits');
+    text('crw-summary-thumbs-toggle', on ? 'Turn off' : 'Turn on');
+    text('crw-thumbnails-help', `Each thumbnail is one AI picture on your image account (about $${pictureUsd().toFixed(2)}). Turn this off to skip them and save those credits: Projects and your library show a frame of the video instead.`);
+  }
   function showPictures() {
     const pics = state.selected?.pictures; if (!pics) return; const v = Number($('crw-pictures').value);
     text('crw-pictures-value', `· ${v}`);
-    text('crw-pictures-help', `The recipe draws ${pics.default} a minute. Fewer pictures cost less (about $${(v * 0.02).toFixed(2)} a minute in pictures); never fewer than ${pics.floor}, so each picture stays on its own words.`);
+    text('crw-pictures-help', `The recipe draws ${pics.default} a minute. Fewer pictures cost less (about $${(v * pictureUsd()).toFixed(2)} a minute in pictures); never fewer than ${pics.floor}, so each picture stays on its own words.`);
   }
   function threedLook(features) {
     const v = $('crw-palette').value;
@@ -369,6 +382,7 @@
     text('crw-script-length', reads ? `${scriptWords} words: ${reads} of video at this style's reading pace. Your script sets the length.` : '');
     hide('crw-script-length', !reads);
     text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) && !isShort(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) && state.narration !== 'own' ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
+    thumbsSummary();
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     // a cloned style reads with its own narrator (the kind of voice its channel has), else the account's voice
     const narrator = state.selected?.narrator || state.setup?.narration?.voice;
@@ -1284,6 +1298,7 @@
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
   $('crw-form').addEventListener('input',()=>{error('');updateOptional();summary();save();cloudChoice();});
+  $('crw-summary-thumbs-toggle').addEventListener('click',()=>{$('crw-thumbnails').checked=!checked('crw-thumbnails');updateOptional();summary();save();});
   $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
   // the language chosen is kept as Studio's default for the next videos (any recipe); taken on its first event, before
   // the form's own refresh (which starts the picker at the kept choice) sees it
