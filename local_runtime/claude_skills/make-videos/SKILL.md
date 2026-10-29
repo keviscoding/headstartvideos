@@ -32,8 +32,9 @@ What they asked for: $ARGUMENTS
    available, get both prices with `quote` (where=this_computer and where=studio_cloud) and ask:
    - **This computer:** no machine to pay; one video at a time (more wait in Studio's queue and start by
      themselves); keeps the computer busy.
-   - **Studio Cloud:** a ChannelRecipe machine renders, several side by side; costs the quoted machine time from the
-     cloud balance (it reserves the most and charges only what it used).
+   - **Studio Cloud:** a machine on their own Modal account renders, several side by side, off this computer (not
+     faster for one short video); Modal bills them the quoted machine time. Without a Modal account, `setup_check`'s
+     studio_cloud has a `setup_page` (Setup → Render in the cloud) that shows them how to add one.
    Otherwise it renders on this computer; get its `quote`.
 6. **Confirm the cost.** Say the quote's `summary` in one or two sentences and ask "Shall I start?". Only after a yes
    call `make_videos` with the same titles, style, minutes, where, options and the `quote_id`. Claude Code then asks

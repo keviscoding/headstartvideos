@@ -1051,7 +1051,13 @@
   }
   function cloudChoice() {
     const info=state.cloudInfo, box=$('crw-cloud-choice'); if(!box)return;
-    box.hidden=!info?.available; if(!info?.available){state.renderOn='local';return;}
+    // Studio Cloud runs on the creator's own Modal account (owner, 2026-10-29): without one, the choice says where to add it
+    const offer=!info?.available && info?.byo && !!info?.setup_url;
+    box.hidden=!info?.available && !offer; if(!info?.available){state.renderOn='local';}
+    if(offer){box.querySelector('[data-render-on="cloud"]').disabled=true;chooseGroup('[data-render-on]','renderOn','local');hide('crw-cloud-topup',true);
+      const note=$('crw-cloud-note');note.replaceChildren(document.createTextNode('Want it off this computer? Studio Cloud renders on your own Modal account (Modal bills you by the second; several videos render at once). '));
+      const a=el('a','',`Add your Modal account in Setup`);a.href=info.setup_url;note.append(a);return;}
+    if(!info?.available)return;
     if(!state.selected)return;
     const gpu=!!featureValues().threed, m=(gpu?info.machines?.gpu:info.machines?.cpu)||{};
     const why=cloudBlock(), rate=(m.price_per_hr||(gpu?2.4:1.2)).toFixed(2), balance=(info.balance_usd||0).toFixed(2);
@@ -1064,6 +1070,13 @@
       : '';
     box.classList.toggle('is-suggested', !!suggest);
     if (!state.submitting) createLabel();
+    if (info.byo) {
+      text('crw-cloud-note', why || (state.renderOn==='cloud'
+        ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; then your own Modal machine${gpu?' with a graphics card renders the 3D scenes and':''} does the heavy rendering, at about $${rate} an hour of Modal time billed to your Modal account. It renders off this computer and several videos render at once; one short video isn't faster. Keep Studio open while it renders.`
+        : `${suggest}Or render on your own Modal account at about $${rate} an hour and keep your computer free.`));
+      if (state.renderOn==='cloud' && !why) cloudQuote(); else hide('crw-cloud-topup', true);
+      return;
+    }
     text('crw-cloud-note', why || (state.renderOn==='cloud'
       ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; a ChannelRecipe machine${gpu?' with a graphics card renders the 3D scenes and':''} does the heavy rendering at $${rate} an hour${gpu?'':' (a 10-minute video is usually under $1)'}. It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
       : `${suggest}Or render on a ChannelRecipe machine at about $${rate} an hour and keep your computer free. Balance: $${balance}.`));
@@ -1087,6 +1100,12 @@
   function cloudQuoteShow() {
     const q=state.cloudQuote; if (!q || state.renderOn!=='cloud' || cloudBlock()) {hide('crw-cloud-topup', true); return;}
     const usd=v=>`$${Number(v||0).toFixed(2)}`, these=q.titles>1?`These ${q.titles} videos`:'This video';
+    if (q.byo) {
+      hide('crw-cloud-topup', true);
+      text('crw-cloud-note', q.available===false ? (q.why||'Studio Cloud can\'t price this right now.')
+        : `${these}: usually about ${usd(q.expected_usd)} of Modal machine time (about ${q.expected_minutes} min${q.titles>1?' each':''}), at ${usd(q.price_per_hr)} an hour on your Modal account${q.machine==='gpu'?' with a graphics card for the 3D scenes (Modal needs a card on your account for those)':''}. Each machine stops by itself after ${q.max_minutes} min at the most (up to ${usd(q.most_reserved_usd)}). The script, voice and pictures are made here with your Claude Code first; keep Studio open while it renders.${q.deployed?'':' Your first cloud video also sets up Studio\'s machines on your Modal account (about 5 to 10 minutes, once).'}`);
+      return;
+    }
     text('crw-cloud-note', q.available===false ? (q.why||'Studio Cloud can\'t price this right now.')
       : `${these}: usually about ${usd(q.expected_usd)} of machine time, at ${usd((q.cents_per_min||0)*0.6)} an hour on a ChannelRecipe machine${q.machine==='gpu'?' with a graphics card for the 3D scenes':''}. ${q.titles>1?'They reserve':'It reserves'} up to ${usd(q.most_reserved_usd)} before ${q.titles>1?'their machines start':'its machine starts'}, and you pay only what it used. Balance: ${usd(q.balance_usd)}. The script, voice and pictures are made here with your Claude Code first; keep Studio open while it renders.`);
     const short=cloudShort(); hide('crw-cloud-topup', !short); if (!short) return;
@@ -1116,7 +1135,7 @@
     let d; try {d=await api('/cr-cloud/progress');} catch(_) {return;}
     const working=['preparing','starting','rendering'].includes(d.state)||d.farm==='running';
     hide('crw-cloud-panel', !(working||d.state==='failed'||(d.videos||[]).length));
-    text('crw-cloud-balance', d.balance_usd==null?'':`Balance $${Number(d.balance_usd).toFixed(2)}`);
+    text('crw-cloud-balance', d.balance_usd==null?(state.cloudInfo?.byo?'On your Modal account':''):`Balance $${Number(d.balance_usd).toFixed(2)}`);
     text('crw-cloud-status', d.error?`${d.title?d.title+': ':''}${d.error}`:d.message?`${d.title?d.title+': ':''}${d.message}`:(d.videos||[]).length?'Finished cloud renders stay here until you delete them.':'');
     text('crw-cloud-log', (d.lines||[]).join('\n'));
     const list=$('crw-cloud-videos'); list.replaceChildren();

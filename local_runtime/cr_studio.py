@@ -707,7 +707,8 @@ def create_app():
         if request.method in ("POST", "DELETE", "PUT", "PATCH"):
             if request.headers.get("X-CR-Local-Token") != token:
                 return jsonify(error="Refresh your studio page and try again."), 403
-        account_change = request.path in {"/cr-connect", "/cr-provider", "/cr-hub", "/cr-voice", "/cr-images", "/cr-claude/setup"}
+        account_change = request.path in {"/cr-connect", "/cr-provider", "/cr-hub", "/cr-voice", "/cr-images", "/cr-claude/setup",
+                                          "/cr-cloud/modal", "/cr-cloud/modal/remove"}
         setup_action = (request.get_json(silent=True) or {}).get("action") if request.path == "/cr-claude/setup" else None
         if setup_action == "check":
             account_change = False
@@ -837,6 +838,11 @@ def create_app():
                               ["ELEVENLABS_API_KEY", "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "ATLASCLOUD_API_KEY", "PEXELS_API_KEY", "GEMINI_API_KEY", "EPIDEMIC_API_KEY", "AI33_API_KEY", "SIRAY_API_KEY", "BRAVE_API_KEY"]}
         hub = cr_media.profile()
         checks["model_accounts"] = cr_media.PROVIDERS
+        try:                                                # Setup's Render in the cloud card (never the token)
+            import cr_cloud_byo
+            checks["cloud_byo"] = cr_cloud_byo.summary(HOME)
+        except Exception:                                   # noqa: BLE001 - an incomplete install: no card state
+            checks["cloud_byo"] = {"connected": False}
         checks["media_hub"] = {k: hub[k] for k in ("provider", "tasks", "voice") if k in hub}
         checks["media_hub"]["connected"] = bool(hub and os.getenv(cr_media.PROVIDERS[hub["provider"]]["key_env"]))
         motion_cfg = cr_media.profile("motion") if cr_media.active("motion") else {}
@@ -1743,6 +1749,41 @@ def create_app():
             return jsonify(error="Choose an account and paste its complete key."), 400
         write_provider(name, value)
         return jsonify(saved=True, message="Saved on this computer. This checks the format; the provider verifies it when used.")
+
+    # Studio Cloud on the creator's own Modal account (owner, 2026-10-29: creators who want cloud rendering add their
+    # own cloud keys). The token is checked with Modal (which also makes Studio's storage there) before it's saved.
+    @studio.app.post("/cr-cloud/modal")
+    def save_modal_account():
+        import cr_cloud_byo
+        data = request.get_json(silent=True) or {}
+        tid, secret = str(data.get("token_id", "")).strip(), str(data.get("token_secret", "")).strip()
+        if not cr_cloud_byo.valid_token(tid, secret):
+            return jsonify(error="Paste both parts from Modal: the Token ID (starts with ak-) and the Token secret "
+                                 "(starts with as-)."), 400
+        why = cr_cloud_byo.install_library()
+        if why:
+            return jsonify(error=why), 502
+        why = cr_cloud_byo.check_token(tid, secret)
+        if why:
+            return jsonify(error=why), 400
+        write_provider("MODAL_TOKEN_ID", tid)
+        write_provider("MODAL_TOKEN_SECRET", secret)
+        cr_cloud._STATUS.update(at=0.0, data=None)
+        return jsonify(saved=True, cloud=cr_cloud_byo.summary(HOME),
+                       message="Modal connected. In Create, Where it renders, choose Studio Cloud: your videos render "
+                               "on your Modal account and Modal bills you for the machine time.")
+
+    @studio.app.post("/cr-cloud/modal/remove")
+    def remove_modal_account():
+        from dotenv import unset_key
+        env = HOME / ".env"
+        for name in ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"):
+            if env.is_file():
+                unset_key(str(env), name)
+            os.environ.pop(name, None)
+        cr_cloud._STATUS.update(at=0.0, data=None)
+        return jsonify(saved=True, message="Your Modal account is removed from this Studio. Videos render on this "
+                                           "computer. What's in your Modal account stays there until you delete it.")
 
     # Legacy editor/control pages keep their existing navigation and token adapter.
     # The independent workspace owns its shell and local-token client already.

@@ -1,4 +1,9 @@
-"""Studio Cloud: the render farm on ChannelRecipe's machines, paid from the account's cloud balance.
+"""Studio Cloud: the render farm off this computer, on the creator's own Modal account or ChannelRecipe's machines.
+
+Since 2026-10-29 Studio Cloud for creators is their OWN cloud account (cr_cloud_byo.py: a Modal token pasted in
+Setup; machines, storage and the Claude relay all in their Modal workspace, billed to them by Modal). When a Modal
+account is saved, it is always used. Without one, the older route below (ChannelRecipe's machines paid from a cloud
+balance) stays for ChannelRecipe's team only (the server keeps it closed to everyone else).
 
 The engine's farm (README-RENDER-FARM.md) already does the waiting half of a video here and rents a machine for the
 computing half. On its own it needs a RunPod account, a storage bucket and an Anthropic key. With a ChannelRecipe
@@ -165,8 +170,20 @@ def _connection(home: Path = HOME) -> tuple[str, str]:
     return base, key
 
 
+def byo(home: Path = HOME) -> bool:
+    """Has the creator added their own Modal account? Then Studio Cloud renders there."""
+    try:
+        import cr_cloud_byo
+        return cr_cloud_byo.configured(home)
+    except Exception:                                       # noqa: BLE001 - an incomplete install: the old route
+        return False
+
+
 def status(force: bool = False, home: Path = HOME) -> dict:
     """Is Studio Cloud open to this account, and what is its balance? Asked at most once a minute."""
+    if byo(home):
+        import cr_cloud_byo
+        return cr_cloud_byo.status(home)
     with _STATUS_LOCK:
         if not force and _STATUS["data"] is not None and time.time() - _STATUS["at"] < 60:
             return _STATUS["data"]
@@ -179,6 +196,11 @@ def status(force: bool = False, home: Path = HOME) -> dict:
             data = r.json() if r.ok else {**data, "why": "Studio Cloud isn't available on this account."}
         except (requests.RequestException, ValueError):
             data = {**data, "why": "channelrecipe.com didn't answer."}
+    if not data.get("available"):
+        # Studio Cloud for creators is their own Modal account: say where to add it (ChannelRecipe's own machines
+        # stay with ChannelRecipe's team)
+        data = {**data, "byo": "modal", "own_account": True, "setup_url": "/cr-setup#cloud-render",
+                "why": "Add your own Modal account in Setup (Render in the cloud) to render off this computer."}
     with _STATUS_LOCK:
         _STATUS.update(at=time.time(), data=data)
     return data
@@ -188,7 +210,10 @@ def active(home: Path = HOME) -> bool:
     return bool(status(home=home).get("available"))
 
 
-def studio_bucket(home: Path = HOME) -> BrokerBucket:
+def studio_bucket(home: Path = HOME):
+    if byo(home):
+        import cr_cloud_byo
+        return cr_cloud_byo.bucket(home)
     base, key = _connection(home)
     return BrokerBucket(base + "/api/studio/cloud", "Bearer " + key)
 
@@ -501,8 +526,14 @@ def overlay_bundle(bucket, home: Path = HOME, skip=None, sink=None) -> str:
     return key
 
 
-def checklist(original) -> list:
-    st = status()
+def checklist(original, home: Path = HOME) -> list:
+    st = status(home=home)
+    voice = next((c for c in original if c.get("key") == "render"), None)
+    if st.get("byo"):
+        return [{"key": "cloud", "label": "Your own Modal account (Studio Cloud)", "ok": bool(st.get("available")),
+                 "env": "", "how": st.get("why") or "Billed by Modal to your account."},
+                {"key": "balance", "label": "Billed by Modal to your account", "ok": True, "env": "",
+                 "how": "No ChannelRecipe balance is used."}] + ([voice] if voice else [])
     balance = float(st.get("balance_usd") or 0)
     voice = next((c for c in original if c.get("key") == "render"), None)
     items = [
@@ -537,25 +568,43 @@ def install(home: Path = HOME) -> bool:
             self.gpu, self.cloud, self.max_pods, self.budget_usd = "Studio Cloud", "ChannelRecipe", 3, 10000.0
 
     def check(self):
-        return checklist(original_checklist(self)) if getattr(self, "studio_cloud", False) else original_checklist(self)
+        return checklist(original_checklist(self), home) if getattr(self, "studio_cloud", False) \
+            else original_checklist(self)
 
     def missing(self):
         if not getattr(self, "studio_cloud", False):
             return original_missing(self)
-        return [c["label"] for c in checklist(original_checklist(self))[:2] if not c["ok"]]
+        return [c["label"] for c in checklist(original_checklist(self), home)[:2] if not c["ok"]]
 
     def bucket_from(cfg):
         return studio_bucket(home) if getattr(cfg, "studio_cloud", False) else original_bucket(cfg)
 
     def runpod(api_key: str = "", session=None):
-        return CloudPods(api_key, session, home) if api_key == SENTINEL else original_runpod(api_key, session)
+        if api_key != SENTINEL:
+            return original_runpod(api_key, session)
+        if byo(home):
+            import cr_cloud_byo
+            return cr_cloud_byo.ModalPods(api_key, session, home)
+        return CloudPods(api_key, session, home)
 
     original_bundle = getattr(ff, "bundle", None)
 
     def bundle(bucket, quiet: bool = False, sink=None):
+        learned = ship_learned(getattr(ff, "_skip", None) or (lambda rel: False))
         if isinstance(bucket, BrokerBucket) and release_version(home) and (home / "cr-files.json").is_file():
-            return overlay_bundle(bucket, home, ship_learned(getattr(ff, "_skip", None) or (lambda rel: False)),
-                                  None if quiet else sink)
+            return overlay_bundle(bucket, home, learned, None if quiet else sink)
+        if type(bucket).__name__ == "VolumeBucket":
+            # the creator's own Modal storage: the official release (kept there once per version) plus only this
+            # Studio's own files, when this Studio is on the published version; else this Studio's whole code
+            import cr_cloud_byo
+            version = release_version(home)
+            if version and (home / "cr-files.json").is_file() and (
+                    cr_cloud_byo.release_cached(bucket, version) or cr_cloud_byo.release_link(home)):
+                key = overlay_bundle(bucket, home, learned, None if quiet else sink)
+            else:
+                key = original_bundle(bucket, quiet=quiet, sink=sink)
+            threading.Thread(target=cr_cloud_byo.tidy, args=(bucket, key, version), daemon=True).start()
+            return key
         return original_bundle(bucket, quiet=quiet, sink=sink)
 
     fc.Config.__init__, fc.Config.checklist, fc.Config.missing_for_mac = init, check, missing
@@ -619,6 +668,9 @@ def quote(p: dict, home: Path = HOME, http=None) -> dict:
     Each video reserves its most when its machine starts and settles at most that, so a balance that covers every
     title's most covers the whole batch, whatever order the machines start and end in. `short_by_usd` is what's
     missing, and `topup_usd` the smallest top-up chunk that covers it."""
+    if byo(home):
+        import cr_cloud_byo
+        return cr_cloud_byo.quote(p, home)
     info = status(force=True, home=home)
     out = {"available": bool(info.get("available")), "why": info.get("why") or "",
            "balance_usd": round(float(info.get("balance_usd") or 0), 2), "topup_url": info.get("topup_url") or "",
@@ -772,17 +824,23 @@ def start(client, token: str, p: dict) -> None:
     base = {"base_url": "http://127.0.0.1:7860", "headers": headers}
     titles = [x.strip() for x in str(p.get("title") or "").split("\n") if x.strip()]
     title = (titles[0][:120] if titles else "") + (f" and {len(titles) - 1} more" if len(titles) > 1 else "")
+    own = byo()
+    where = "your Modal machine" if own else "a ChannelRecipe machine"
     TASK.update(state="preparing", title=title, error="", at=time.time(),
                 message="Writing the script and making the voice and pictures here with your Claude Code…")
     try:
+        if own:                                             # before anything is paid for: Modal must be ready
+            import cr_cloud_byo
+            cr_cloud_byo.ensure_deployed(HOME, sink=lambda line: TASK.update(message=line))
+            TASK.update(message="Writing the script and making the voice and pictures here with your Claude Code…")
         r, data = _post(client, "/api/farm/queue", farm_payload(p), base)
         if r.status_code >= 400 or not data.get("queued"):
             raise RuntimeError(data.get("error") or "; ".join(data.get("problems") or []) or "It couldn't be prepared.")
-        TASK.update(state="starting", message="Prepared here. Starting a ChannelRecipe machine…")
+        TASK.update(state="starting", message=f"Prepared here. Starting {where}…")
         r, data = _post(client, "/api/farm/run", {}, base)
         if r.status_code >= 400:
             raise RuntimeError(data.get("error") or "The cloud machine couldn't start.")
-        TASK.update(state="rendering", message="Rendering on a ChannelRecipe machine. Keep Studio open: it answers the "
+        TASK.update(state="rendering", message=f"Rendering on {where}. Keep Studio open: it answers the "
                                                "machine's Claude questions with your Claude Code.")
     except BaseException as e:                              # noqa: BLE001 - the engine exits on a failed Claude step
         why = str(e) if not isinstance(e, SystemExit) else f"a step stopped ({e})" if str(e) else "a step stopped"
@@ -878,6 +936,8 @@ def install_routes(studio, token: str, home: Path = HOME) -> None:
             usd = int((request.get_json(silent=True) or {}).get("usd") or 0)
         except (TypeError, ValueError):
             usd = 0
+        if byo(home):
+            return jsonify(error="Studio Cloud runs on your own Modal account: Modal bills it, nothing to top up."), 400
         chunks = status(home=home).get("chunks_usd") or CHUNKS_USD
         if usd not in chunks:
             return jsonify(error=f"Choose a top-up of ${', $'.join(str(c) for c in chunks)}."), 400
@@ -1051,7 +1111,14 @@ def ytdlp_main(argv: list) -> int:
     if not _youtube_job(argv, root):
         return subprocess.call([sys.executable, "-m", "yt_dlp"] + argv)
     broker, token = os.environ.get("FARM_BROKER_URL", ""), os.environ.get("FARM_JOB_TOKEN", "")
-    bucket = BrokerBucket(broker, "Bearer " + token)
+    local = os.environ.get("CR_LOCAL_RELAY", "")
+    if local:                                               # one of the creator's own Modal machines (cr_cloud_byo)
+        import cr_cloud_byo
+        bucket = cr_cloud_byo.VolumeBucket(cr_cloud_byo.volume())
+        relay_url = local + "/relay/ytdlp"
+    else:
+        bucket = BrokerBucket(broker, "Bearer " + token)
+        relay_url = broker.rsplit("/pod", 1)[0] + "/relay/ytdlp"
     prefix = "relay/" + secrets.token_hex(8)
     mapped, inputs = [], []
     for a in argv:
@@ -1064,8 +1131,8 @@ def ytdlp_main(argv: list) -> int:
         else:
             mapped.append(a)
     try:
-        r = requests.post(broker.rsplit("/pod", 1)[0] + "/relay/ytdlp", json={"argv": mapped, "inputs": inputs,
-                          "prefix": prefix}, headers={"x-api-key": token}, timeout=1900)
+        r = requests.post(relay_url, json={"argv": mapped, "inputs": inputs, "prefix": prefix},
+                          headers={"x-api-key": token}, timeout=1900)
         out = json.loads(r.text) if r.ok else {"rc": 1, "stderr": f"Studio Cloud relay: HTTP {r.status_code}"}
     except (requests.RequestException, ValueError) as e:
         out = {"rc": 1, "stderr": f"Studio Cloud relay: {type(e).__name__}"}
