@@ -1,5 +1,19 @@
 [
   {
+    "build": 111,
+    "date": "2026-10-29",
+    "title": "Spanish and 12 more languages, Roblox Shorts with your own avatar, and fairer style studies",
+    "items": [
+      "New: make a video in Spanish, Portuguese, French, German, Italian, Dutch, Swedish, Danish, Norwegian, Finnish, Indonesian or Tagalog. Pick the language per video on Create (or set a default): the script, voice, captions and on-screen words follow it. Roblox Story Shorts speak every one of them too.",
+      "Roblox Story Shorts dress your main character from your own avatar picture: Studio looks at it once and copies the hat, face, shirt, prints, pants and shoes. Other recipes now say plainly what a character picture does for them.",
+      "Style studies are fairer and say what really happened. A study that couldn't be scored says so instead of showing 0/10, and a style that missed the likeness check says it failed instead of \"ready\". The renderer follows your brief, dresses every scene for its era, uses a wider range of actions and shots, and re-plans when it starts repeating itself.",
+      "Use pictures instead now asks first and can be undone (Use Claude's animation again). When a channel looks partly 3D, Studio asks you 2D or 3D, and 3D styles are labelled 3D everywhere.",
+      "Styles learned from Shorts make vertical 9:16 videos on every route, with captions sized for phones.",
+      "Animated (coded) videos no longer open in a timeline that couldn't really edit them: Studio explains why and points you to Improve this style.",
+      "Fixes: Roblox Shorts on Windows say the real reason when Claude can't answer (it used to stop with \"the director did not answer with a plan\"); a full disk is named in setup instead of a browser reinstall that couldn't help; the download is called ChannelRecipe-111.zip."
+    ]
+  },
+  {
     "build": 110,
     "date": "2026-10-27",
     "title": "Videos are made with Claude Code, and the full course is in Studio",
