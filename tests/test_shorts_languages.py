@@ -19,13 +19,14 @@ pytestmark = pytest.mark.skipif(not ROBLOX.is_file(), reason="the private Shorts
 FUNCTIONS = {"language_block", "said", "said_all", "voice_engines", "norm", "ass", "word_in"}
 
 
-def roblox(tmp_path, lang="", code="en", keys=None, kie=True):
+def roblox(tmp_path, lang="", code="en", keys=None, kie=True, rule="", font="Arial"):
     """make_roblox's own functions (never run as a whole: that needs Claude, a voice and the renderer)"""
     tree = ast.parse(ROBLOX.read_text(encoding="utf-8"))
     body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in FUNCTIONS]
     assert {n.name for n in body} == FUNCTIONS, "make_roblox's language functions moved: check this test"
     space = {"os": __import__("os"), "re": re, "json": json, "LANG": lang, "LANG_CODE": code, "OUT": tmp_path,
-             "CAP_LOW": [], "_keys": lambda: dict(keys or {}), "_kie_ready": lambda: kie}
+             "CAP_LOW": [], "_keys": lambda: dict(keys or {}), "_kie_ready": lambda: kie, "LANG_RULE": rule,
+             "CAPTION_FONT": font}
     exec(compile(ast.Module(body=body, type_ignores=[]), str(ROBLOX), "exec"), space)
     return types.SimpleNamespace(**space)
 
@@ -141,3 +142,18 @@ def test_the_scripts_spelling_keeps_whispers_timing_with_accents(lib):
     assert [w for _, _, w in got] == ["La", "bóveda", "está", "aquí."]
     assert [round(a, 1) for a, _, _ in got] == [0.0, 0.3, 0.7, 1.0], "each word on its own heard time"
     assert lib.align.norm("Don't") == "don't" and lib.align.norm("café") == "cafe"
+
+
+def test_a_hindi_short_is_written_in_devanagari_and_captioned_in_cr_devanagari(tmp_path):
+    """Hindi (customer Swapnil, 2026-10-29): cr_shorts hands the pipeline the writing rule (CR_LANGUAGE_RULE) and the
+    caption font (CR_CAPTION_FONT, CR_CAPTION_FONT_DIR); Arial may have no Devanagari fallback on a Windows ffmpeg."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "local_runtime"))
+    import cr_language
+    rb = roblox(tmp_path, "Hindi", "hi", rule=cr_language.script_rule("hi"), font="CR Devanagari")
+    assert rb.language_block().endswith(cr_language.script_rule("hi"))
+    assert rb.language_block("stager").endswith(cr_language.script_rule("hi"))
+    assert rb.norm("हिंदी।") == "हिंदी" and rb.norm("गाँव") == rb.norm("गांव")
+    cap = rb.ass([(0.1, 0.4, "नमस्ते,"), (0.4, 0.9, "दोस्तों।")], 1.5).read_text(encoding="utf-8")
+    assert "Style: W,CR Devanagari,92," in cap
+    assert cap.rstrip().endswith("दोस्तों") and "नमस्ते," not in cap, "the danda and commas are not shown"

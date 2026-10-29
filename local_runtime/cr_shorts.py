@@ -483,6 +483,19 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
             # second by its pace; the others are refused another language before this (Ranking follows its topic's)
             env["CR_LANGUAGE"], env["CR_LANGUAGE_CODE"] = cr_language.BY_ID[lang]["name"], lang
             env["CR_LANGUAGE_PACE"] = str(cr_language.pace(lang))
+            if cr_language.script_rule(lang):
+                env["CR_LANGUAGE_RULE"] = cr_language.script_rule(lang)       # Hindi: written in Devanagari
+            if cr_language.script(lang) == "deva":
+                # a Short in Hindi: its captions are burned in Studio's Devanagari font (the pipelines' own caption
+                # fonts, Arial and Fredoka, have no Devanagari letter), from the folder that holds it
+                try:
+                    import cr_script_text
+                    font_dir = cr_script_text.font_dir()
+                except Exception:                               # noqa: BLE001 - the pipeline's own font then
+                    font_dir = None
+                if font_dir is not None:
+                    env["CR_CAPTION_FONT"] = cr_script_text.FAMILY
+                    env["CR_CAPTION_FONT_DIR"] = str(font_dir)
         tone = str((info.get("shorts") or {}).get("tone") or "").strip().lower()
         if tone:
             env["CR_SHORTS_TONE"] = tone                         # dark: true crime / horror (the director's dark-story rules)
