@@ -2314,7 +2314,7 @@ async def creators_page():
     return web_assets.html_page(STATIC_DIR / "creators" / "index.html")
 
 
-app.mount("/creators", web_assets.CachedStatic(directory=str(STATIC_DIR / "creators")), name="creators")
+app.mount("/creators", web_assets.RevalidatedStatic(directory=str(STATIC_DIR / "creators")), name="creators")
 
 
 # Find My Money Niche: the free quiz (webapp/money_niche.py). A shared result opens on its own page with its own

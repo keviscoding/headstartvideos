@@ -42,3 +42,12 @@ def test_whats_in_an_edit_shows_real_moments_not_diagrams():
     for clip in ("broll", "title", "ticket", "music"):
         assert f'src="{CDN}clips/{clip}.mp4"' in section
     assert "Loudness on target" not in section and "data-wave" not in section and "data-cutline" not in section
+
+
+def test_unversioned_creators_files_are_revalidated_so_a_deploy_never_mixes_old_and_new():
+    client = TestClient(server.app)
+    for rel in ("landing.css", "landing.js", "media/local/beats.json"):
+        r = client.get("/creators/" + rel)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", rel
+        again = client.get("/creators/" + rel, headers={"if-none-match": r.headers["etag"]})
+        assert again.status_code == 304, rel
