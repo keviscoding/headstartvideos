@@ -990,7 +990,7 @@ def test_setup_fix_routes_start_studios_own_installs_behind_the_local_token(runt
     refused = runtime.client.post("/cr-setup/claude-sign-in", headers=runtime.headers)
     assert refused.status_code == 409 and "Install Claude Code first" in refused.json["error"]
     status = runtime.client.get("/cr-status", headers=runtime.headers).json
-    assert status["ffmpeg"] is True and status["node"] is True and set(status["can_fix"]) == {"ffmpeg", "node", "claude"}
+    assert status["ffmpeg"] is True and status["node"] is True and set(status["can_fix"]) == {"ffmpeg", "node", "claude", "browser"}
 
 
 def test_studio_opens_setup_until_it_is_connected_then_the_workspace():
@@ -1025,3 +1025,16 @@ def test_choose_voice_keeps_a_cloned_styles_own_narrator_for_that_style(runtime,
     assert r.client.get("/cr-voices?style=cr_clone_survival", headers=r.headers).json["voice"] == "Puck"
     r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Charon", "style": "documentary"})
     assert r.cfg["narration"]["voice"] == "Charon", "a recipe without its own narrator changes the account's voice"
+
+
+def test_setup_offers_check_again_not_a_reinstall_when_the_disk_is_full(runtime, monkeypatch):
+    r = runtime
+    monkeypatch.setattr(cr_studio, "graphics_ready", lambda: {
+        "browser": False, "webgl": False, "browser_why": "disk_full",
+        "browser_reason": cr_studio.browser_trouble_reason("disk_full")})
+    status = r.client.get("/cr-status", headers=r.headers).json
+    assert status["can_fix"]["browser"] is False and status["browser_why"] == "disk_full"
+    assert status["can_fix"]["ffmpeg"] in (True, False), "the other rows' fixes stay"
+    monkeypatch.setattr(cr_studio, "graphics_ready", lambda: {"browser": False, "webgl": False, "browser_why": "missing",
+                                                             "browser_reason": "isn't installed yet"})
+    assert r.client.get("/cr-status", headers=r.headers).json["can_fix"]["browser"] is True

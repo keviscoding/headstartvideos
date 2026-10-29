@@ -4,7 +4,7 @@ A creator asked whether a learned recipe can be changed or has to be deleted and
 read from its file can be changed here: its name, its description (what the channel's videos are about, also in its
 writer's prompts), the creative direction the writer and the director follow (script_notes and director_notes, the
 notes the engine gives them), its recurring character's words, and the options Create starts from (which switches
-are on, pictures a minute, subtitles). Each save keeps the version before it (output/cr-style-edits), and the study
+are on, pictures a minute, subtitles, the language its videos speak: cr_language). Each save keeps the version before it (output/cr-style-edits), and the study
 that saved the style keeps owning it. Studying it again with other references is a new study: a new style, this one
 kept as it is.
 
@@ -112,8 +112,14 @@ def editable(home, name) -> dict:
             "features": {"offered": [{"key": k, "label": FEATURE_LABELS.get(k, k)} for k in offered],
                          "on": [k for k in on if k in offered]},
             "pictures": _pictures(style), "subtitles": not (look.get("captions") or {}).get("off", False),
+            "language": _language_name(style),
             "study": _study(home, style), "versions_kept": len(list(history.glob("*.json"))) if history.is_dir() else 0,
             "use_url": "/?cr-preset=" + name}
+
+
+def _language_name(style) -> str:
+    import cr_language
+    return cr_language.name(cr_language.style_language(style))
 
 
 @contextmanager
@@ -205,6 +211,12 @@ def _save(home, name, changes: dict) -> dict:
         if not isinstance(changes["subtitles"], bool):
             raise ValueError("Choose subtitles on or off.")
         look.setdefault("captions", {})["off"] = not changes["subtitles"]
+    if "language" in changes:
+        import cr_language
+        # the language its videos speak unless one asks for another: the engine reads it from the style's file
+        lang = cr_language.clean(changes["language"], style) or "en"
+        if lang != cr_language.style_language(style):
+            out["language"] = cr_language.BY_ID[lang]["engine"]
     if out == style:
         return editable(home, name)
     kept = Path(home) / "output" / "cr-style-edits" / name / (time.strftime("%Y%m%d-%H%M%S") + f"-{before[:8]}.json")

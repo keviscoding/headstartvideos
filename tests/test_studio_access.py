@@ -264,7 +264,8 @@ def test_the_download_also_streams_through_this_site_for_providers_that_cannot_r
     assert client.get("/api/studio/download/file").status_code == 401
     res = client.get("/api/studio/download/file", headers={"x-test-user": "1"})
     assert res.status_code == 200 and res.content == data and asked[-1]["Key"] == studio.RELEASE_KEY
-    assert "attachment" in res.headers["content-disposition"] and res.headers["accept-ranges"] == "bytes"
+    assert res.headers["content-disposition"] == 'attachment; filename="%s"' % studio.download_name()
+    assert res.headers["accept-ranges"] == "bytes"
     assert res.headers["x-amz-meta-sha256"] == "abc" and "no-store" in res.headers["cache-control"]
     part = client.get("/api/studio/download/file", headers={"x-test-user": "1", "Range": "bytes=1000-"})
     assert part.status_code == 206 and part.content == data[1000:]

@@ -137,6 +137,74 @@ def find_executable():
     return next((str(p.resolve()) for p in candidates if p.is_file() and os.access(p, os.X_OK)), None)
 
 
+# One question to Claude Code, headless (the Shorts pipelines' directors, stagers and checks; Claude's vision on a few
+# pictures): the prompt on stdin, no tools (or only Read, in one folder), no MCP servers, no saved session, a JSON
+# answer. Every Roblox Story Short on Windows had stopped at its director with Claude Code's own reason thrown away
+# (2026-10-28: "the director did not answer with a plan", both on Studio 110, Windows): print_answer keeps the reason
+# and reads every shape of answer. Windows CI (2026-10-29, the real npm Claude Code, no account) showed these flags
+# arrive intact straight through npm's claude.cmd too (cmd.exe was not the cause); node_route still starts the
+# program the shim names (today a native claude.exe; a cli.js before) without cmd.exe and its 8,191-character line.
+NO_MCP = '{"mcpServers":{}}'
+
+
+def node_route(exe):
+    """[node, cli.js] for npm's claude.cmd on Windows (the script its shim runs: %dp0%\\node_modules\\...\\cli.js for a
+    global install, %dp0%\\..\\@anthropic-ai\\...\\cli.js from node_modules\\.bin), with npm's own node.exe or the one on
+    PATH; an .exe the shim runs, as itself; anything else (or a shim it can't read) unchanged: [exe]."""
+    exe = str(exe or "")
+    if not exe.lower().endswith(".cmd"):
+        return [exe]
+    here = Path(exe).parent
+    try:
+        shim = Path(exe).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [exe]
+    found = re.findall(r'"%~?dp0%?\\([^"%]+\.(?:js|cjs|mjs|exe))"', shim, re.I)
+    if not found:
+        return [exe]
+    target = Path(os.path.normpath(here / found[-1].replace("\\", "/")))
+    if not target.is_file():
+        return [exe]
+    if target.suffix.lower() == ".exe":
+        return [str(target)]
+    node = here / "node.exe"
+    node = str(node) if node.is_file() else shutil.which("node")
+    return [node, str(target)] if node else [exe]
+
+
+def print_command(model, *, read_dir=None, exe=None) -> list:
+    """The argv for one headless question to Claude Code (the prompt goes on stdin): Read in read_dir only, else no
+    tools; no MCP servers; no session kept; a JSON answer."""
+    tools = (["--tools", "Read", "--allowedTools", "Read", "--add-dir", str(read_dir)] if read_dir
+             else ["--tools", ""])
+    return [*node_route(exe or find_executable() or "claude"), "-p", "--model", str(model), *tools,
+            "--no-session-persistence", "--output-format", "json", "--strict-mcp-config", "--mcp-config", NO_MCP]
+
+
+def print_answer(stdout, stderr="") -> tuple:
+    """(answer, "") or ("", why) for a print_command run's output. The answer's JSON comes as one object, as a list of
+    messages (Claude Code with verbose on prints the whole conversation), or as lines, after anything else Claude Code
+    printed first. `why` is one plain line from what it said (never the prompt), for the progress and the stop."""
+    text = str(stdout or "")
+    rows = []
+    for chunk in [text.strip()] + [line.strip() for line in text.splitlines()]:
+        if not chunk.startswith(("{", "[")):
+            continue
+        try:
+            value = json.loads(chunk)
+        except ValueError:
+            continue
+        rows += value if isinstance(value, list) else [value]
+    rows = [r for r in rows if isinstance(r, dict)]
+    result = next((r for r in reversed(rows) if r.get("type") == "result" or "result" in r), None)
+    if result is not None and not result.get("is_error") and str(result.get("result") or "").strip():
+        return str(result["result"]), ""
+    said = (str(result.get("result") or result.get("subtype") or "") if result is not None else "") or str(stderr or "")
+    said = said or ("no answer" if not text.strip() else text)
+    line = next((l.strip() for l in said.splitlines() if l.strip()), "no answer")
+    return "", line[:300]
+
+
 # Claude Code's sign-in check starts Claude Code twice (version, then auth status). On a slow Windows computer that
 # took 51 s and the old 20 s limit read it as "not signed in", which stopped a creator's video. Each command now has
 # CHECK_SECONDS, and a confirmed sign-in is reused for STATUS_REUSE_SECONDS; if a later check times out, a sign-in
@@ -595,7 +663,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.110")
+            installed_version=cfg.get("local_version","5.3-admin.111")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text(encoding="utf-8"))

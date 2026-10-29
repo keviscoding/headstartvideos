@@ -283,7 +283,12 @@ def test_create_page_offers_the_character_before_extra_instructions():
     assert 'id="crw-character-draw"' in page and 'id="crw-character-file"' in page and 'id="crw-character-art"' in page
     assert "That one picture goes with every image" in page and "For a different character, use Character above" in page
     script = (ROOT / "local_runtime" / "cr_workspace.js").read_text()
-    assert "character:strict()?'':$('crw-character').value.trim(),character_image:strict()?'':$('crw-character-image').value" in script
+    assert ("character:strict()||pictureUse()==='none'?'':$('crw-character').value.trim(),"
+            "character_image:strict()||pictureUse()==='none'?'':$('crw-character-image').value") in script
+    # a recipe that can't use a picture says why instead of offering it; a Roblox Story Short keeps it (2026-10-28)
+    assert "if(pictureUse()!=='avatar'){p.character='';p.character_image='';}" in script
+    assert "if (s && pictureUse() === 'avatar') hide('crw-character-section', strict());" in script
+    assert "n.hidden = use === 'none'" in script
     assert "api('/cr-workspace/character/draw'" in script and "api('/cr-workspace/character'," in script
     assert "A character picture of your own renders on this computer for now." in script
 
@@ -299,7 +304,11 @@ ROWS = [{"name": "stories", "label": "2D Life Stories", "character": OLD_CAST, "
          "features": {"offered": ["depth"], "on": ["depth"]}},
         {"name": "cr-shorts-3d", "label": "3D Shorts", "short_seconds": 25, "features": {"offered": [], "on": []}},
         {"name": "cr_clone_kit", "label": "My Kit", "visual_policy": "reference_only",
-         "features": {"offered": [], "on": []}}]
+         "features": {"offered": [], "on": []}},
+        {"name": "cr-shorts-roblox", "label": "Roblox Story Shorts", "short_seconds": 55, "features": {"offered": [], "on": []},
+         "character_picture": character.picture_use({"format": "short", "shorts": {"pipeline": "roblox"}})},
+        {"name": "cr_clone_coded", "label": "My Coded", "features": {"offered": ["sound"], "on": ["sound"]},
+         "character_picture": character.picture_use({"look": {"visuals": "cr_animated2d"}})}]
 
 
 @pytest.fixture
@@ -362,9 +371,25 @@ def test_make_videos_with_a_picture_saves_it_and_picks_it_for_the_video(studio, 
     assert (studio.env.home / "assets" / body["character_image"]).is_file()
 
 
+def test_a_roblox_short_takes_a_picture_of_the_creators_avatar_and_says_what_it_does(studio, tmp_path):
+    """A customer's avatar picture was ignored by a Roblox Story Short (2026-10-28): it is now read into the main
+    character's blocky avatar, and the quote says what it will and won't do."""
+    picture = tmp_path / "avatar.png"
+    Image.frombytes("RGB", (300, 300), os.urandom(300 * 300 * 3)).save(picture, "PNG")
+    options = {"character_picture": str(picture)}
+    q = run("quote", {"style": "cr-shorts-roblox", "options": options})["structuredContent"]
+    assert "blocky 3D avatar" in q["character"] and "can't show" in q["character"]
+    run("make_videos", {"titles": ["Everyone has a hat"], "style": "cr-shorts-roblox", "where": "this_computer",
+                        "options": options, "quote_id": q["quote_id"]})
+    body = studio.staged[0]
+    assert re.fullmatch(r"characters/avatar-[0-9a-f]{6}\.png", body["character_image"])
+
+
 @pytest.mark.parametrize("style,options,where,message", [
     ("cr-shorts-3d", {"character": NEW_CAST}, "this_computer", "Shorts keep their own host"),
     ("cr_clone_kit", {"character": NEW_CAST}, "this_computer", "learned animation kit"),
+    ("cr-shorts-roblox", {"character": NEW_CAST}, "this_computer", "from a picture of their avatar"),
+    ("cr_clone_coded", {"character": NEW_CAST}, "this_computer", "animation code draws its characters"),
     ("stories", {"character_picture": "/nowhere/mia.png"}, "this_computer", "PNG, JPG or WebP"),
     ("stories", {"character": "x" * 4001}, "this_computer", "under 4,000 characters"),
 ])

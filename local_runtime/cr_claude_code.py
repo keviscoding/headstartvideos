@@ -421,16 +421,18 @@ def install(studio, token: str, home=None) -> dict:
             out = []
             for row in rows:
                 slug = str(row.get("slug") or "")
-                path = ""
+                path, coded = "", False
                 try:
                     found = studio.mv.find_job(slug)
                     video = studio.mv.final_video(Path(found)) if found is not None else None
                     if video is not None and Path(video).is_file() and Path(video).resolve().is_relative_to(home):
                         path = str(Path(video).resolve())
+                    import cr_animated2d
+                    coded = found is not None and cr_animated2d.coded_video(Path(found))   # no timeline for it
                 except Exception:                                  # noqa: BLE001 - the file path is a bonus
                     path = ""
                 out.append({**{k: row.get(k) for k in ("slug", "title", "style", "mtime", "size", "desc")},
-                            "path": path})
+                            "path": path, **({"coded": True} if coded else {})})
             return protect(jsonify(videos=out))
         except Exception as error:                                 # noqa: BLE001
             return failure(error)
@@ -485,14 +487,9 @@ def install(studio, token: str, home=None) -> dict:
             why = cloud_note({**rows[style], "features": {"on": [k for k, v in features.items() if v]}})
             if why:
                 return protect(jsonify(available=False, why=why, blocked=True))
-            machine = "gpu" if cr_cloud.wants_gpu({"style": style, "features": features}) else "cpu"
-            base, key = cr_cloud._connection(home)
-            r = requests.post(base + "/api/studio/cloud/quote", json={"minutes": minutes, "machine": machine},
-                              headers={"Authorization": "Bearer " + key}, timeout=20)
-            if not r.ok:
-                return protect(jsonify(available=False, why="channelrecipe.com couldn't price this right now."))
-            return protect(jsonify(available=True, balance_usd=info.get("balance_usd"), topup_url=info.get("topup_url"),
-                                   **r.json()))
+            # one video's price (the tools multiply by their titles): Studio Cloud's own quote, as Create's page asks it
+            return protect(jsonify(cr_cloud.quote({"style": style, "minutes": minutes, "features": features}, home,
+                                                  http=requests)))
         except Exception as error:                                 # noqa: BLE001
             return failure(error)
 

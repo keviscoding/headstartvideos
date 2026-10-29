@@ -13,8 +13,9 @@ Link: $ARGUMENTS
 
 1. **Check Studio** with `setup_check` (see the make-videos skill for what to say when it isn't running or ready).
 2. **The link.** Use the link above or ask for a YouTube channel (@name) or one video. To **combine** two or three
-   channels into one new style (cross-niche arbitrage), take all their links. A channel of Shorts works too, but
-   for now the style it saves makes regular landscape (16:9) videos, not vertical Shorts: tell them first.
+   channels into one new style (cross-niche arbitrage), take all their links. A channel of Shorts works too, and its
+   style makes vertical Shorts either way (written in code, or with Studio's pictures drawn tall: then graphics made
+   for wide screens, such as maps or 3D scenes, sit whole across the middle of the frame).
 3. **Look first (free).** Call `clone_style_look(youtube_url)`, or `clone_style_look(youtube_urls=[…])` to combine.
    Studio lists the videos and looks at three of the most viewed, taking them in turn from each channel. No Claude
    is used and nothing is charged. Tell them which videos it is studying; if they prefer others, call it again
@@ -27,7 +28,9 @@ Link: $ARGUMENTS
    (usually 10 to 25 minutes of their Claude usage for the whole study, at most 46, no money), and its videos cost
    their voice. Instead of code
    gives Studio's ready-made pictures (AI pictures, some AI clips) or its fixed 3D engine: ready at once, but not
-   exactly the channel's look. Say both, plainly. If `look_progress` shows a `medium_gap`, tell them now what their
+   exactly the channel's look. Say both, plainly. A `kit` question comes when the look is partly 3D: ask it right
+   after `made`, in plain words (2D: drawn shapes, lines and maps; 3D: real 3D models, light and camera). It decides
+   what their Claude Code writes, so never answer it for them. If `look_progress` shows a `medium_gap`, tell them now what their
    videos will be (`how_made`). A Shorts channel's videos come out vertical with its captions. Once the style is
    saved, they can keep improving it with you in Style Lab (see below). Also ask:
    - a name for the new style (for example "My History Style");

@@ -5,7 +5,7 @@
   const all = selector => [...document.querySelectorAll(selector)];
   const boot = window.CR_WORKSPACE || {};
   const state = {catalog: null, setup: null, selected: null, inspected: null, input: 'idea', narration: 'ai',
-    audio: '', featureDrafts: {}, captionsDrafts: {}, page: 'create', family: 'all', projectFilter: 'all',
+    audio: '', featureDrafts: {}, captionsDrafts: {}, language: null, page: 'create', family: 'all', projectFilter: 'all',
     queue: [], jobs: [], studies: [], busy: false, submitting: false, uploading: false,
     openJob: null, currentOutput: null, timer: null, refresh: null, optionalLoaded: false, projectNodes: new Map()};
   const STORAGE = 'channelrecipe.workspace.v1';
@@ -120,14 +120,30 @@
   const castOf = (r) => Array.isArray(r?.character) ? r.character.join('\n') : String(r?.character || '');
   const castKey = (v) => String(v || '').replace(/[—–]/g, '-').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').toLowerCase().split(/\s+/).filter(Boolean).join(' ');
   function characterChanged() {const own = castOf(state.selected), v = castKey($('crw-character').value); return !!v && v !== castKey(own) && v !== castKey(own.slice(0, 4000));}
+  // What a picture does in this recipe (cr_character.picture_use): with every drawn picture ("stills"), read into a Roblox
+  // Story Short's main avatar ("avatar"), only the drawn pictures of a designed 3D cast ("partial"), or nothing ("none":
+  // the inputs give way to why). Never accepted silently (the owner, 2026-10-28).
+  const pictureUse = (r = state.selected) => r?.character_picture?.use || 'stills';
+  function characterMode() {
+    const use = pictureUse(), sec = $('crw-character-section');
+    for (const n of sec.children) if (n.id !== 'crw-character-status') n.hidden = use === 'none';
+    sec.querySelector('.crw-character-actions').hidden = use === 'none' || use === 'avatar';   // a drawn sheet is for drawn pictures
+    sec.querySelector('p.crw-field-help:not(#crw-character-status)').hidden = use !== 'stills';
+    $('crw-character').placeholder = use === 'avatar' ? 'Optional: anything about your avatar the picture doesn’t show.'
+      : 'Who appears in every picture: their age, hair, face, clothes and one detail that makes them recognisable.';
+  }
   function characterView(message) {
+    characterMode();
     const r = state.selected || {}, pick = $('crw-character-image').value, row = (state.characters || []).find(x => x.rel === pick), changed = characterChanged();
+    const use = pictureUse(r), say = r.character_picture?.say || '';
+    if (message == null && (use === 'none' || use === 'avatar')) {text('crw-character-status', use === 'avatar' && !pick ? 'Upload a picture of your avatar. ' + say : say); const art0 = $('crw-character-art'); art0.hidden = !(row && use === 'avatar'); if (row && use === 'avatar') art0.src = row.src; return;}
     const src = row ? row.src : (!changed && r.character_image ? `/char/${encoded(r.name)}` : ''), art = $('crw-character-art');
     art.hidden = !src; if (src && art.getAttribute('src') !== src) art.src = src;
     $('crw-character-draw').disabled = !changed || !!state.drawing;
     text('crw-character-status', message != null ? message : pick ? 'This picture decides how your character looks in every picture of this video.'
       : changed && r.character_image ? 'Studio draws your character from these words in this recipe’s style (one picture, about $0.02) and keeps them in every picture of the video. Press Draw this character to see them first.'
       : changed ? 'Your words describe the character in every picture.' : r.character_image ? 'The recipe’s own character. Change the words or upload a picture to change who appears.' : '');
+    if (message == null && use === 'partial') text('crw-character-status', [$('crw-character-status').textContent, say].filter(Boolean).join(' '));
   }
   function addCharacter(row) {
     state.characters = [row, ...(state.characters || []).filter(x => x.rel !== row.rel)];
@@ -187,8 +203,10 @@
     text('crw-batch-label', rk ? 'Queue more topics (up to 15, one per line)' : 'Create several videos');
     $('crw-batch-titles').placeholder = rk ? 'Ranking the Funniest Dog Moments\nRanking the Best Bunny Moments' : 'One additional title per line';
     hide('crw-short-duration', !s || rk); hide('crw-long-duration', s); hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
-    text('crw-canvas-label', s ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', s ? '9:16 vertical' : '16:9 landscape');
+    const tall = s || !!state.selected?.vertical;   // a style learned from Shorts is vertical too, at any length
+    text('crw-canvas-label', tall ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', tall ? '9:16 vertical' : '16:9 landscape');
     if (s) for (const id of SHORT_ONLY_HIDDEN) hide(id, true);
+    if (s && pictureUse() === 'avatar') hide('crw-character-section', strict());    // Roblox Story Shorts: your avatar
   }
   function selectRecipe(recipe, persist = true) {
     if (state.selected) state.featureDrafts[state.selected.name] = featureValues();
@@ -271,6 +289,30 @@
       $('crw-panels-recent').dataset.loaded = '1';
     } catch (e) {text('crw-panels-status', e.message);}
   }
+  // The video's language (cr_language): its script, voice, captions and words on screen. Create starts at the language
+  // the creator chose last (Studio keeps it), else at the recipe's own; a choice here is kept for the next videos.
+  function languageName(id) {return (state.catalog?.languages || []).find(l => l.id === id)?.name || 'English';}
+  function languageView() {
+    // every recipe offers the languages all its fonts draw, plus its own (a Czech channel speaks Czech)
+    const box = $('crw-language'), own = state.selected?.language || 'en';
+    const list = (state.catalog?.languages || []).filter(l => l.offered !== false || l.id === own);
+    if (list.length && box.dataset.recipe !== own) {
+      box.replaceChildren(...list.map(l => {const o = el('option', '', l.native && l.native !== l.name ? `${l.name} · ${l.native}` : l.name); o.value = l.id; return o;}));
+      box.dataset.recipe = own;
+    }
+    // a ready-made Shorts recipe whose own pipeline doesn't take a language yet (any_language false) speaks its own
+    const pipelineShort = isShort(state.selected) && state.selected?.short_seconds != null && !state.selected?.any_language;
+    const want = pipelineShort ? own : [state.language, state.catalog?.default_language, own, 'en'].find(id => id && [...box.options].some(o => o.value === id));
+    if (want && box.value !== want) box.value = want;
+    box.disabled = pipelineShort;
+    const lang = box.value || 'en', name = languageName(lang);
+    text('crw-language-help', pipelineShort && isRanking(state.selected) ? 'Ranking Shorts speak the language you type the topic in: type it in Spanish, for example, for a Short in Spanish.'
+      : pipelineShort ? `${state.selected.label || 'This Shorts recipe'} speaks ${name} for now: its Shorts are written, voiced and captioned by their own pipeline. Video recipes and styles written in code can be made in your language.`
+      : state.narration === 'own' ? `The language of your recording. Its captions are timed in ${name}, and the words on screen are in ${name}.`
+      : lang === 'en' ? 'The script, the voice, the captions and the words on screen. Studio keeps your choice for your next videos.'
+      : `The script, the voice, the captions and the words on screen are all in ${name}. Choose voice plays its samples in English; every voice reads your video in ${name}.`);
+    text('crw-summary-language', pipelineShort && isRanking(state.selected) ? 'The topic’s language' : name);
+  }
   function captionsNote() {
     const none = state.selected?.captions === false, cloud = state.renderOn === 'cloud' && state.cloudInfo?.available && !cloudBlock();
     text('crw-captions-note', !none ? '' : !checked('crw-captions') ? 'This style has no captions, like its channel. Switch this on to add them to a video.'
@@ -326,7 +368,7 @@
     if (narrator) text('crw-narration-name', state.selected?.narrator ? `${narrator} · this style's narrator` : narrator);
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : narrator || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
-    footageNote(); threedNote(); frameCheckNote();
+    footageNote(); threedNote(); frameCheckNote(); languageView();
   }
   // A 3D video's time is mostly Claude's: it directs every shot, then reviews them in rounds (a customer's 2-minute 3D
   // video spent 84 of its 116 minutes in Claude Opus, 2026-10-25). Said before Create, with Quicker 3D review. Sections
@@ -371,10 +413,10 @@
     const needsPanels = !!state.selected?.panels && !state.panels;
     // While Studio makes a video (or learns a style), Create adds this one to the queue: Studio makes them one at a
     // time, so the creator can queue several and walk away (cr_queue).
-    const blocked = state.submitting || state.uploading || state.drawing || state.claudeBusy || !state.catalog || !ready || (state.narration === 'own' && !state.audio) || needsPanels;
+    const blocked = state.submitting || state.uploading || state.drawing || state.claudeBusy || !state.catalog || !ready || (state.narration === 'own' && !state.audio) || needsPanels || cloudShort();
     $('crw-create').disabled = blocked;
     if (!state.submitting) createLabel();
-    let message = state.claudeBusy ? state.claudeBusy : !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : queuing() ? queueNote() : apiRoute() ? (state.setup.api_route?.ready_to_switch ? 'Ready. This video and the ones after it are made with Claude Code on your Claude plan; your old API route stops being used.' : 'Ready, on the old API route. Studio now makes every video with Claude Code on your Claude plan.') : 'Ready. Each Create starts a separate new project.';
+    let message = state.claudeBusy ? state.claudeBusy : !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : cloudShort() ? 'Top up your Studio Cloud balance first (under Where it renders), or render this one on this computer.' : queuing() ? queueNote() : apiRoute() ? (state.setup.api_route?.ready_to_switch ? 'Ready. This video and the ones after it are made with Claude Code on your Claude plan; your old API route stops being used.' : 'Ready, on the old API route. Studio now makes every video with Claude Code on your Claude plan.') : 'Ready. Each Create starts a separate new project.';
     text('crw-readiness', message);
     const action = readinessAction();
     hide('crw-readiness-action', !action);
@@ -389,7 +431,7 @@
     const cloud = state.renderOn === 'cloud' && state.cloudInfo?.available && !cloudBlock();
     return !cloud && (state.busy || state.heldScope === 'all' && state.queue.some(q => q.state === 'held'));
   }
-  function createLabel() {$('crw-create').textContent = queuing() ? 'Add to queue' : 'Create video';}
+  function createLabel() {$('crw-create').textContent = cloudShort() ? 'Top up to render in the cloud' : queuing() ? 'Add to queue' : 'Create video';}
   function queueNote() {
     const waiting = state.queue.filter(q => q.state === 'queued').length, held = state.queue.filter(q => q.state === 'held');
     if (held.length && state.heldScope === 'all') return `The queue is on hold: ${state.heldReason || 'something every video needs stopped.'} A video you add now waits with them; Carry on starts them again.`;
@@ -807,7 +849,10 @@
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
       const thumbs = (data.thumbs || data.thumbnails || []).map(name => typeof name === 'string' ? name : name?.name).filter(Boolean);
       for (const [i, filename] of thumbs.entries()) {const a=el('a','crw-export-link',thumbs.length > 1 ? `Thumbnail ${i + 1}` : 'Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
-      try {const saved = await api(`/cr-workspace/project/${encoded(job.slug)}`); const lines = (saved.sound_check || []).map(r => (r.state === 'ok' ? '✓ ' : '• ') + r.text); text('crw-output-message', lines.length ? 'Sound check: ' + lines.join(' · ') : '');} catch (_) {/* the sound check is optional */}
+      try {const saved = await api(`/cr-workspace/project/${encoded(job.slug)}`); const lines = (saved.sound_check || []).map(r => (r.state === 'ok' ? '✓ ' : '• ') + r.text);
+        // a video drawn by its style's own code: no timeline (its minutes are whole animations), and why, plainly
+        if (saved.no_timeline) {$('crw-output-editor').hidden = true; hide('crw-output-timing', true); if (saved.improve) {$('crw-output-editor').href = saved.improve; text('crw-output-editor-label', 'Improve this style'); $('crw-output-editor').hidden = false;}}
+        text('crw-output-message', [saved.no_timeline || '', lines.length ? 'Sound check: ' + lines.join(' · ') : ''].filter(Boolean).join(' '));} catch (_) {/* the sound check is optional */}
       $('crw-output').showModal();
     } catch (e) {toast(e.message);}
   }
@@ -840,6 +885,8 @@
     if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
   }
   document.addEventListener('visibilitychange', () => {if (!document.hidden && state.readyTitle) {state.readyTitle = ''; tabStatus();}});
+  // back from a top-up tab: the balance (and so the cloud choice) is read again
+  window.addEventListener('focus', () => {if (state.renderOn === 'cloud') {state.cloudQuoteKey = ''; refreshCloud();}});
   // Shorts on hold (cr_queue): a long batch stops on what every Short would hit (clip watches used up, YouTube or
   // Claude limits), or a Studio closed before they started. Nothing of theirs was spent; the creator decides.
   function drawHeld(q) {
@@ -919,12 +966,13 @@
       desc:checked('crw-description'),chapters:checked('crw-description')?number('crw-chapters',5,0,20):0,
       sources:checked('crw-description')&&checked('crw-sources')?number('crw-source-count',3,0,10):0,
       features,render_backend:features.threed&&checked('crw-fast-toggle')&&!strict()?'manimgx':'original',
-      character:strict()?'':$('crw-character').value.trim(),character_image:strict()?'':$('crw-character-image').value,
+      character:strict()||pictureUse()==='none'?'':$('crw-character').value.trim(),character_image:strict()||pictureUse()==='none'?'':$('crw-character-image').value,
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
       threed_look:threedLook(features), threed_quick:!!(features.threed && !strict() && checked('crw-threed-quick')),
-      carry_on_after_reset:checked('crw-carry-on'), frame_check:state.selected?.frame_check?checked('crw-frame-check'):undefined};
+      carry_on_after_reset:checked('crw-carry-on'), frame_check:state.selected?.frame_check?checked('crw-frame-check'):undefined,
+      language:$('crw-language').value||'en'};
     if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
       // A Short to remake: any YouTube link form (Shorts, watch, youtu.be, m., any case), sent as one plain link, for one topic
       const pasted=$('crw-rank-reference').value.trim(), refId=(/(?:youtu\.be\/|youtube\.com\/(?:shorts\/|watch\?(?:[^#]*&)?v=|live\/|embed\/))([A-Za-z0-9_-]{11})/i.exec(pasted)||[])[1]||'';
@@ -934,7 +982,7 @@
       const ranking={ranks:number('crw-ranks',5,3,10),commentary:checked('crw-rank-commentary'),booms:checked('crw-rank-booms'),sfx:$('crw-rank-sfx').value,
         punch_ins:checked('crw-rank-punch'),clean:checked('crw-rank-clean'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{}),...(reference?{reference}:{})};
       p.extra=`[[ranking=${JSON.stringify(ranking)}]] `+(p.extra||'');}
-    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';p.threed_quick=false;}
+    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';if(pictureUse()!=='avatar'){p.character='';p.character_image='';}p.threed_look='';p.threed_quick=false;}
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
@@ -962,6 +1010,7 @@
     if(r.name==='folio')return 'FOLIO renders on this computer: every shot is drawn by your Claude Code.';
     if(state.narration==='own')return 'Your own recording renders on this computer.';
     if($('crw-character-image').value&&!strict())return 'A character picture of your own renders on this computer for now.';
+    if(($('crw-language').value||'en')!==(r.language||'en'))return `A video in ${languageName($('crw-language').value)} renders on this computer for now.`;
     return '';
   }
   function cloudChoice() {
@@ -982,6 +1031,45 @@
     text('crw-cloud-note', why || (state.renderOn==='cloud'
       ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; a ChannelRecipe machine${gpu?' with a graphics card renders the 3D scenes and':''} does the heavy rendering at $${rate} an hour${gpu?'':' (a 10-minute video is usually under $1)'}. It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
       : `${suggest}Or render on a ChannelRecipe machine at about $${rate} an hour and keep your computer free. Balance: $${balance}.`));
+    if (state.renderOn==='cloud' && !why) cloudQuote(); else hide('crw-cloud-topup', true);
+  }
+  // Top up first (owner, 2026-10-28): with Studio Cloud chosen, Create shows what these videos reserve against the
+  // balance before anything starts, and a balance that doesn't cover it offers the top-up chunks instead of starting.
+  function cloudQuote() {
+    const titles=[$('crw-title').value.trim(),...$('crw-batch-titles').value.split('\n').map(v=>v.trim())].filter(Boolean);
+    const body={style:state.selected?.name||'',minutes:number('crw-minutes',10,1,60),features:featureValues(),titles:Math.max(1,titles.length)}, key=JSON.stringify(body);
+    if (state.cloudQuoteKey===key && state.cloudQuote) {cloudQuoteShow(); return;}
+    clearTimeout(cloudQuote.timer);
+    cloudQuote.timer=setTimeout(async()=>{
+      state.cloudQuoteKey=key;
+      let q; try {q=await api('/cr-cloud/quote',{method:'POST',body});} catch(e) {q={available:false,why:e.message};}
+      if (state.cloudQuoteKey!==key) return;
+      state.cloudQuote=q; cloudQuoteShow(); gate();
+    },400);
+  }
+  function cloudShort() {const q=state.cloudQuote; return state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() && !!q && q.available!==false && q.short_by_usd>0;}
+  function cloudQuoteShow() {
+    const q=state.cloudQuote; if (!q || state.renderOn!=='cloud' || cloudBlock()) {hide('crw-cloud-topup', true); return;}
+    const usd=v=>`$${Number(v||0).toFixed(2)}`, these=q.titles>1?`These ${q.titles} videos`:'This video';
+    text('crw-cloud-note', q.available===false ? (q.why||'Studio Cloud can\'t price this right now.')
+      : `${these}: usually about ${usd(q.expected_usd)} of machine time, at ${usd((q.cents_per_min||0)*0.6)} an hour on a ChannelRecipe machine${q.machine==='gpu'?' with a graphics card for the 3D scenes':''}. ${q.titles>1?'They reserve':'It reserves'} up to ${usd(q.most_reserved_usd)} before ${q.titles>1?'their machines start':'its machine starts'}, and you pay only what it used. Balance: ${usd(q.balance_usd)}. The script, voice and pictures are made here with your Claude Code first; keep Studio open while it renders.`);
+    const short=cloudShort(); hide('crw-cloud-topup', !short); if (!short) return;
+    text('crw-cloud-topup-note', `Top up first: your balance is ${usd(q.balance_usd)}, ${usd(q.short_by_usd)} short of what ${these.toLowerCase()} ${q.titles>1?'reserve':'reserves'}. Nothing is made until it covers it. You pay on channelrecipe.com (Stripe), and the balance is spent only on cloud renders.`);
+    const box=$('crw-cloud-chunks'); box.replaceChildren();
+    for (const amount of q.chunks_usd||[]) {
+      const b=el('button',amount===q.topup_usd?'crw-primary-button':'crw-secondary-button',`Top up $${amount}`); b.type='button';
+      b.addEventListener('click',()=>cloudTopUp(amount,b)); box.append(b);
+    }
+  }
+  async function cloudTopUp(amount, button) {
+    const tab=window.open('about:blank','_blank');           // opened on the click itself, so no popup blocker stops it
+    button.disabled=true;
+    try {
+      const d=await api('/cr-cloud/topup',{method:'POST',body:{usd:amount}});
+      if (tab) {tab.opener=null; tab.location.href=d.url;} else window.open(d.url,'_blank','noopener');
+      toast('Finish paying in the new tab. Your balance updates here as soon as it lands.');
+      state.cloudQuoteKey='';
+    } catch(e) {if (tab) tab.close(); toast(e.message);} finally {button.disabled=false;}
   }
   async function refreshCloud() {
     try {state.cloudInfo=await api('/cr-cloud');} catch(_) {state.cloudInfo=null;}
@@ -1013,7 +1101,7 @@
     if(state.renderOn==='cloud'&&state.cloudInfo?.available&&!cloudBlock()){
       state.submitting=true;gate();$('crw-create').textContent='Starting in the cloud…';
       try {await api('/cr-cloud/start',{method:'POST',body:p});save();showPage('projects');toast('Studio is preparing your video here. A ChannelRecipe machine renders it next.');await cloudPanel();}
-      catch(e){error(e.message);} finally{state.submitting=false;gate();}
+      catch(e){error(e.message);if(e.details?.quote){state.cloudQuote=e.details.quote;cloudQuoteShow();}} finally{state.submitting=false;gate();}
       return;
     }
     state.submitting=true;gate();$('crw-create').textContent='Checking your video…';
@@ -1114,11 +1202,16 @@
   for(const b of all('[data-project-filter]'))b.addEventListener('click',()=>{state.projectFilter=b.dataset.projectFilter;chooseGroup('[data-project-filter]','projectFilter',state.projectFilter);renderProjects();});
   for(const b of all('[data-family]'))b.addEventListener('click',()=>{state.family=b.dataset.family;chooseGroup('[data-family]','family',state.family);gallery();});
   $('crw-form').addEventListener('submit',submit);
-  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();summary();captionsNote();});
+  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;gate();summary();captionsNote();});
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
   $('crw-form').addEventListener('input',()=>{error('');updateOptional();summary();save();cloudChoice();});
   $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
+  // the language chosen is kept as Studio's default for the next videos (any recipe); taken on its first event, before
+  // the form's own refresh (which starts the picker at the kept choice) sees it
+  $('crw-language').addEventListener('input',()=>{if(!$('crw-language').disabled)state.language=$('crw-language').value||'en';});
+  $('crw-language').addEventListener('change',async()=>{if($('crw-language').disabled)return;state.language=$('crw-language').value||'en';summary();cloudChoice();
+    try{await api('/cr-workspace/language',{method:'POST',body:{language:state.language}});}catch(e){toast(e.message);}});
   // the frame check's switch is Studio's own setting: kept for every coded style's new videos
   $('crw-frame-check').addEventListener('change',async()=>{const on=checked('crw-frame-check');
     for(const row of state.catalog?.channels||[])if(row.frame_check)row.frame_check.on=on;

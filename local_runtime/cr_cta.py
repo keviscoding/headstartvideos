@@ -11,7 +11,8 @@ optionally a cover or screenshot, how many mentions). For that video:
     the words "link on screen", fading in and out;
   - the description opens with the link.
 
-Nothing changes for a video without a call to action.
+Nothing changes for a video without a call to action. A video in another language (cr_language) says the cue and
+shows the card's line in that language ("enlace en pantalla" in Spanish).
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from pathlib import Path
 
 HOME = Path(__file__).resolve().parent
 UPLOADS = HOME / "uploads" / "cta"
-CUE = "link on screen"
+CUE = "link on screen"                  # in English; each language's own words are cr_language.cue()
 PLACES = (0.40, 0.70, None)             # None: the closing lines
 FIRST_S = 180.0                         # never in the first three minutes
 CARD_S = 8.0
@@ -96,13 +97,23 @@ def places(count: int, minutes: float) -> list:
     return allowed[:max(1, min(3, count))]
 
 
-def script_block(cfg: dict, minutes: float) -> str:
+def _cue(job=None) -> str:
+    """The words each mention says, in the video's language (this run's, else the one kept with the video)."""
+    try:
+        import cr_language
+        return cr_language.cue((cr_language.of_job(job) if job else "") or cr_language.current() or "en")
+    except Exception:                                   # noqa: BLE001 - English then
+        return CUE
+
+
+def script_block(cfg: dict, minutes: float, job=None) -> str:
     where = places(cfg["count"], minutes)
+    cue = _cue(job)
     lines = [f"\n\nCALL TO ACTION — the creator promotes this in the video: {cfg['what']}.",
              f"Mention it {len(where)} time(s), in the narrator's own voice and tied to what is being said at that "
              "moment: " + "; ".join(f"mention {i + 1} {w}" for i, w in enumerate(where)) + ".",
              f"Never in the first three minutes. Each mention is under 35 words, says plainly why it helps the "
-             f"viewer, and contains the exact words \"{CUE}\". No price, no hard sell; everything else in the "
+             f"viewer, and contains the exact words \"{cue}\". No price, no hard sell; everything else in the "
              "script stays as it would be."]
     return "\n".join(lines) + "\n"
 
@@ -113,12 +124,13 @@ def mention_times(job, count: int, total: float) -> list:
     """Seconds where the narrator says the cue (word timings), else the planned places."""
     job = Path(job)
     words = []
+    import cr_language
     try:
-        words = [(str(w).lower().strip(".,!?;:\"'"), float(a)) for w, a, _ in
+        words = [(" ".join(cr_language.words(w)), float(a)) for w, a, _ in
                  json.loads((job / "words_heard.json").read_text(encoding="utf-8"))]
     except (OSError, ValueError, TypeError):
         pass
-    cue = CUE.split()
+    cue = cr_language.words(_cue(job))
     found = []
     for i in range(len(words) - len(cue) + 1):
         if [w for w, _ in words[i:i + len(cue)]] == cue:
@@ -132,8 +144,9 @@ def mention_times(job, count: int, total: float) -> list:
     return sorted(found)[:count] or [max(0.0, total - CARD_S - 4)]
 
 
-def card(cfg: dict, dest: Path, root: Path = None) -> Path:
-    """The card: picture, what it is and the QR code, on a rounded panel in the lower right of a 1920x1080 frame."""
+def card(cfg: dict, dest: Path, root: Path = None, label: str = "Scan the code, or use the link below") -> Path:
+    """The card: picture, what it is and the QR code, on a rounded panel in the lower right of a 1920x1080 frame.
+    label: the line under what it is, in the video's language."""
     from PIL import Image, ImageDraw, ImageFilter, ImageFont
     import cr_qr
     W, H = 1920, 1080
@@ -182,7 +195,7 @@ def card(cfg: dict, dest: Path, root: Path = None) -> Path:
         if len(lines) * int(size * 1.25) <= inner - 44:
             break
     small = font("Inter-Bold.ttf", 22)
-    label = wrap("Scan the code, or use the link below", small, width)
+    label = wrap(label, small, width)
     ly = y0 + ph - pad - len(label) * 28
     block = len(lines[:6]) * int(big.size * 1.25)
     y = y0 + pad + max(4, (ly - 16 - (y0 + pad) - block) // 2)       # the description centred above the label
@@ -228,7 +241,9 @@ def finish(job, log=print) -> bool:
                                       str(video)], capture_output=True, text=True, encoding="utf-8", errors="replace",
                                      check=True).stdout.strip() or 0)
         times = mention_times(job, int(cfg.get("count") or 1), total)
-        png = card(cfg, job / "cta" / "card.png")
+        import cr_language
+        png = card(cfg, job / "cta" / "card.png",
+                   label=cr_language.card_label(cr_language.of_job(job) or cr_language.current() or "en"))
         tmp = job / "video.cta.mp4"
         overlay(video, png, times, tmp)
         tmp.replace(video)
@@ -245,7 +260,7 @@ def finish(job, log=print) -> bool:
 
 # ── wiring into the engine ──────────────────────────────────────────────────────────────────────────────────
 
-_current = {"cfg": {}, "minutes": 10.0}
+_current = {"cfg": {}, "minutes": 10.0, "job": None}
 
 
 def install(engine):
@@ -256,15 +271,16 @@ def install(engine):
                                                           engine.publish_named_copy)
 
     def generate_script(title, minutes, job, force, style=""):
-        _current.update(cfg=of_job(job), minutes=float(minutes or 10))
+        _current.update(cfg=of_job(job), minutes=float(minutes or 10), job=job)
         try:
             return original_script(title, minutes, job, force, style=style)
         finally:
-            _current.update(cfg={})
+            _current.update(cfg={}, job=None)
 
     def extra_block(*args, **kwargs):
         block = original_extra(*args, **kwargs)
-        return block + script_block(_current["cfg"], _current["minutes"]) if _current["cfg"] else block
+        return block + script_block(_current["cfg"], _current["minutes"], _current.get("job")) if _current["cfg"] \
+            else block
 
     def publish_named_copy(job, title, fresh=""):
         try:

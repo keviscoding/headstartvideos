@@ -891,8 +891,23 @@ def image_plan(cfg, prefer=None):
     return list(dict.fromkeys(plan))
 
 
-def image_input(choice, prompt, refs):
-    inputs = {"prompt": prompt[:5000], "aspect_ratio": "16:9", **choice["options"]}
+# The engine's own names for the pictures that fill a video's frame: a story's stills, the first frames of its moving
+# pictures, a style renderer's backgrounds. Thumbnails, cut-outs, objects and pictures laid into a wide graphic aren't.
+FRAME_PICTURES = ("ai image", "picture", "video-still", "plate")
+
+
+def aspect(label="") -> str:
+    """"9:16" for a picture that fills a tall video's frame (a vertical Short: the worker runs at VIDEO_W x VIDEO_H,
+    cr_video_cancel.video_size), else "16:9". Before, a Short's pictures were drawn wide and cropped to their middle."""
+    try:
+        tall = int(os.environ.get("VIDEO_H") or 1080) > int(os.environ.get("VIDEO_W") or 1920)
+    except ValueError:
+        tall = False
+    return "9:16" if tall and str(label or "").lower().startswith(FRAME_PICTURES) else "16:9"
+
+
+def image_input(choice, prompt, refs, label=""):
+    inputs = {"prompt": prompt[:5000], "aspect_ratio": aspect(label), **choice["options"]}
     if refs:
         inputs[choice["reference_field"]] = [_url(url) for url in refs[:8]]
     return choice["edit" if refs else "generate"], inputs
@@ -904,7 +919,7 @@ def image(prompt, dest, label="image", ref_urls=None, model=None, **kwargs):
     refs = list(ref_urls or [])
     wait = {"timeout_s": kwargs["timeout_s"]} if kwargs.get("timeout_s") else {}   # a caller's own limit on waiting
     if provider != "kie":
-        inputs = {"prompt": prompt[:5000], "aspect_ratio": "16:9", "output_format": "png"}
+        inputs = {"prompt": prompt[:5000], "aspect_ratio": aspect(label), "output_format": "png"}
         model = PROVIDERS[provider]["models"]["image_edit" if refs else "images"]
         if refs:
             inputs["images"] = refs[:8]
@@ -913,7 +928,7 @@ def image(prompt, dest, label="image", ref_urls=None, model=None, **kwargs):
     plan = image_plan(cfg, prefer=model or _style_model["id"])
     for index, model_id in enumerate(plan):
         choice = image_model(model_id)
-        model, inputs = image_input(choice, prompt, refs)
+        model, inputs = image_input(choice, prompt, refs, label)
         try:
             # Each model/prompt/wallet has its own durable receipt. Resuming
             # skips confirmed failures and reuses the successful fallback.
@@ -937,7 +952,7 @@ def motion(image_url, prompt, dest, label="motion", retries=1, **kwargs):
         inputs = {"prompt": prompt[:10000], "image_url": image_url,
                   "resolution": "720p", "duration": "5"}
     else:
-        inputs = {"prompt": prompt[:2000], "image": image_url, "aspect_ratio": "16:9",
+        inputs = {"prompt": prompt[:2000], "image": image_url, "aspect_ratio": aspect("picture"),
                   "resolution": "720p", "duration": 8}
     return run("motion", inputs, dest, log=kwargs.get("log", print))
 
@@ -1354,6 +1369,13 @@ def wrap_whisper(engine):
             def transcribe(self,audio,*args,**kwargs):
                 if isinstance(audio,(str,Path)):
                     audio=narration_audio(audio)
+                if "language" not in kwargs:
+                    try:
+                        import cr_language       # a video asked to speak a language: told, not guessed from its audio
+                        if cr_language.whisper_code():
+                            kwargs["language"]=cr_language.whisper_code()
+                    except ImportError:
+                        pass
                 return self.model.transcribe(audio,*args,**kwargs)
         def get_whisper():
             try:
@@ -1384,6 +1406,8 @@ def install(engine):
     wrap_whisper(engine)
     import cr_captions
     cr_captions.install(engine)                 # captions asked for are burned in, or the video says why not
+    import cr_language
+    cr_language.install(engine)                 # the language chosen for one video: script, voice, captions, screen
     global _native_images
     _native_images = engine._image_provider
     def hook(name, task, replacement):

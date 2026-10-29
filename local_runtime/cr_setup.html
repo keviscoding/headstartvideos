@@ -153,20 +153,9 @@ async function fixBrowser(button,note){
 // Fix it for FFmpeg and Node.js (and Claude Code below): Studio downloads a pinned version into its own folder,
 // checks its fingerprint and that it runs (cr_installs). These follow its progress line, and the row's badge says
 // what is happening (Downloading…, not Needs attention, while it downloads).
-const fixing={},fixStage={},fixFailed={},autoFixed={},FIX_BUSY=['starting','downloading','checking','installing'];
+const fixing={},fixStage={},fixFailed={},FIX_BUSY=['starting','downloading','checking','installing'];
 const FIX_BADGE={starting:'Downloading…',downloading:'Downloading…',checking:'Checking…',installing:'Installing…'};
 const toolBadge=(kind,ok)=>ok?'Ready':fixing[kind]?(FIX_BADGE[fixStage[kind]]||'Downloading…'):'Needs attention';
-// Missing or too old, FFmpeg and Node.js can start downloading by themselves while this page is open, as the speech-timing
-// model does (owner's Windows test, 2026-10-26: two Fix it presses nobody should need), when the Studio allows it
-// (auto_fix_tools, off until the owner decides). Once per page; a fix already
-// running is followed; one that failed shows why and waits for Fix it.
-function autoFix(data,ok){
- if(data.auto_fix_tools!==true)return;                  // off until the owner decides (cr_installs.AUTO_FIX_TOOLS)
- for(const kind of ['ffmpeg','node']){
-  if(ok(kind)||fixing[kind]||fixFailed[kind]||autoFixed[kind]||data.can_fix?.[kind]===false)continue;
-  autoFixed[kind]=true;fixTool(kind,null);
- }
-}
 function toolFixRow(kind,data){
  const row=$(kind+'-row');if(!row)return;row.classList.add('wide');
  const text=document.createElement('span'),note=document.createElement('small');text.append(row.firstChild);row.prepend(text);
@@ -275,10 +264,12 @@ async function refresh(){try{
  const ok=key=>key==='node'?(data.node_youtube??data.node):data[key];
  // a fix that failed before this page opened says why (and isn't started again by itself)
  for(const kind of ['ffmpeg','node']){const last=data.fixes?.[kind];if(!ok(kind)&&last?.state==='failed'&&!fixing[kind]&&!fixFailed[kind])fixFailed[kind]=(last.message||'It couldn’t finish.')+' Press Fix it to try again.';}
- autoFix(data,ok);                                      // before the rows: they show Downloading…, no Fix it
  $('checks').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="check '+(ok(key)?'ok':'')+'" id="'+key+'-row">'+label+'<b>'+toolBadge(key,ok(key))+'</b></div>').join('');
  for(const kind of ['ffmpeg','node'])if(!ok(kind))toolFixRow(kind,data);
- if(!data.browser){const row=[...$('checks').querySelectorAll('.check')].find(r=>r.textContent.startsWith('Graphics browser'));if(row){const note=document.createElement('small');note.textContent=data.browser_reason||'The graphics browser needs installing.';const fix=document.createElement('button');fix.type='button';fix.className='link-button';fix.id='fix-browser';fix.textContent='Fix it';fix.onclick=()=>fixBrowser(fix,note);row.append(note,fix);}}
+ // laid out like the FFmpeg and Node rows (a wide row, the note and button under the label: in the narrow row the
+ // label broke letter by letter); a full disk, too many open files or a busy computer isn't mended by reinstalling,
+ // so that row offers Check again once it's sorted
+ if(!data.browser){const row=$('browser-row');if(row){row.classList.add('wide');const text=document.createElement('span');text.append(row.firstChild);row.prepend(text);const note=smallNote(text,data.browser_reason||'The graphics browser needs installing.');const fix=document.createElement('button');fix.type='button';fix.className='link-button';if(data.can_fix?.browser===false){fix.id='browser-again';fix.textContent='Check again';fix.onclick=()=>{fix.disabled=true;fix.textContent='Checking…';refresh();};}else{fix.id='fix-browser';fix.textContent='Fix it';fix.onclick=()=>fixBrowser(fix,note);}text.append(fix);}}
  renderSetupRows(data);
  accounts=data.model_accounts||{};savedProviders=data.providers||{};
  $('version').textContent='ChannelRecipe Studio '+(String(data.local_version||'').match(/admin\.(\d+)$/)?.[1]||data.local_version||'');$('update').hidden=!newerRelease(data.account?.version,data.local_version)||data.readiness?.ready!==true;renderWalkChapters();

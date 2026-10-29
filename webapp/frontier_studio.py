@@ -36,15 +36,15 @@ from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.110"
+VERSION = "5.3-admin.111"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.110.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.111.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104", "5.3-admin.105", "5.3-admin.106", "5.3-admin.107", "5.3-admin.108", "5.3-admin.109", "5.3-admin.110")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104", "5.3-admin.105", "5.3-admin.106", "5.3-admin.107", "5.3-admin.108", "5.3-admin.109", "5.3-admin.110", "5.3-admin.111")
 # Releases that may also START or RESUME a video: every release from MIN_SUPPORTED_RELEASE to the newest. A new release
 # never forces an update (2026-10-24: with "the newest two", five releases in one night made creators stop their work
 # to update, twice). Raise the minimum only on purpose, when older Studios can no longer work with this server, and say
@@ -404,6 +404,13 @@ def status(user: dict) -> dict:
             "production_workflow": workflow_contract(),
             # the releases that may start a new video (the Studio's readiness accepts any of them)
             "supported_versions": list(SUPPORTED_RELEASES)}
+
+
+def download_name() -> str:
+    """The studio ZIP's file name, which Windows' Extract All also gives the folder it unpacks into (the Studio's own
+    "ChannelRecipe studio" folder sits inside it): short, so the Studio folder keeps room under Windows' 260-character
+    path limit (cr_paths), and different from the inner folder's name. No "admin" (owner, 2026-10-27)."""
+    return "ChannelRecipe-%s.zip" % VERSION.rsplit(".", 1)[1]
 
 
 def release_ready() -> bool:
@@ -1504,7 +1511,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
             milestones.record(user["id"], milestones.DOWNLOADED)
         if not release_ready():
             raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
-        return stream_private(request, RELEASE_KEY, "ChannelRecipe-local-studio-%s.zip" % VERSION,
+        return stream_private(request, RELEASE_KEY, download_name(),
                               {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     # Kie's finished files (voice, pictures, music, 3D models) for a Studio whose network can't reach Kie's file host:
@@ -1662,7 +1669,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
             return stream_private(request, SHORTS_PACK_KEY, "shorts-assets.zip", headers)
         if not release_ready():
             raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
-        return stream_private(request, RELEASE_KEY, "ChannelRecipe-local-studio-%s.zip" % VERSION, headers)
+        return stream_private(request, RELEASE_KEY, download_name(), headers)
 
     @router.get("/shorts-pack/file")
     def shorts_pack_file(request: Request, user=Depends(access)):
@@ -1675,7 +1682,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
         headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
         milestones.record(user["id"], milestones.DOWNLOADED)
         local = os.getenv("FRONTIER_RELEASE_PATH", "")
-        filename = "ChannelRecipe-local-studio-%s.zip" % VERSION
+        filename = download_name()
         if local and Path(local).is_file():
             return FileResponse(local, media_type="application/zip", filename=filename, headers=headers)
         from webapp import storage

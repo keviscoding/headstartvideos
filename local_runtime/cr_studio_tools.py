@@ -267,7 +267,33 @@ def style_card(row: dict, thumb: str = "") -> dict:
             # burned-in captions by the style's own design (false: none, like its channel; captions=true adds them)
             "captions": row.get("captions", True) is not False,
             # its recurring character (options.character / character_picture change it for a video)
-            "character": one_line(row.get("character"), 300) if isinstance(row.get("character"), str) else ""}
+            "character": one_line(row.get("character"), 300) if isinstance(row.get("character"), str) else "",
+            # the language its videos speak by its own file (options.language makes one in another)
+            "language": language_name(row.get("language") or "en")}
+
+
+def language_name(lang_id) -> str:
+    import cr_language                     # standard library only, like this file
+    return cr_language.name(lang_id)
+
+
+def language_of(cat: dict, row: dict, options: dict) -> str:
+    """The language these videos speak, as an id: options.language (a name like Spanish, its own name like Español,
+    or a code like es), else the one the creator chose last in Create (Studio's default), else the style's own."""
+    import cr_language
+    try:
+        asked = cr_language.clean(options.get("language"), {"language": row.get("language") or "en"})
+    except ValueError as error:
+        raise Refused(str(error)) from None
+    if kind(row) == "short" and not row.get("any_language"):
+        # a ready-made Shorts recipe whose pipeline doesn't take a language yet speaks its own (cr_language.SHORTS_NOTE):
+        # asked for another, it says so before anything starts; Studio's default for other videos never applies to it
+        own = row.get("language") or "en"
+        if asked and asked != own:
+            raise Refused(cr_language.shorts_refusal({"format": "short", "language": own}, asked,
+                                                     row.get("label") or "This Shorts recipe", bool(row.get("ranking"))))
+        return own
+    return asked or cat.get("default_language") or row.get("language") or "en"
 
 
 def new_pick() -> dict:
@@ -549,6 +575,10 @@ def tool_setup_check(args):
             "setup_page": link("/cr-setup"),
             "graphics_browser": {"ready": bool(status.get("browser")), "why": status.get("browser_reason") or "",
                                  "fix": "" if status.get("browser") else
+                                 # a full disk, too many open files or a busy computer: a reinstall won't help
+                                 "Don't call fix_graphics_browser: reinstalling won't help. Tell the creator what "
+                                 "'why' says (never delete their files for them), then call setup_check again."
+                                 if (status.get("can_fix") or {}).get("browser") is False else
                                  "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
                                  "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
             "video_tools": tool_summary(status, "ffmpeg", "fix_ffmpeg"),
@@ -705,6 +735,11 @@ def tool_list_styles(args):
         thumbs = list(pool.map(thumbnail, rows))
     cards = [style_card(r, t) for r, t in zip(rows, thumbs)]
     out = {"count": len(cards), "styles": cards}
+    if cat.get("languages"):
+        # what make_videos options.language can be, and the one Create starts at (the creator's last choice)
+        out["languages"] = [l.get("name") for l in cat["languages"] if isinstance(l, dict)]
+        out["default_language"] = language_name(cat.get("default_language")) if cat.get("default_language") else \
+            "each style's own (its card's language)"
     try:
         pick = new_pick()
         out.update(pick_id=pick["pick_id"], gallery_url=link("/cr-gallery?pick=" + pick["pick_id"]),
@@ -753,8 +788,9 @@ def where_of(args) -> str:
     return where
 
 
-def video_payload(row: dict, titles: list, minutes: int, features: dict, options: dict) -> dict:
-    """What the Studio page's Create button sends (cr_workspace.js payload()), with its defaults."""
+def video_payload(row: dict, titles: list, minutes: int, features: dict, options: dict, language: str = "") -> dict:
+    """What the Studio page's Create button sends (cr_workspace.js payload()), with its defaults. language: the
+    language the videos speak (language_of)."""
     if row.get("panels"):
         raise Refused(f"{row.get('label')} reads your own manga panels, which you choose on the Studio page: "
                       f"open_in_studio(page='create').")
@@ -778,6 +814,8 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
          "threed_quick": options.get("quicker_3d_review") is True and bool((features or {}).get("threed"))}
     if row.get("frame_check") and isinstance(options.get("frame_check"), bool):
         p["frame_check"] = options["frame_check"]                   # a coded style's frame check, for this video only
+    if language:
+        p["language"] = language            # its script, voice, captions and words on screen (cr_language)
     if p["script"] and len(titles) > 1:
         raise Refused("Your own script goes with one title.")
     if kind(row) == "short":
@@ -806,8 +844,15 @@ def character_choice(row: dict, options: dict, where: str) -> tuple:
     picture = str(options.get("character_picture") or "").strip()
     if not (words or picture):
         return "", ""
-    if kind(row) == "short":
-        raise Refused("Shorts keep their own host. A character of your own works in the long-video styles.")
+    use = row.get("character_picture") or {}
+    if kind(row) == "short" and use.get("use") != "avatar":
+        raise Refused("Shorts keep their own host. A character of your own works in the long-video styles"
+                      " and Roblox Story Shorts (a picture of your avatar).")
+    if kind(row) == "short" and words and not picture:
+        raise Refused("Roblox Story Shorts build the main character from a picture of their avatar: give "
+                      "character_picture (words alone go in extra).")
+    if use.get("use") == "none" and (words or picture):
+        raise Refused(use.get("say") or "This style can't use a character of your own.")
     if row.get("visual_policy") == "reference_only":
         raise Refused(f"{row.get('label') or row['name']} draws every scene with its learned animation kit, so its "
                       "character can't be changed for one video.")
@@ -827,6 +872,9 @@ def character_choice(row: dict, options: dict, where: str) -> tuple:
 def character_note(row: dict, options: dict) -> str:
     """What a new character adds to a quote: one drawn picture when the style carries a character picture."""
     words, picture = str(options.get("character") or "").strip(), str(options.get("character_picture") or "").strip()
+    use = row.get("character_picture") or {}
+    if (words or picture) and use.get("use") in ("avatar", "partial"):
+        return str(use.get("say") or "")                       # a 3D cast: what the picture will and won't do
     if picture:
         return "Your picture replaces the style's character in every picture of these videos."
     if words and row.get("character_image"):
@@ -867,6 +915,10 @@ def tool_make_videos(args):
     minutes = 1 if kind(row) == "short" else max(1, min(int(args.get("minutes") or 10), 60))
     features = features_for(row, options.get("features"))
     words, picture = character_choice(row, options, where)
+    language = language_of(cat, row, options)
+    if where == "studio_cloud" and language != (row.get("language") or "en"):
+        raise Refused(f"A video in {language_name(language)} renders on this computer for now: use "
+                      "where='this_computer'.")
     if where == "this_computer" and args.get("new_attempt") is not True:
         early = video_payload(row, titles, minutes, features, options)
         try:
@@ -889,7 +941,7 @@ def tool_make_videos(args):
         raise Refused(f"Your Studio Cloud balance is ${q['cloud']['balance_usd']:.2f} and these videos reserve up to "
                       f"${q['most_reserved_usd']:.2f}. Top up at {q['cloud']['topup_url']}, or make them on this "
                       "computer.")
-    payload = apply_character(video_payload(row, titles, minutes, features, options), words, picture)
+    payload = apply_character(video_payload(row, titles, minutes, features, options, language), words, picture)
     if args.get("new_attempt") is True:
         payload["new_attempt"] = True                    # the creator insisted on a brand-new video
     if options.get("carry_on_after_usage_reset") is True:
@@ -931,6 +983,7 @@ def tool_make_videos(args):
             f"They're in Studio's queue behind {before} video{'s' if before != 1 else ''} and start by themselves, one "
             "at a time: the creator doesn't need to wait. " if before else "Studio makes them one at a time. ")
     return {"started": True, "where": "this_computer", "videos": queued, "quote": q["summary"],
+            "language": language_name(language),
             # what Studio said with the start (a disk with little to spare; switched to Claude Code): tell them
             **({"tell_them": result["warnings"]} if result.get("warnings") else {}),
             "next": said + ("" if held else "Check with progress(id) every few minutes (don't wait in a loop); Studio "
@@ -1275,7 +1328,9 @@ def look_progress(look_id: str) -> dict:
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
                         "with look_id, a style name, an example title (title_ideas has a few from the channel's own "
                         "titles to offer; they can change any) and their answers. The 'made' question decides "
-                        "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
+                        "how the videos are made, so ask it first, in plain words; a 'kit' question (asked when the "
+                        "look is partly 3D) decides whether the code draws in 2D or builds real 3D: ask it next and never "
+                        "answer it for them. Written in code (recommended) has "
                         "their Claude Code write the channel's own renderer during the study (usually 10 to 25 "
                         "minutes of their Claude usage for the whole study, at most 46). Its videos then cost their "
                         "voice, plus at most a "
@@ -1287,10 +1342,15 @@ def look_progress(look_id: str) -> dict:
     return out
 
 
-SHORTS_NOTE = ("These references are Shorts. Written in code (the default answer to 'made'), the style makes vertical "
-               "Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9) "
-               "videos for now: tell the creator before the paid study (their Shorts recipes, similar_styles "
-               "kind='short', make vertical Shorts too).")
+# a video drawn by its style's own code has no timeline (cr_animated2d.NO_TIMELINE): never offer it one
+NO_TIMELINE = ("Drawn by its style's own animation code, so the timeline can't edit it (each minute is one whole "
+               "animation). To change how the style's videos look, use Improve this style on its study page or "
+               "style_lab; to change this video, make it again with the changes in its brief.")
+SHORTS_NOTE = ("These references are Shorts. Either way the style makes vertical Shorts: written in code (the default "
+               "answer to 'made') with the channel's own captions; instead of code, with Studio's pictures drawn tall, "
+               "captions above the Shorts buttons, and any graphics made for wide screens (maps, headlines, 3D "
+               "scenes) whole across the middle of the frame: tell the creator before the paid study (their Shorts "
+               "recipes, similar_styles kind='short', make vertical Shorts too).")
 SIMILAR_NEXT = ("similar_styles are the styles they already have that come closest (suggestions only, never a reason not "
                 "to study): before the paid study, mention them in a line each. They can use one now (make_videos with its "
                 "id), try a few seconds of one on their topic first (style_sample: try_first.cost_usd on their own "
@@ -1333,6 +1393,11 @@ def clone_progress(operation: str) -> dict:
             out["next"] = ("Read what_to_tell_them to the creator. If they would rather have pictures in the channel's "
                            "look, open the page (open_in_studio page='style_clone' id=<this op id>) and press Use "
                            "pictures instead; never choose for them.")
+        if renderer.get("can_use_animation"):
+            out["animation"]["can_use_animation"] = True
+            out["next"] = ("This style draws pictures because Use pictures instead was chosen; its animation is kept. If "
+                           "they want it back, open the page (open_in_studio page='style_clone' id=<this op id>) and "
+                           "press Use Claude's animation again; never choose for them.")
     return out
 
 
@@ -1344,7 +1409,8 @@ def tool_list_videos(args):
         "made": time.strftime("%Y-%m-%d %H:%M", time.localtime(r.get("mtime") or 0)),
         "megabytes": round((r.get("size") or 0) / 1e6, 1), "file": r.get("path") or "",
         "watch_url": link("/f/video/" + _quote_path(r["slug"])),
-        "project_url": link("/editor/" + _quote_path(r["slug"]))} for r in rows[:limit]]}
+        **({"no_timeline": NO_TIMELINE} if r.get("coded") else
+           {"project_url": link("/editor/" + _quote_path(r["slug"]))})} for r in rows[:limit]]}
     if args.get("include_cloud", True) is not False:
         try:
             cloud = cloud_progress()
@@ -1526,14 +1592,14 @@ def tool_edit_style(args):
     same_studio()
     style = _learned_style(args.get("style"))
     keys = ("name", "tagline", "description", "script_notes", "director_notes", "character", "forget_character_picture",
-            "features_on", "pictures_per_min", "subtitles")
+            "features_on", "pictures_per_min", "subtitles", "language")
     changes = {k: args[k] for k in keys if k in args}
     path = "/cr-style-clone/style/" + _quote_path(style)
     d = call("POST", path, {"changes": changes}, timeout=60) if changes else call("GET", path, timeout=30)
     features = d.get("features") or {}
     study = d.get("study") or {}
     out = {k: d.get(k) for k in ("style", "name", "tagline", "description", "script_notes", "director_notes", "character",
-                                 "has_character_picture", "subtitles", "versions_kept")}
+                                 "has_character_picture", "subtitles", "language", "versions_kept")}
     out.update(saved=bool(d.get("saved")), pictures_per_min=d.get("pictures"),
                options={"offered": [f.get("key") for f in features.get("offered") or []], "on": features.get("on") or []},
                study_again={"example_title": study.get("title") or "", "brief": study.get("brief") or "",
@@ -1726,7 +1792,11 @@ _OPTIONS = {"type": "object", "description": (
     "drawn in code: false skips the check where Claude looks at each minute's frames before they are drawn and "
     "re-plans it once when it finds something clear; default Studio's setting, quote's frame_check says its time), "
     "ranking {ranks 3-10, narrator_lines, vine_booms, meme_sounds full|light|off, "
-    "punch_ins, captions} for Ranking Shorts. character: words for the main character who appears in every picture "
+    "punch_ins, captions} for Ranking Shorts. language: the language the video speaks, its script, voice, captions "
+    "and words on screen (a name like Spanish, its own name like Español, or a code like es; list_styles' languages "
+    "has them all; default: the one the creator chose last in Create, else the style's own, its card's language). "
+    "Voice samples in Choose voice are in English; the voice reads the video in its language. "
+    "character: words for the main character who appears in every picture "
     "(age, hair, face, clothes, one recognisable detail); they replace the style's own character for these videos, and "
     "on a style with a character picture Studio draws the new one once in the style's look (one picture, about $0.02). "
     "character_picture: the path of a picture of the character on this computer (PNG, JPG or WebP); it replaces the "
@@ -1893,7 +1963,8 @@ TOOLS = {
     "edit_style": (tool_edit_style, "Show or change one of the creator's learned styles (from clone_style): its name, "
                    "tagline, description, creative direction for the script (script_notes) and for the pictures and "
                    "edit (director_notes), its recurring character, which options are on (features_on), pictures a "
-                   "minute and subtitles. Pass only what changes; with none it shows the style. Free: no study, no "
+                   "minute, subtitles and its language (the one its videos speak unless a video asks for another, "
+                   "for example Spanish for a Spanish channel). Pass only what changes; with none it shows the style. Free: no study, no "
                    "money; the version before is kept. Its study_again has what to reuse to study it again with other "
                    "videos (a new style; this one stays).",
                    _schema({"style": {"type": "string", "description": "A learned style's id or name (list_styles kind='mine')."},
@@ -1903,7 +1974,9 @@ TOOLS = {
                             "director_notes": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
                             "character": {"type": "string"}, "forget_character_picture": {"type": "boolean"},
                             "features_on": {"type": "array", "items": {"type": "string"}},
-                            "pictures_per_min": {"type": "number"}, "subtitles": {"type": "boolean"}}, ["style"]),
+                            "pictures_per_min": {"type": "number"}, "subtitles": {"type": "boolean"},
+                            "language": {"type": "string", "description": "A language name (Spanish), its own name "
+                                         "(Español) or a code (es); list_styles' languages has them all."}}, ["style"]),
                    {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
     "style_sample": (tool_style_sample, "Try a style first: about 5 seconds of an installed style on the creator's "
                      "topic (two pictures drawn as its videos draw them, one line read by their voice, a slow move "
@@ -1918,8 +1991,7 @@ TOOLS = {
                     "style_name, an example_title and the creator's answers to the look's questions. accept_medium: "
                     "only after the creator read and accepted the medium_gap this returns (what Studio can't make yet). "
                     "budget_minutes: the Claude study budget (15-30, default 22); raise it only when a study stopped "
-                    "because its time ran out. A style learned from Shorts makes regular 16:9 videos for now, not "
-                    "vertical Shorts.",
+                    "because its time ran out. A style learned from Shorts makes vertical Shorts.",
                     _schema({"look_id": {"type": "string"}, "style_name": {"type": "string"},
                              "example_title": {"type": "string"},
                              "answers": {"type": "object", "additionalProperties": {"type": "string"}},

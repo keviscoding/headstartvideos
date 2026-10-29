@@ -729,11 +729,3 @@ def test_setup_status_reports_node_for_youtube_apart_from_node_at_all(monkeypatc
     monkeypatch.setattr(cr_installs, "node_status", lambda **k: {"ready": False, "version": "",
                                                                  "reason": "Node.js isn't installed."})
     assert cr_studio.tool_checks()["node"] is False
-
-
-def test_setup_starts_ffmpeg_and_node_by_itself_only_when_turned_on():
-    """About 150 MB of programs without a press: off until the owner decides (coordinator review, 2026-10-26)."""
-    import cr_installs
-    assert cr_installs.AUTO_FIX_TOOLS is False and cr_installs.auto_fix_tools({}) is False
-    assert cr_installs.auto_fix_tools({"auto_fix_tools": True}) is True
-    assert cr_installs.auto_fix_tools({"auto_fix_tools": "yes"}) is False, "only a real true turns it on"

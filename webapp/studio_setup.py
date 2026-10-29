@@ -2,7 +2,8 @@
 
 A connected Studio sends what its setup still lacks (local_runtime/cr_setup_report.py): the keys of the setup checks
 that don't pass yet (ffmpeg, node, claude, models, network…), whether setup is ready, the computer's family (windows,
-mac or linux) and the Studio's version. Nothing else: no names, paths, keys or messages. One row per account keeps its
+mac or linux), the Studio's version and, for a check that knows it, a short reason code (the graphics browser's
+"disk_full", say). Nothing else: no names, paths, keys or messages. One row per account keeps its
 latest report; GET /api/admin/activation counts them for the customers who haven't finished a first video, so the team
 sees which check stops people instead of waiting for Discord.
 """
@@ -13,7 +14,7 @@ import re
 import threading
 import time
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from webapp import database as db
 
@@ -33,6 +34,7 @@ class SetupReport(BaseModel):
     failing: list[str] = Field(default_factory=list, max_length=64)
     os: str = "other"
     version: str = Field(default="", max_length=40)
+    why: dict = Field(default_factory=dict)         # {failing check: reason code}, e.g. {"browser": "disk_full"}
 
     @field_validator("failing")
     @classmethod
@@ -48,6 +50,13 @@ class SetupReport(BaseModel):
     @classmethod
     def _version(cls, value):
         return value if re.fullmatch(r"[\w.\-]{0,40}", value or "") else ""
+
+    @model_validator(mode="after")
+    def _why(self):
+        """Codes only, and only for checks that fail: anything else (a message, a path) is dropped."""
+        self.why = {k: v for k, v in sorted(self.why.items())
+                    if k in self.failing and isinstance(v, str) and KEY.match(v)}
+        return self
 
 
 def _key():
@@ -69,6 +78,7 @@ def initialize():
                 os TEXT NOT NULL DEFAULT 'other', version TEXT NOT NULL DEFAULT '',
                 first_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL,
                 first_ready_at DOUBLE PRECISION)""")
+            db._ensure_column(conn, "studio_setup_reports", "why_json", "TEXT NOT NULL DEFAULT '{}'")
             conn.execute(db._q("DELETE FROM studio_setup_reports WHERE updated_at < ?"), (time.time() - MAX_DAYS * 86400,))
         _ready.add(key)
 
@@ -80,19 +90,21 @@ def record(user_id: int, report: SetupReport, now: float | None = None) -> None:
     failing = json.dumps(report.failing)
     with db._conn() as conn:
         conn.execute(db._q("""INSERT INTO studio_setup_reports
-            (user_id, ready, failing_json, os, version, first_at, updated_at, first_ready_at) VALUES (?,?,?,?,?,?,?,?)
+            (user_id, ready, failing_json, os, version, first_at, updated_at, first_ready_at, why_json)
+            VALUES (?,?,?,?,?,?,?,?,?)
             ON CONFLICT(user_id) DO UPDATE SET ready=excluded.ready, failing_json=excluded.failing_json,
-            os=excluded.os, version=excluded.version, updated_at=excluded.updated_at,
+            os=excluded.os, version=excluded.version, updated_at=excluded.updated_at, why_json=excluded.why_json,
             first_ready_at=COALESCE(studio_setup_reports.first_ready_at, excluded.first_ready_at)"""),
                      (int(user_id), int(report.ready), failing, report.os, report.version, now, now,
-                      now if report.ready else None))
+                      now if report.ready else None, json.dumps(report.why)))
 
 
 def stuck(user_ids) -> dict:
     """For these accounts (customers without a finished first video): how many Studios report setup not ready, by the
-    check that fails, by computer family and by version. Counts only."""
+    check that fails, by its reason code where Studio sends one ("browser:disk_full"), by computer family and by
+    version. Counts only."""
     ids = sorted({int(u) for u in user_ids})
-    out = {"reporting": 0, "not_ready": 0, "by_check": {}, "by_os": {}, "by_version": {}}
+    out = {"reporting": 0, "not_ready": 0, "by_check": {}, "by_reason": {}, "by_os": {}, "by_version": {}}
     if not ids:
         return out
     initialize()
@@ -100,7 +112,8 @@ def stuck(user_ids) -> dict:
     with db._conn() as conn:
         for start in range(0, len(ids), 500):
             chunk = ids[start:start + 500]
-            rows += conn.execute(db._q("SELECT ready, failing_json, os, version FROM studio_setup_reports WHERE user_id IN ("
+            rows += conn.execute(db._q("SELECT ready, failing_json, os, version, why_json FROM studio_setup_reports "
+                                       "WHERE user_id IN ("
                                        + ",".join("?" * len(chunk)) + ")"), tuple(chunk)).fetchall()
     for r in rows:
         out["reporting"] += 1
@@ -109,7 +122,10 @@ def stuck(user_ids) -> dict:
         out["not_ready"] += 1
         for k in json.loads(r["failing_json"] or "[]"):
             out["by_check"][k] = out["by_check"].get(k, 0) + 1
+        for k, code in json.loads(r["why_json"] or "{}").items():
+            out["by_reason"][f"{k}:{code}"] = out["by_reason"].get(f"{k}:{code}", 0) + 1
         out["by_os"][r["os"]] = out["by_os"].get(r["os"], 0) + 1
         out["by_version"][r["version"] or "?"] = out["by_version"].get(r["version"] or "?", 0) + 1
     out["by_check"] = dict(sorted(out["by_check"].items(), key=lambda kv: (-kv[1], kv[0])))
+    out["by_reason"] = dict(sorted(out["by_reason"].items(), key=lambda kv: (-kv[1], kv[0])))
     return out

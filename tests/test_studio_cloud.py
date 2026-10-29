@@ -219,7 +219,9 @@ def test_only_what_the_cloud_can_make_goes_there(studio):
     assert "Fast mode" in b({"style": "documentary", "render_backend": "manimgx"})
     p = studio.cloud.farm_payload({"title": "T", "style": "documentary", "minutes": 8, "steps": ["video", "thumbnail"],
                                    "byo_audio": "", "desc": True, "features": {"youtube": True}})
-    assert p == {"title": "T", "style": "documentary", "minutes": 8, "features": {"youtube": True}, "thumb": True}
+    assert p == {"title": "T", "style": "documentary", "minutes": 8, "features": {"youtube": True}, "thumb": True,
+                 "cr_run_spec": {"style": "documentary", "minutes": 8, "features": {"youtube": True},
+                                 "meta": {"chapters": 0, "sources": 0}}}
 
 
 def test_starting_prepares_here_then_starts_the_machine_through_the_studios_routes(studio):
@@ -391,6 +393,7 @@ def test_studio_cloud_takes_a_few_titles_and_names_videos_readably(studio, monke
     monkeypatch.setitem(studio.cloud.TASK, "state", "idle")
     studio.cloud.install_routes(SimpleNamespace(app=app), "tok", studio.home)
     c = app.test_client()
+    monkeypatch.setattr(studio.cloud, "quote", lambda p, home=None: {"available": True, "short_by_usd": 0})
     ok = c.post("/cr-cloud/start", json={"title": "One\nTwo\nThree", "style": "documentary"},
                 headers={"X-CR-Local-Token": "tok"})
     assert ok.status_code == 202 and len(started) == 1
@@ -487,3 +490,157 @@ def test_stopping_a_machine_ends_the_farms_wait(studio, monkeypatch):
     assert pods.terminate("cj_1")
     status = json.loads(store["status/a.json"])
     assert status["state"] == "failed", "the farm's loop sees the end and the Studio is free again"
+
+
+class Priced:
+    """channelrecipe.com's quote and top-up routes."""
+    def __init__(self, each_most=84, each_expected=37):
+        self.sent, self.each_most, self.each_expected = [], each_most, each_expected
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        self.sent.append((url, json, headers))
+        if url.endswith("/quote"):
+            body = {"machine": json["machine"], "label": "Cloud machine (16 vCPU)", "cents_per_min": 2,
+                    "expected_minutes": 37, "max_minutes": 84, "expected_cents": self.each_expected,
+                    "max_cents": self.each_most}
+        else:
+            body = {"url": f"https://checkout.stripe.test/{json['usd']}"}
+        return SimpleNamespace(ok=True, status_code=200, json=lambda: body, text="")
+
+
+def test_the_cloud_quote_says_what_a_batch_reserves_and_the_top_up_that_covers_it(studio, monkeypatch):
+    monkeypatch.setattr(studio.cloud, "status", lambda force=False, home=None: {
+        "available": True, "balance_usd": 0.2, "chunks_usd": [5, 10, 25, 50], "topup_url": "https://cr.test/app"})
+    http = Priced(each_most=168)
+    q = studio.cloud.quote({"title": "One\nTwo", "style": "documentary", "minutes": 10}, studio.home, http=http)
+    assert http.sent[0][0] == "https://cr.test/api/studio/cloud/quote" and http.sent[0][1] == {"minutes": 10,
+                                                                                               "machine": "cpu"}
+    assert http.sent[0][2] == {"Authorization": "Bearer cr_mcp_abc"}
+    assert (q["titles"], q["most_reserved_usd"], q["short_by_usd"], q["topup_usd"]) == (2, 3.36, 3.16, 5)
+    assert "top up first" in studio.cloud.short_message(q).lower() and "nothing has started" in \
+        studio.cloud.short_message(q)
+    big = studio.cloud.quote({"titles": 5, "style": "3d", "minutes": 20}, studio.home, http=Priced(each_most=960))
+    assert big["short_by_usd"] == 47.8 and big["topup_usd"] == 50, "the smallest chunk that covers it"
+    assert studio.cloud.quote({"style": "folio"}, studio.home, http=http)["blocked"], "a local-only recipe isn't priced"
+
+
+def test_a_balance_that_cant_cover_the_batch_starts_nothing(studio, monkeypatch):
+    from flask import Flask
+    app = Flask(__name__)
+    started = []
+    monkeypatch.setattr(studio.cloud.threading, "Thread",
+                        lambda target=None, args=(), **kw: SimpleNamespace(start=lambda: started.append(args)))
+    monkeypatch.setattr(studio.cloud, "active", lambda home=None: True)
+    monkeypatch.setitem(studio.cloud.TASK, "state", "idle")
+    balance = {"usd": 0.0}
+    monkeypatch.setattr(studio.cloud, "status", lambda force=False, home=None: {
+        "available": True, "balance_usd": balance["usd"], "chunks_usd": [5, 10, 25, 50]})
+    monkeypatch.setattr(studio.cloud, "requests", SimpleNamespace(post=Priced().post,
+                                                                  RequestException=Exception))
+    studio.cloud.install_routes(SimpleNamespace(app=app), "tok", studio.home)
+    c = app.test_client()
+    body = {"title": "One\nTwo", "style": "documentary", "minutes": 10}
+    r = c.post("/cr-cloud/start", json=body, headers={"X-CR-Local-Token": "tok"})
+    assert r.status_code == 402 and started == [], "no script, voice or picture is made for machines that can't start"
+    assert r.get_json()["top_up"] and r.get_json()["quote"]["topup_usd"] == 5
+    q = c.post("/cr-cloud/quote", json=body, headers={"X-CR-Local-Token": "tok"}).get_json()
+    assert q["short_by_usd"] == 1.68 and q["expected_usd"] == 0.74, "Create shows the same numbers first"
+    balance["usd"] = 1.68
+    assert c.post("/cr-cloud/start", json=body, headers={"X-CR-Local-Token": "tok"}).status_code == 202
+    assert len(started) == 1
+    assert c.post("/cr-cloud/quote", json=body, headers={"X-CR-Local-Token": "nope"}).status_code == 403
+
+
+def test_a_top_up_page_is_made_with_the_studios_account_connection(studio, monkeypatch):
+    from flask import Flask
+    app = Flask(__name__)
+    http = Priced()
+    monkeypatch.setattr(studio.cloud, "status", lambda force=False, home=None: {"available": True,
+                                                                                 "chunks_usd": [5, 10, 25, 50]})
+    monkeypatch.setattr(studio.cloud, "requests", SimpleNamespace(post=http.post, RequestException=Exception))
+    studio.cloud.install_routes(SimpleNamespace(app=app), "tok", studio.home)
+    c = app.test_client()
+    r = c.post("/cr-cloud/topup", json={"usd": 10}, headers={"X-CR-Local-Token": "tok"})
+    assert r.status_code == 200 and r.get_json()["url"] == "https://checkout.stripe.test/10"
+    assert http.sent == [("https://cr.test/api/studio/cloud/topup", {"usd": 10}, {"Authorization": "Bearer cr_mcp_abc"})]
+    assert c.post("/cr-cloud/topup", json={"usd": 7}, headers={"X-CR-Local-Token": "tok"}).status_code == 400
+    assert c.post("/cr-cloud/topup", json={"usd": 10}, headers={"X-CR-Local-Token": "x"}).status_code == 403
+
+
+def test_a_learned_styles_own_files_go_to_the_machine_but_never_videos(studio):
+    farm_skip = lambda rel: any(p in ("learned", ".DS_Store") for p in rel.split("/")) or rel.endswith(".zip")
+    keep = studio.cloud.ship_learned(farm_skip)
+    assert not keep("assets/styles/learned/cr_clone_1/renderer-v3.js"), "a coded clone's renderer"
+    assert not keep("assets/styles/learned/cr_clone_1/style.jpg") and not keep("learned/kit_a/kit/scenes.js")
+    assert keep("learned/kit_a/reference.mp4") and keep("assets/styles/learned/x/clip.MOV"), "videos stay here"
+    assert keep("learned/kit_a/.DS_Store") and keep("assets/styles/learned/x/old.zip"), "the farm's other rules hold"
+    assert keep("output/learned/x.json"), "elsewhere the farm's rule is unchanged"
+    home = studio.home
+    (home / "assets/styles/learned/cr_clone_1").mkdir(parents=True)
+    (home / "assets/styles/learned/cr_clone_1/renderer-v1.js").write_text("draw()")
+    (home / "assets/styles/learned/cr_clone_1/study.mp4").write_bytes(b"0")
+    files = [rel for rel, _ in studio.cloud.overlay_files(home, keep)]
+    assert "assets/styles/learned/cr_clone_1/renderer-v1.js" in files
+    assert "assets/styles/learned/cr_clone_1/study.mp4" not in files
+
+
+def test_vertical_and_coded_3d_styles_get_their_size_and_the_gpu(studio, monkeypatch):
+    looks = {"tall": {"look": {"aspect": "9:16", "visuals": "cr_animated2d"}},
+             "coded3d": {"look": {"visuals": "cr_animated3d"}},
+             "old3d": {"look": {"visuals": "cr_animated2d", "animated2d": {"dims": 3}}},
+             "documentary": {"look": {}}}
+    monkeypatch.setattr(studio.cloud, "_STUDIO", [SimpleNamespace(styles=SimpleNamespace(STYLES=looks))])
+    monkeypatch.setattr(studio.cloud, "_THREED", [])
+    assert studio.cloud.video_size("tall") == {"VIDEO_W": "1080", "VIDEO_H": "1920"}
+    assert studio.cloud.video_size("documentary") == {} and studio.cloud.video_size("nope") == {}
+    assert studio.cloud.wants_gpu({"style": "coded3d"}) and studio.cloud.wants_gpu({"style": "old3d"})
+    assert not studio.cloud.wants_gpu({"style": "tall"}) and not studio.cloud.wants_gpu({"style": "documentary"})
+
+    store = {"jobs/a.json": json.dumps({"minutes": 1, "style": "tall"}).encode()}
+    monkeypatch.setattr(studio.cloud.requests, "Session", lambda: Http(store))
+    sent = []
+
+    class Api:
+        def request(self, method, url, json=None, headers=None, timeout=None):
+            sent.append(json)
+            return SimpleNamespace(status_code=200, json=lambda: {"id": "cj_1", "slug": "a", "status": "running"})
+    monkeypatch.setattr(studio.cloud.Relay, "ensure", classmethod(lambda cls, home=None: None))
+    monkeypatch.setattr(studio.cloud, "status", lambda force=False, home=None: {"available": True})
+    studio.cloud.CloudPods(home=studio.home, session=Api()).create(name="a", env={"FARM_JOB_KEY": "jobs/a.json"})
+    assert sent[0]["env"]["VIDEO_W"] == "1080" and sent[0]["env"]["VIDEO_H"] == "1920", "a 9:16 style renders 9:16"
+
+
+def test_a_cloud_videos_own_choices_reach_its_run_spec_here_and_on_the_machine(studio, monkeypatch, tmp_path):
+    from flask import Flask, jsonify, request
+    app = Flask(__name__)
+    seen, offers = {}, []
+    engine = SimpleNamespace(job_dir=lambda title, style: tmp_path / "output" / style / title.lower(),
+                             set_offer=lambda slug, plugs=0: offers.append((slug, plugs)))
+    studio_mod = SimpleNamespace(app=app, mv=engine, _threed_on=lambda style, asked=None: False)
+
+    @app.post("/api/farm/queue")
+    def api_farm_queue():
+        folder = engine.job_dir("One", "documentary")
+        seen["while_preparing"] = json.loads((folder / "run_spec.json").read_text())
+        seen["offer"] = list(offers)
+        return jsonify(queued=[{"slug": "one"}])
+    monkeypatch.setattr(studio.cloud, "_THREED", [])
+    monkeypatch.setattr(studio.cloud, "active", lambda home=None: True)
+    studio.cloud.install_routes(studio_mod, "tok", studio.home)
+    p = {"title": "One", "style": "documentary", "minutes": 4, "burn_subs": False, "frame_check": False,
+         "threed_quick": True, "desc": True, "chapters": 6, "sources": 2, "offer": "my-course", "offer_plugs": 2,
+         "cta": {"what": "My free guide", "link": "https://example.com/guide"}}
+    app.test_client().post("/api/farm/queue", json=studio.cloud.farm_payload(p))
+    spec = seen["while_preparing"]
+    assert spec["cr_captions"] == "off" and spec["cr_frame_check"] == "off" and spec["cr_threed_quick"] is True
+    assert spec["meta"] == {"chapters": 6, "sources": 2} and spec["cr_cta"]["link"] == "https://example.com/guide"
+    assert seen["offer"] == [("my-course", 2)] and offers[-1] == ("", 0), "the script sells it; the Studio is reset"
+
+    calls = []
+    machine = SimpleNamespace(job_dir=engine.job_dir, set_offer=lambda slug, plugs=0: calls.append(("offer", slug)),
+                              run_custom=lambda **kw: calls.append(("run", kw.get("meta"))))
+    studio.cloud._from_run_spec(machine)
+    machine.run_custom(title="One", style="documentary", meta=None)
+    assert calls == [("offer", "my-course"), ("run", {"chapters": 6, "sources": 2})], "the machine reads it too"
+    with pytest.raises(ValueError):
+        studio.cloud.run_spec_choices({"cta": {"what": "x", "link": "nope"}})

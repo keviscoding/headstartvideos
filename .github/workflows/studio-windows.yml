@@ -75,6 +75,13 @@ jobs:
           $claude = Join-Path "$env:RUNNER_TEMP\real claude" "node_modules\.bin\claude.cmd"
           & $claude --version
           .venv\Scripts\python tests\studio_smoke\claude_prompt_file.py $claude "$env:RUNNER_TEMP\prompt file" --report studio-smoke\prompt-file.md
+      - name: The Shorts pipelines' Claude flags reach the real Claude Code intact (tests/studio_smoke/claude_shorts_flags.py)
+        # npm's real claude.cmd from the step above, through node (cr_claude.print_command) and, reported, straight through
+        # cmd.exe; every Roblox Story Short on Windows had stopped at its director with the reason thrown away
+        if: ${{ !cancelled() }}
+        run: |
+          $claude = Join-Path "$env:RUNNER_TEMP\real claude" "node_modules\.bin\claude.cmd"
+          .venv\Scripts\python tests\studio_smoke\claude_shorts_flags.py $claude "$env:RUNNER_TEMP\shorts flags" --report studio-smoke\shorts-flags.md
       - name: Keep the reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

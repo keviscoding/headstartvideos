@@ -51,7 +51,7 @@ def workspace(browser):
                           local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}],
-                          cloud=None, cloud_starts=[], characters=[], drawn=[], active_lines=["ffmpeg: final render"],
+                          cloud=None, cloud_starts=[], topups=[], characters=[], drawn=[], active_lines=["ffmpeg: final render"],
                           claude_fails="")
     preview_lock = threading.Lock()
     image = io.BytesIO()
@@ -357,6 +357,22 @@ def workspace(browser):
     def cloud_start():
         env.cloud_starts.append(request.json)
         return jsonify(started=True), 202
+
+    @app.post("/cr-cloud/quote")
+    def cloud_quote():
+        body, balance = request.json or {}, float((env.cloud or {}).get("balance_usd") or 0)
+        gpu, titles = bool((body.get("features") or {}).get("threed")), int(body.get("titles") or 1)
+        most = round((4.8 if gpu else 1.68) * titles, 2)
+        short = round(max(0.0, most - balance), 2)
+        return jsonify(available=True, machine="gpu" if gpu else "cpu", cents_per_min=4 if gpu else 2, titles=titles,
+                       label="Cloud machine", expected_usd=round((1.6 if gpu else 0.74) * titles, 2),
+                       most_reserved_usd=most, balance_usd=balance, short_by_usd=short, chunks_usd=[5, 10, 25, 50],
+                       topup_usd=next((c for c in (5, 10, 25, 50) if c >= short), 50) if short else 0)
+
+    @app.post("/cr-cloud/topup")
+    def cloud_topup():
+        env.topups.append(request.json["usd"])
+        return jsonify(url="about:blank#checkout")
 
     @app.get("/cr-cloud/progress")
     def cloud_progress():
@@ -808,9 +824,11 @@ def test_studio_cloud_renders_on_a_channelrecipe_machine_when_chosen(workspace):
     env.open()
     page.wait_for_selector("#crw-cloud-choice:not([hidden])")
     page.locator("[data-render-on=cloud]").click()
+    page.wait_for_function("document.getElementById('crw-cloud-note').textContent.includes('usually about')")
     note = page.locator("#crw-cloud-note").inner_text()
     assert page.locator("#crw-summary-renderer").inner_text() == "Studio Cloud", "the summary says where it renders"
     assert "$1.20 an hour" in note and "Balance: $10.00" in note and "you pay only what it used" in note
+    assert "up to $1.68" in note and page.locator("#crw-cloud-topup").is_hidden(), "the balance covers it"
     page.locator("#crw-title").fill("Cloud film")
     page.locator("#crw-create").click()
     page.wait_for_function("window.CR_WORKSPACE_CLIENT.state.page==='projects'")
@@ -1224,3 +1242,38 @@ def test_create_on_the_old_api_route_offers_the_switch_without_stopping_videos(w
     assert [p["body"] for p in env.posts if p["path"] == "/cr-claude/setup"] == [{"action": "switch"}]
     assert "Switched" in page.locator("#crw-toast").inner_text()
     assert "old API route" not in page.locator("#crw-readiness").inner_text()
+
+
+def test_studio_cloud_asks_for_a_top_up_before_anything_starts(workspace):
+    """The owner (2026-10-28): a creator tops up before their first cloud video, and the choice never fails half-way."""
+    env, page = workspace, workspace.page
+    env.cloud = {"available": True, "balance_usd": 0, "machines": {"cpu": {"price_per_hr": 1.2}}}
+    env.open()
+    page.wait_for_selector("#crw-cloud-choice:not([hidden])")
+    page.locator("#crw-title").fill("Cloud film")
+    page.locator("[data-render-on=cloud]").click()
+    page.wait_for_selector("#crw-cloud-topup:not([hidden])")
+    assert "$1.68 short" in page.locator("#crw-cloud-topup-note").inner_text()
+    chunks = page.locator("#crw-cloud-chunks button")
+    assert chunks.all_inner_texts() == ["Top up $5", "Top up $10", "Top up $25", "Top up $50"]
+    assert "crw-primary-button" in chunks.first.get_attribute("class"), "the smallest chunk that covers it"
+    assert page.locator("#crw-create").is_disabled() and page.locator("#crw-create").inner_text() == \
+        "Top up to render in the cloud"
+    with page.expect_popup():
+        chunks.nth(1).click()
+    page.wait_for_function("window.CR_WORKSPACE_CLIENT && document.querySelector('#crw-toast').textContent.includes('Finish paying')")
+    assert env.topups == [10] and env.cloud_starts == [], "nothing started"
+
+    env.cloud["balance_usd"] = 10
+    page.bring_to_front()
+    page.evaluate("window.dispatchEvent(new Event('focus'))")
+    page.wait_for_selector("#crw-cloud-topup", state="hidden")
+    page.wait_for_function("!document.getElementById('crw-create').disabled")
+    page.locator("#crw-create").click()
+    page.wait_for_function("window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    assert len(env.cloud_starts) == 1
+
+    page.locator(".crw-nav [data-nav=create]").click()
+    page.locator("[data-render-on=local]").click()
+    assert page.locator("#crw-cloud-topup").is_hidden() and page.locator("#crw-create").inner_text() != \
+        "Top up to render in the cloud"

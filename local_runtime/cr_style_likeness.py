@@ -215,6 +215,11 @@ def from_build(folder, style) -> dict:
     judged against the channel's own frames, round by round (cr_animated2d.build). Nothing is drawn or paid again."""
     folder = Path(folder)
     built = _read(folder / "renderer" / "build.json")
+    if built.get("state") == "unjudged":                  # the judge never answered: no score, never a 0
+        import cr_style_clone
+        return {"state": "skipped", "style_hash": _hash(style), "cost_usd": 0.0,
+                "why": "Studio couldn't check Claude's animation against the channel ("
+                       + cr_style_clone._unjudged_why(built.get("why")) + ")"}
     if built.get("state") not in ("passed", "below_bar"):
         return {"state": "failed", "style_hash": _hash(style), "cost_usd": 0.0,
                 "why": built.get("why") or "the study wrote no working animation renderer"}

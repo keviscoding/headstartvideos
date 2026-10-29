@@ -18,6 +18,8 @@ def install(engine):
     cr_manimgx.install(engine, cr_bridge)
     import cr_freeze
     cr_freeze.install(engine)               # a frozen picture is traced to its segments and made again, never published
+    import cr_vertical
+    cr_vertical.install(engine)             # a vertical Short keeps every scene whole and its captions above the buttons
     original = engine._final_mux
     def final_mux(job, *args, **kwargs):
         try:

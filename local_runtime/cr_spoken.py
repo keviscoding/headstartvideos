@@ -9,6 +9,7 @@ about a sound ("A strange sound came from the hull.") are the story and stay.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 _SENTENCE = re.compile(r"[^.!?]+[.!?]+[\"'”’)]*\s*|[^.!?]+$")
 _CUE_WORD = re.compile(r"(?i)^(?:sound|sounds|sfx|jingle|stinger|chime)$")
@@ -39,6 +40,34 @@ def strip_cues(text: str) -> str:
     return re.sub(r"\n\s*\n(\s*\n)+", "\n\n", out).strip()
 
 
+_LEAD_IN = re.compile(r"[^\n]{3,200}:[\s*_\"'”’»)]*")
+# the word for the script itself in a lead-in, accents folded: es guion/narracion, pt roteiro/narracao, fr script/
+# texte, de Skript/Sprechertext, it copione/sceneggiatura/testo, nl/sv/da/no manus, fi kasikirjoitus, id naskah, tl iskrip
+_SCRIPT_WORD = re.compile(r"\b(?:guion|guiones|libreto|narracion|roteiro|narracao|script|scripts|texte|skript|"
+                          r"sprechertext|copione|sceneggiatura|testo|draaiboek|manus|manuset|manuskript|kasikirjoitus|"
+                          r"naskah|iskrip)\b")
+
+
+def strip_lead_in(text: str) -> str:
+    """A video in another language (cr_language): the writer's own lead-in ("Aquí tienes el guion:", "Voici le
+    script :") is taken out. The engine's cleaner knows only English ones, so the narrator read it aloud. A lead-in is
+    the first paragraph, one short line (at most 16 words) that ends in a colon and names the script itself; a story's
+    own opening ("Esto es lo que pasó:") stays."""
+    try:
+        import cr_language
+        if cr_language.current() in ("", "en"):
+            return text
+    except ImportError:
+        return text
+    parts = re.split(r"(\n\s*\n)", str(text or "").lstrip(), maxsplit=1)
+    first = parts[0].strip()
+    folded = "".join(c for c in unicodedata.normalize("NFKD", first.casefold()) if not unicodedata.combining(c))
+    if (len(parts) == 3 and "\n" not in first and _LEAD_IN.fullmatch(first) and len(first.split()) <= 16
+            and _SCRIPT_WORD.search(folded)):
+        return parts[2].lstrip()
+    return text
+
+
 def install(engine):
     """Wrap the engine's script cleaner (make_video._clean_script) once."""
     original = getattr(engine, "_clean_script", None)
@@ -46,6 +75,6 @@ def install(engine):
         return
 
     def _clean_script(text):
-        return strip_cues(original(text))
+        return strip_cues(strip_lead_in(original(text)))
     _clean_script._cr_spoken = True
     engine._clean_script = _clean_script
