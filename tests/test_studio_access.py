@@ -115,6 +115,45 @@ def test_an_idle_study_counts_again_when_it_does_anything_or_finishes(env):
     assert studio.style_clone_usage(creator)["used"] == 0
 
 
+def _release(project_id, version):
+    """The Studio release a study was begun on, as its native session saved it."""
+    with studio.db._conn() as conn:
+        row = conn.execute(studio.db._q("SELECT setup_json FROM frontier_native_sessions WHERE project_id=?"),
+                           (project_id,)).fetchone()
+        setup = {**studio.json.loads(row["setup_json"]), "local_version": version}
+        conn.execute(studio.db._q("UPDATE frontier_native_sessions SET setup_json=? WHERE project_id=?"),
+                     (studio.json.dumps(setup), project_id))
+
+
+def test_studio_112_studies_never_stop_counting_by_idling(env):
+    """112+ sends a stopped study's finish itself: holding back a done finish offline never gets a clone back."""
+    creator = user(1, "daily")
+    new, old = (studio.native_begin(creator, study(env, n))["project_id"] for n in range(2))
+    _release(new, "5.3-admin.112")
+    _release(old, "5.3-admin.111")
+    for project in (new, old):
+        _age(project, 30, "ready")
+    assert studio.style_clone_usage(creator)["used"] == 1, "only the pre-112 one stops counting"
+    _age(new, 30, "failed")                          # its own stopped finish frees it
+    assert studio.style_clone_usage(creator)["used"] == 0
+    assert studio._release_number('{"local_version": "5.3-admin.112"}') == 112
+    assert studio._release_number("not json") == studio._release_number("{}") == 0
+
+
+def test_saving_a_completed_study_counts_as_its_clone(env):
+    """A study whose own save stopped ends failed; Save completed style is then what uses the clone, never a free one."""
+    creator = user(1, "daily")
+    begun = studio.native_begin(creator, study(env, 0))["project_id"]
+    _age(begun, 0, "failed")
+    assert studio.style_clone_usage(creator)["used"] == 0
+    saved = studio.native_begin(creator, studio.NativeBegin(
+        begin_id="save_completed_0001", title="Save completed style: Channel 0", style="history",
+        setup={**env.proof, "purpose": "creative"}, max_calls=1))["project_id"]
+    assert studio.style_clone_usage(creator)["used"] == 1
+    _age(saved, 30, "done")
+    assert studio.style_clone_usage(creator)["used"] == 1
+
+
 def test_videos_and_other_creative_work_never_count(env):
     creator = user(1, "daily")
     for n in range(5):
