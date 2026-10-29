@@ -452,3 +452,25 @@ def test_the_machine_reads_a_big_answer_back_from_the_volume(byo, monkeypatch):
     assert byo.byo._unstow(box["a:" + "c" * 20], b) == answer
     with pytest.raises(ValueError):
         byo.byo._unstow({"_relay_file": "../../.cr-connection.json"}, b)
+
+
+def test_modal_imports_in_a_running_studio_whose_popen_is_wrapped(byo, monkeypatch, tmp_path):
+    """Python 3.13 and older evaluate Modal's `subprocess.Popen | None` annotations at import; Studio's cr_workers has
+    replaced subprocess.Popen with a function by then (2026-10-29: Setup's Check and save failed with a TypeError)."""
+    import subprocess
+    pkg = tmp_path / "fakemodal" / "modal"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("import subprocess\nPOPEN_HINT = subprocess.Popen | None\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path / "fakemodal"))
+    monkeypatch.delitem(sys.modules, "modal", raising=False)
+    real = subprocess.Popen
+
+    def wrapped(*args, **kwargs):
+        return real(*args, **kwargs)
+    monkeypatch.setattr(subprocess, "Popen", wrapped)
+    monkeypatch.setitem(sys.modules, "cr_workers", SimpleNamespace(_original_popen=real))
+    with pytest.raises(TypeError):
+        wrapped | None                                       # what Modal's import ran into
+    m = byo.byo._modal()
+    assert m.POPEN_HINT is not None and subprocess.Popen is wrapped, "Studio's own wrapper is back right after"
+    monkeypatch.delitem(sys.modules, "modal", raising=False)

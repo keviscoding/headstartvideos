@@ -179,13 +179,34 @@ def client(home: Path = HOME):
     fingerprint = hashlib.sha256(f"{tid}:{secret}".encode()).hexdigest()
     with _CLIENT_LOCK:
         if _CLIENT["key"] != fingerprint:
-            import modal
-            _CLIENT.update(key=fingerprint, client=modal.Client.from_credentials(tid, secret))
+            _CLIENT.update(key=fingerprint, client=_modal().Client.from_credentials(tid, secret))
         return _CLIENT["client"]
 
 
+_IMPORT_LOCK = threading.Lock()
+
+
 def _modal():
-    import modal
+    """Modal's library. Studio wraps subprocess.Popen in a function (cr_workers, for its media workers), and on Python
+    3.13 and older Modal's own classes evaluate `subprocess.Popen | None` when they are defined, so `import modal` in
+    a running Studio failed with "unsupported operand type(s) for |: 'function' and 'NoneType'" (found 2026-10-29 on
+    a fresh 3.13 venv; 3.14 defers annotations, which hid it). The import sees the real Popen for that moment."""
+    if "modal" in sys.modules:
+        return sys.modules["modal"]
+    import subprocess as sp
+    with _IMPORT_LOCK:
+        if "modal" in sys.modules:
+            return sys.modules["modal"]
+        current = sp.Popen
+        real = getattr(sys.modules.get("cr_workers"), "_original_popen", None)
+        swap = not isinstance(current, type) and isinstance(real, type)
+        if swap:
+            sp.Popen = real
+        try:
+            import modal
+        finally:
+            if swap:
+                sp.Popen = current
     return modal
 
 
