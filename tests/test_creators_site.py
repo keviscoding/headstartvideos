@@ -34,3 +34,11 @@ def test_every_page_file_is_served_and_no_local_media_link_is_left():
     for f in (server.STATIC_DIR / "creators").rglob("*"):
         if f.suffix in (".html", ".js", ".json", ".css"):
             assert not re.search(r"media/local/(?![\w-]+\.json)", f.read_text()), f
+
+
+def test_whats_in_an_edit_shows_real_moments_not_diagrams():
+    page = TestClient(server.app).get("/creators/").text
+    section = page[page.index('id="every-edit"'):page.index('id="learn"')]
+    for clip in ("broll", "title", "ticket", "music"):
+        assert f'src="{CDN}clips/{clip}.mp4"' in section
+    assert "Loudness on target" not in section and "data-wave" not in section and "data-cutline" not in section

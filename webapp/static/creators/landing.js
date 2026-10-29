@@ -24,6 +24,7 @@
     var fload = function () { if (!fv.getAttribute("src")) { fv.src = fsrc(); fv.preload = "auto"; } };
     var withSound = function () {
       fload(); film.classList.add("sound");
+      $$(".mclip video").forEach(function (o) { o.muted = true; });
       fv.loop = false; fv.muted = false; fv.controls = true; fv.currentTime = 0; play(fv);
     };
     fplay.addEventListener("click", withSound);
@@ -38,6 +39,20 @@
       fio.observe(fv);
     }
   }
+
+  // What's in an edit: tap a moment to hear it from its start; only one plays with sound at a time.
+  $$(".mclip").forEach(function (box) {
+    var v = box.querySelector("video"), btn = box.querySelector(".msound");
+    box.addEventListener("click", function () {
+      var on = v.muted;
+      $$(".mclip").forEach(function (o) { var ov = o.querySelector("video"); ov.muted = true; o.querySelector(".msound").setAttribute("aria-pressed", "false"); o.querySelector(".msound use").setAttribute("href", "icons.svg#i-sound-off"); });
+      if (on) {
+        var fvid = $("#film-video"); if (fvid && !fvid.muted && !fvid.paused) fvid.pause();
+        v.muted = false; v.currentTime = 0; v.preload = "auto"; play(v);
+        btn.setAttribute("aria-pressed", "true"); btn.querySelector("use").setAttribute("href", "icons.svg#i-sound-on");
+      }
+    });
+  });
 
   // The jobs an evening of editing goes to, struck through as they scroll in.
   var chores = $(".chores");
