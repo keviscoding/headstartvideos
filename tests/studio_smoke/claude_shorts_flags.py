@@ -2,8 +2,8 @@
 
 Every Roblox Story Short on Windows stopped at its director with "the director did not answer with a plan" (Studio
 110, 2026-10-28), the real reason thrown away. Its flags include an empty --tools value and a JSON --mcp-config, and
-npm's claude.cmd runs through cmd.exe, which parses the command line again. Studio now starts the script the shim
-points to with node (cr_claude.node_route / print_command). This runs the real CLI with no account: an answer about
+npm's claude.cmd runs through cmd.exe, which parses the command line again. Studio starts the program the shim names
+(cr_claude.node_route / print_command). This runs the real CLI with no account: an answer about
 signing in means Claude Code read every argument and stopped only because nobody is signed in. It also runs the same
 flags straight through claude.cmd and a stand-in that echoes its arguments, and reports what each one got (the
 direct runs are reported, not required: they show whether cmd.exe was the cause).
@@ -90,7 +90,7 @@ def main() -> int:
         except ValueError:
             got = {}
         sent = command[2:] if name == "node route" else command[1:]
-        same = got.get("argv") == sent and got.get("stdin") == PROMPT
+        same = got.get("argv") == sent and str(got.get("stdin") or "").replace("\r\n", "\n") == PROMPT   # (Windows line ends)
         row(f"{'Required' if name == 'node route' else 'Reported'}: a stand-in echo, {name}: every argument and the "
             "prompt arrive exactly", same, code, "" if same else f"sent {sent}, got {got.get('argv')} ({why or err})",
             need=name == "node route")

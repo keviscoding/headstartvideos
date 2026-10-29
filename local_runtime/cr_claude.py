@@ -139,12 +139,11 @@ def find_executable():
 
 # One question to Claude Code, headless (the Shorts pipelines' directors, stagers and checks; Claude's vision on a few
 # pictures): the prompt on stdin, no tools (or only Read, in one folder), no MCP servers, no saved session, a JSON
-# answer. On Windows npm installs Claude Code as claude.cmd, and a .cmd runs through cmd.exe, which parses the command
-# line again (`cmd /c` strips the line's first and last quote when the program's path is quoted, as a user name with a
-# space makes it), so an empty --tools value or the --mcp-config JSON may not arrive as given. npm's own node and
-# cli.js run it without cmd.exe, every argument exactly as given (tests/test_claude_print.py, on Windows CI too).
-# Every Roblox Story Short on Windows had stopped at its director with the reason thrown away (2026-10-28: "the
-# director did not answer with a plan", both on Studio 110, Windows): print_answer keeps the reason.
+# answer. Every Roblox Story Short on Windows had stopped at its director with Claude Code's own reason thrown away
+# (2026-10-28: "the director did not answer with a plan", both on Studio 110, Windows): print_answer keeps the reason
+# and reads every shape of answer. Windows CI (2026-10-29, the real npm Claude Code, no account) showed these flags
+# arrive intact straight through npm's claude.cmd too (cmd.exe was not the cause); node_route still starts the
+# program the shim names (today a native claude.exe; a cli.js before) without cmd.exe and its 8,191-character line.
 NO_MCP = '{"mcpServers":{}}'
 
 

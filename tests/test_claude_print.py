@@ -2,11 +2,12 @@
 directors, stagers and checks.
 
 Every Roblox Story Short on Windows stopped at its director with "the director did not answer with a plan" (Studio
-110, 2026-10-28): the pipeline threw Claude Code's own reason away. On Windows npm's claude.cmd runs through cmd.exe,
-which parses the command line again; Studio now runs the script the shim points to with node, so the empty --tools
-value, the --mcp-config JSON and the prompt on stdin arrive exactly as given. The stand-in below is npm's own shim
-around a cli.js that echoes what it got, in folders with spaces (a user name with a space); it needs node, no account.
-tests/studio_smoke/claude_shorts_flags.py does the same with the real Claude Code on Windows CI.
+110, 2026-10-28): the pipeline threw Claude Code's own reason away. On Windows npm's claude.cmd runs through cmd.exe;
+Studio runs the program its shim names instead (node and cli.js, or a native claude.exe), and the empty --tools value,
+the --mcp-config JSON and the prompt on stdin arrive exactly as given. The stand-in below is npm's own shim around a
+cli.js that echoes what it got, in folders with spaces (a user name with a space); it needs node, no account.
+tests/studio_smoke/claude_shorts_flags.py does the same with the real Claude Code on Windows CI (2026-10-29: the flags
+arrive intact straight through claude.cmd too).
 """
 from __future__ import annotations
 
@@ -113,4 +114,5 @@ def test_every_flag_and_the_prompt_arrive_exactly_through_npms_claude(tmp_path, 
     assert why == "" and done.returncode == 0, done.stderr
     got = json.loads(answer)
     assert got["argv"] == command[2:], "every flag as given: the empty --tools value and the --mcp-config JSON"
-    assert got["stdin"] == PROMPT, "the prompt, every line and character"
+    # (Python writes a text stdin with the computer's own line ends: \r\n on Windows, which Claude reads alike)
+    assert got["stdin"].replace("\r\n", "\n") == PROMPT, "the prompt, every line and character"
