@@ -1183,7 +1183,7 @@ def _time_narration(engine, mp3, srt, text):
             if not word.word.strip():
                 continue
             current.append((word.word.strip(), float(word.start), float(word.end)))
-            if len(current) >= 6 or re.search(r"[.!?]$", word.word.strip()):
+            if len(current) >= 6 or re.search(r"[.!?\u0964\u0965]$", word.word.strip()):   # Hindi ends on a danda too
                 cues.append(current)
                 current = []
     if current:

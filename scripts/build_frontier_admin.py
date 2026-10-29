@@ -59,6 +59,16 @@ def runtime_resources(root: Path):
             if path.is_symlink() or teaching.is_symlink() or not path.is_file():
                 raise ValueError("The niche agent's teaching must be ordinary owned files.")
             yield path, "niche_teaching/" + name
+    fonts = runtime / "fonts"                            # Studio's own fonts (CR Devanagari for Hindi), beside the engine's
+    if fonts.exists():
+        if fonts.is_symlink() or not fonts.is_dir():
+            raise ValueError("Studio's fonts must be an owned directory.")
+        for path in sorted(fonts.iterdir()):
+            if path.suffix not in (".ttf", ".txt") or not path.is_file():
+                continue
+            if path.is_symlink() or path.stat().st_size > 4 * 1024 * 1024:
+                raise ValueError("Studio's fonts must be small ordinary files.")
+            yield path, "assets/fonts/" + path.name
     art = runtime / "workspace_art"
     if art.exists():
         if art.is_symlink() or not art.is_dir():
@@ -383,6 +393,9 @@ ENGINE_PATCHES = {
     # so an antivirus or company firewall that inspects secure connections no longer fails every download. 0.10.5 or
     # later: before it, connections sharing one context could turn each other's certificate check off when they shook
     # hands at once (reproduced 2026-10-26); pure Python, 3.10+ (checked on PyPI, 2026-10-26).
+    # uharfbuzz: HarfBuzz for Hindi, where Pillow draws text (thumbnail headlines, the call-to-action card, chapter
+    # cards): Pillow's wheels can't shape Devanagari without libraqm and FriBiDi (cr_script_text). abi3 wheels for
+    # Windows, Mac (universal2) and Linux, Python 3.10+ (0.56.4 for 3.10, checked on PyPI, 2026-10-29).
     # OpenCV once, not twice: RapidOCR requires opencv-python (the full build), so the engine's opencv-python-headless
     # was a second copy of the same cv2 (about 44 MB more to download on Windows, the owner's test of 2026-10-26).
     # Both builds hold the same modules (the engine's VideoCapture, inpainting, optical flow, face and QR models); the
@@ -392,7 +405,8 @@ ENGINE_PATCHES = {
         ('yt-dlp>=2025.10.22; python_version >= "3.10"',
          'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"\n'
          'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove\n'
-         'truststore>=0.10.5; python_version >= "3.10"   # Studio trusts this computer\'s certificates, as the browser does'),
+         'truststore>=0.10.5; python_version >= "3.10"   # Studio trusts this computer\'s certificates, as the browser does\n'
+         'uharfbuzz>=0.39; python_version >= "3.10"   # Hindi (Devanagari) text shaped where Pillow draws it (cr_script_text)'),
         ("opencv-python-headless>=4.8   # VEIL's keeper (loops chained and moved) and the presenter camera moves; "
          "pure-ffmpeg fallback without it",
          "opencv-python>=4.8   # VEIL's keeper (loops chained and moved) and the presenter camera moves; pure-ffmpeg "

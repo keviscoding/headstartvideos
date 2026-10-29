@@ -64,7 +64,7 @@ What they asked for: $ARGUMENTS
 - Options (all optional): captions, thumbnails, thumbnail_count, description, extra_instructions (creative
   direction), script (their own narration, one title), features {key: true/false} (the style's switches, shown by
   `quote` under media), short_seconds, ranking {...} for Ranking Shorts, language.
-- **Another language** (Spanish, Portuguese, French, German and more: `list_styles` gives `languages`): pass
+- **Another language** (Spanish, Portuguese, French, German, Hindi and more: `list_styles` gives `languages`): pass
   `options.language` (a name like Spanish, its own name like Español, or a code like es). The script, the voice,
   the captions and the words on screen are all in it. Without it a video speaks the language the creator chose last
   in Create, else its style's own (each card's `language`). Choose voice plays its samples in English; every voice

@@ -72,7 +72,7 @@ def test_only_languages_every_font_draws_are_offered_for_any_recipe():
     """Lilita One and Share Tech Mono have no ą ě ș ő ğ: Polish, Czech, Romanian, Hungarian and Turkish wait for
     fonts that draw them. A recipe that speaks one already (a Czech channel) keeps it."""
     offered = [l["id"] for l in cr_language.choices()]
-    assert offered == ["en", "es", "pt", "fr", "de", "it", "nl", "sv", "da", "no", "fi", "id", "tl"]
+    assert offered == ["en", "es", "pt", "fr", "de", "it", "nl", "sv", "da", "no", "fi", "id", "tl", "hi"]
     assert "cs" in [l["id"] for l in cr_language.choices(also={"cs", "en", None})]
     with pytest.raises(ValueError, match="Choose a language from the list"):
         cr_language.clean("Polski", {"language": "English"})
@@ -86,7 +86,8 @@ def test_every_shipped_font_draws_every_offered_languages_letters():
     letters = {"es": "áéíóúñÑ¿¡ü", "pt": "ãõâêôçÇáéíóú", "fr": "àâçéèêëîïôùûüÿœŒÉÀ", "de": "äöüÄÖÜß",
                "it": "àèéìòù", "nl": "ëïéè", "sv": "åäöÅÄÖ", "da": "æøåÆØÅ", "no": "æøåÆØÅ", "fi": "äöåÄÖ",
                "id": "", "tl": "ñÑ", "en": ""}
-    assert set(letters) == {l["id"] for l in cr_language.choices()}
+    # Hindi is written in Devanagari, which no Latin font has: it is drawn in Studio's own CR Devanagari (test_hindi)
+    assert set(letters) == {l["id"] for l in cr_language.choices() if cr_language.script(l["id"]) == "latn"}
     for font in sorted((ENGINE / "assets" / "fonts").glob("*.ttf")):
         cmap = fontTools.TTFont(font).getBestCmap() or {}
         missing = {k: "".join(c for c in v if ord(c) not in cmap) for k, v in letters.items()}

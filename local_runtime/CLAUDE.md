@@ -188,10 +188,12 @@ under Saved ideas.
   days, then Studio empties it for good. Say first which video or style goes and what stays (their voice library,
   styles and other videos; for a style, the videos made with it), and that Claude Code asks them to approve. A video
   being made is refused: don't cancel it to delete it unless they ask for that too.
-- Languages: a video can be made in Spanish, Portuguese, French, German, Italian and the other languages
+- Languages: a video can be made in Spanish, Portuguese, French, German, Italian, Hindi and the other languages
   `list_styles` lists under `languages`: `make_videos` options.language (on the Studio page: Create → Narration &
-  sound → Language). Its script, voice, captions and words on screen are all in that language. Studio keeps the
-  creator's last choice for their next videos; a learned style's own language changes with `edit_style` language.
+  sound → Language). Its script, voice, captions and words on screen are all in that language. Hindi is written in
+  Devanagari (हिंदी), not Hinglish: Gemini's voices read Devanagari, and Studio draws it in its own font, CR
+  Devanagari. Studio keeps the creator's last choice for their next videos; a learned style's own language changes
+  with `edit_style` language.
   Choose voice's samples are in English; every voice reads the video in its language. A video in another language
   than its style's renders on this computer, not Studio Cloud, for now. Of the ready-made Shorts recipes, Roblox Story
   Shorts take any of these languages (on Kie the narrator is a Gemini voice that speaks it); the others speak English

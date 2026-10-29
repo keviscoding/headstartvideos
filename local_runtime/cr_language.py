@@ -86,6 +86,15 @@ LANGUAGES = (
     {"id": "tl", "offered": True, "pace": 0.8, "name": "Filipino", "native": "Filipino",
      "engine": "Filipino (Tagalog)",
      "cue": "link sa screen", "label": "I-scan ang code o gamitin ang link sa ibaba"},
+    # Hindi (customer Swapnil, 2026-10-29): written in Devanagari, the script Gemini's hi-IN voices and Whisper's "hi"
+    # read and write (a Hinglish script in Latin letters would be read with English sounds and transcribed back in
+    # Devanagari, so its captions would never match). No shipped Latin font has a Devanagari letter: Studio ships its
+    # own (CR Devanagari, local_runtime/fonts), the captions are burned in it (DEVANAGARI_STYLE) and Pillow's text is
+    # shaped by cr_script_text. pace: Hindi says the same thing in about 7 per cent more words than English (separate
+    # postpositions and auxiliaries: the IIT Bombay English-Hindi corpus, 20.7M English and 22.2M Hindi words), at a
+    # similar speaking time; the narrator's measured pace takes over after two videos (cr_length).
+    {"id": "hi", "offered": True, "pace": 1.05, "name": "Hindi", "native": "हिंदी", "engine": "Hindi (हिंदी)",
+     "script": "deva", "cue": "स्क्रीन पर लिंक", "label": "कोड स्कैन करें या नीचे दिया लिंक इस्तेमाल करें"},
 )
 BY_ID = {row["id"]: row for row in LANGUAGES}
 # The ready-made Shorts recipes (cr_shorts: Ranking, 3D, photo and Roblox Shorts) write, voice and caption in their own
@@ -126,9 +135,48 @@ def shorts_refusal(info, lang_id, recipe="This Shorts recipe", ranking=None) -> 
 _current = {"id": ""}                  # the language of the run in this worker process (one video per process)
 
 
+# ── Devanagari (Hindi) ─────────────────────────────────────────────────────────────────────────────────────────────
+# The engine (and the Shorts) match words by folding them to a-z0-9 ("[^a-z0-9]" after _fold): a Devanagari word folds
+# to nothing, so the script's spelling never reached the captions (_script_words_into_srt drops every script word
+# whose key is empty, leaving the speech model's spelling) and the word clock matched nothing but position. latin()
+# gives each Devanagari word a plain-letter key instead: a forgiving one (long and short vowels, anusvara and
+# chandrabindu, nukta and virama fold together), because the speech model and the writer spell the same sounds
+# differently (हैं / है, हिन्दी / हिंदी).
+_DEVA = {}
+for _chars, _key in (("\u0915\u0958", "k"), ("\u0916\u0959", "kh"), ("\u0917\u095a", "g"), ("\u0918", "gh"),
+                     ("\u0919\u091e\u0923\u0928\u0929", "n"), ("\u091a", "c"), ("\u091b", "ch"),
+                     ("\u091c\u095b", "j"), ("\u091d", "jh"), ("\u091f\u0924", "t"), ("\u0920\u0925", "th"),
+                     ("\u0921\u0926\u095c", "d"), ("\u0922\u0927\u095d", "dh"), ("\u092a", "p"),
+                     ("\u092b\u095e", "ph"), ("\u092c", "b"), ("\u092d", "bh"), ("\u092e", "m"),
+                     ("\u092f\u095f", "y"), ("\u0930\u0931", "r"), ("\u0932\u0933\u0934", "l"), ("\u0935", "v"),
+                     ("\u0936\u0937", "sh"), ("\u0938", "s"), ("\u0939", "h"),
+                     ("\u0905\u0906\u093e", "a"), ("\u0907\u0908\u093f\u0940", "i"),
+                     ("\u0909\u090a\u0941\u0942", "u"), ("\u090b\u0960\u0943\u0944", "ri"),
+                     ("\u090f\u090d\u090e\u0947\u0945\u0946", "e"), ("\u0910\u0948", "ai"),
+                     ("\u0913\u0911\u0912\u094b\u0949\u094a", "o"), ("\u0914\u094c", "au"),
+                     ("\u0902\u0901", "n"), ("\u0903", "h"), ("\u093c\u094d\u093d\u0900", ""),
+                     ("\u0964\u0965", "."), ("\u0966\u0967\u0968\u0969\u096a\u096b\u096c\u096d\u096e\u096f", None)):
+    for _i, _c in enumerate(_chars):
+        _DEVA[ord(_c)] = str(_i) if _key is None else _key
+DEVANAGARI = re.compile("[\u0900-\u097F]")
+
+
+def latin(text) -> str:
+    """Devanagari letters as plain letters (a matching key, not a transliteration to show): "हिंदी" and "हिन्दी" are
+    both "hindi". Every other character is left as it is."""
+    text = str(text or "")
+    return text.translate(_DEVA) if DEVANAGARI.search(text) else text
+
+
+def script(lang_id) -> str:
+    """The writing system a language's videos are in: "latn", or "deva" for Hindi."""
+    row = find(lang_id)
+    return str(row.get("script") or "latn") if row else "latn"
+
+
 def _fold(text) -> str:
     """Lower case without accents: "Español", "espanol" and "ESPAÑOL" are the same word."""
-    decomposed = unicodedata.normalize("NFKD", str(text or ""))
+    decomposed = unicodedata.normalize("NFKD", latin(text))
     return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold().strip()
 
 
@@ -281,7 +329,18 @@ def screen_rule(lang_id=None) -> str:
         return ""
     return (f"LANGUAGE: the narration is in {row['name']}. Every word drawn on screen (labels, signs, captions, "
             f"titles, numbers written as words) is in {row['name']}. Action names, ids and JSON keys stay exactly as "
-            "given.\n\n")
+            "given." + script_rule(row["id"]) + "\n\n")
+
+
+def script_rule(lang_id=None) -> str:
+    """The writing-system rule for a language not written in Latin letters ("" for the others)."""
+    row = find(lang_id or _current["id"])
+    if not row or script(row["id"]) != "deva":
+        return ""
+    return (f" Write the {row['name']} in Devanagari (देवनागरी), never in Latin letters (no Hinglish): the voice reads "
+            "Devanagari. Everyday English words Hindi speakers use are written in Devanagari as they are said "
+            "(मोबाइल, इंटरनेट). End every sentence with a full stop (.), a question mark or an exclamation mark, not "
+            "the danda (।): the narration is split into sentences on those marks.")
 
 
 def language_block(lang_id=None) -> str:
@@ -292,7 +351,8 @@ def language_block(lang_id=None) -> str:
     n = row["name"]
     return (f"\n\nLANGUAGE OF THIS VIDEO: {n}. Every word the viewer hears or reads is in {n}: the narration, titles, "
             f"headlines, labels, captions, cards, quotes and any text drawn on screen. These stay in English: "
-            "image-generation prompts, stock-footage and picture search queries, tool names, ids and JSON keys.\n")
+            "image-generation prompts, stock-footage and picture search queries, tool names, ids and JSON keys."
+            + script_rule(row["id"]) + "\n")
 
 
 def words(text) -> list:
@@ -337,6 +397,12 @@ SCENES = {
            "comment_title": "Dimmelo nei commenti",
            "items": ["Quale parte ti ha colpito di più?", "Cosa ti porti via da tutto questo?"],
            "comment_subtitle": "Li leggo, e rispondo."},
+    "hi": {"subscribe": r"सब्सक्राइब|subscribe", "comment": r"कमेंट|कॉमेंट|टिप्पणी|comment",
+           "value": "सब्सक्राइब करें", "title": "इसे देखने वाले 10 में से 9 लोगों ने सब्सक्राइब नहीं किया है",
+           "subtitle": "बस एक क्लिक। ऐसे ही अगला वीडियो आप तक पहुँचता है।",
+           "comment_title": "कमेंट में बताइए",
+           "items": ["आपको सबसे ज़्यादा कौन-सा हिस्सा याद रहा?", "आप इससे क्या सीखकर जा रहे हैं?"],
+           "comment_subtitle": "हर कमेंट पढ़ा जाता है, और जवाब भी मिलता है।"},
 }
 
 
@@ -347,13 +413,14 @@ CHAPTER = {"es": ("CAPÍTULO", "Capítulo"), "pt": ("CAPÍTULO", "Capítulo"), "
            "sv": ("KAPITEL", "Kapitel"), "da": ("KAPITEL", "Kapitel"), "no": ("KAPITTEL", "Kapittel"),
            "fi": ("LUKU", "Luku"), "id": ("BAB", "Bab"), "tl": ("KABANATA", "Kabanata"), "pl": ("ROZDZIAŁ", "Rozdział"),
            "cs": ("KAPITOLA", "Kapitola"), "ro": ("CAPITOLUL", "Capitolul"), "hu": ("FEJEZET", "Fejezet"),
-           "tr": ("BÖLÜM", "Bölüm")}
+           "tr": ("BÖLÜM", "Bölüm"), "hi": ("अध्याय", "अध्याय")}
 HEADINGS = {"es": ("IMÁGENES", "CAPÍTULOS", "FUENTES"), "pt": ("IMAGENS", "CAPÍTULOS", "FONTES"),
             "fr": ("IMAGES", "CHAPITRES", "SOURCES"), "de": ("BILDMATERIAL", "KAPITEL", "QUELLEN"),
             "it": ("FILMATI", "CAPITOLI", "FONTI"), "nl": ("BEELDMATERIAAL", "HOOFDSTUKKEN", "BRONNEN"),
             "sv": ("BILDMATERIAL", "KAPITEL", "KÄLLOR"), "da": ("OPTAGELSER", "KAPITLER", "KILDER"),
             "no": ("OPPTAK", "KAPITLER", "KILDER"), "fi": ("KUVAMATERIAALI", "LUVUT", "LÄHTEET"),
-            "id": ("CUPLIKAN", "BAB", "SUMBER"), "tl": ("MGA FOOTAGE", "MGA KABANATA", "MGA PINAGMULAN")}
+            "id": ("CUPLIKAN", "BAB", "SUMBER"), "tl": ("MGA FOOTAGE", "MGA KABANATA", "MGA PINAGMULAN"),
+            "hi": ("फ़ुटेज", "अध्याय", "स्रोत")}
 
 
 def description_headings(path, lang_id) -> bool:
@@ -441,6 +508,27 @@ def _put_back() -> None:
             info.pop("language", None)
 
 
+# The captions and the engine's other libass text name Latin fonts (Montserrat, Inter...), which have no Devanagari.
+# libass then asks the computer for a fallback: Kohinoor on a Mac, but the ffmpeg Studio installs on Windows may have
+# no font provider to ask, and the fallback is a thin regular face beside a heavy Latin one. In a video written in
+# Devanagari every subtitles= burn of the engine (they all add make_video._FONTSDIR) is told to draw its styles in
+# Studio's own CR Devanagari, bold, from the same fonts folder (it has Latin letters too). An inline \fn in a label
+# still picks its own font, with the computer's fallback.
+DEVANAGARI_FONT = "CRDevanagari-Bold.ttf"
+DEVANAGARI_STYLE = ":force_style='Fontname=CR Devanagari,Bold=1'"
+
+
+def caption_fonts(engine, lang_id) -> str:
+    """The engine's subtitles= font option for a video in this language: its own (fontsdir), plus the Devanagari font
+    for a language written in it when the engine's fonts folder has that font."""
+    base = getattr(engine, "_FONTSDIR", "") or ""
+    folder = getattr(engine, "FONT_DIR", None)
+    if (script(lang_id) == "deva" and base and DEVANAGARI_STYLE not in base and folder is not None
+            and (Path(folder) / DEVANAGARI_FONT).is_file()):
+        return base + DEVANAGARI_STYLE
+    return base
+
+
 def install(engine):
     """For a video asked to speak a language: its style speaks it for the whole run, every prompt that shapes what the
     viewer sees or hears says it, the speech model is told it, and the closing scenes come in it. A video asked nothing
@@ -448,6 +536,20 @@ def install(engine):
     if getattr(engine, "_cr_language", False):
         return
     engine._cr_language = True
+    try:
+        import cr_script_text                                 # Devanagari shaped wherever Pillow draws it
+        cr_script_text.install()
+    except Exception as e:                                    # noqa: BLE001 - Pillow's own drawing then
+        _log(engine, f"Hindi text: Studio's text shaping couldn't start ({str(e)[:80]})")
+    fold = getattr(engine, "_fold", None)
+    if callable(fold) and not getattr(fold, "_cr_language", False):
+        # the engine's word matching (captions spelled as the script, the word clock) keys words by a-z: a Devanagari
+        # word gets its plain-letter key (latin) instead of none
+        @wraps(fold)
+        def fold_any(text, *args, **kwargs):
+            return fold(latin(text), *args, **kwargs)
+        fold_any._cr_language = True
+        engine._fold = fold_any
     for table, kind in (("STYLE_LANGUAGE", _Languages), ("STYLE_INFO", _Styles)):
         now = getattr(engine, table, None)
         if isinstance(now, dict) and not isinstance(now, kind):
@@ -470,11 +572,16 @@ def install(engine):
             _current["id"] = lang
             _log(engine, f"Language: {BY_ID[lang]['name']} (the script, the voice, the captions and the words on "
                          "screen)")
+            fonts = getattr(engine, "_FONTSDIR", None)
+            if fonts is not None:
+                engine._FONTSDIR = caption_fonts(engine, lang)
             try:
                 return _start(title, minutes, *args, **kwargs)
             finally:
                 _current["id"] = ""
                 _put_back()
+                if fonts is not None:
+                    engine._FONTSDIR = fonts
         run._cr_language = True
         setattr(engine, fn, run)
 
