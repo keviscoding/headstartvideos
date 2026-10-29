@@ -1298,6 +1298,9 @@
   $('crw-recipe-open').addEventListener('click',openGallery);$('crw-styles-browse').addEventListener('click',openGallery);
   $('crw-gallery-search').addEventListener('input',gallery);$('crw-gallery-close').addEventListener('click',()=>{$('crw-gallery').close();$('crw-recipe-open').focus();});
   $('crw-detail-use').addEventListener('click',()=>{if(state.inspected){selectRecipe(state.inspected);$('crw-gallery').close();showPage('create');$('crw-recipe-open').focus();}});
+  // a vertical Short gets a tall player (it was a 16:9 box with the Short small in its middle)
+  $('crw-output-video').addEventListener('loadedmetadata',()=>{const v=$('crw-output-video');v.classList.toggle('is-tall',v.videoHeight>v.videoWidth*1.1);});
+  $('crw-output-video').addEventListener('emptied',()=>$('crw-output-video').classList.remove('is-tall'));
   $('crw-output-close').addEventListener('click',()=>{$('crw-output-video').pause();$('crw-output').close();});
   $('crw-output').addEventListener('close',()=>{$('crw-output-video').pause();$('crw-output-video').removeAttribute('src');$('crw-output-video').load();});
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
