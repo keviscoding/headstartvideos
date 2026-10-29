@@ -190,6 +190,10 @@ STUDIO_UPGRADE_MESSAGE = ("ChannelRecipe Studio is included in the Creator, Pro 
                           "Choose a plan at " + UPGRADE_URL + " to download and use it.")
 # Style studies begin with this title; the allowance counts them per account.
 STYLE_STUDY_PREFIX = "Style study: "
+# A study not done that has had no activity (a Claude stage asked or answered, its finish) for this long was stopped
+# by closing Studio: its worker died with no finish, so it would count forever. It stops counting, and counts again
+# the moment it does anything (a stage, or its done finish). The longest study runs about an hour between stages.
+STALE_STUDY_S = 6 * 3600
 
 
 def is_admin(user: dict | None) -> bool:
@@ -210,7 +214,9 @@ def style_clone_usage(user: dict) -> dict:
     """Style studies this account has started or kept, against its plan limit.
 
     Stopped studies that failed outright don't use up the allowance, so a
-    creator can try again with the same reference.
+    creator can try again with the same reference. Neither does one left
+    unfinished with no activity for STALE_STUDY_S (Studio closed mid-study,
+    before Studio 112 said so): a finished study always counts.
     """
     initialize()
     with db._conn() as conn:
@@ -218,8 +224,9 @@ def style_clone_usage(user: dict) -> dict:
                              (user["id"],)).fetchone()
         extra, since = (int(grant["extra"]), float(grant["counted_from"])) if grant else (0, 0.0)
         used = conn.execute(db._q("""SELECT COUNT(*) AS n FROM frontier_projects
-            WHERE user_id=? AND title LIKE ? AND status != 'failed' AND created_at > ?"""),
-            (user["id"], STYLE_STUDY_PREFIX + "%", since)).fetchone()["n"]
+            WHERE user_id=? AND title LIKE ? AND created_at > ?
+              AND (status = 'done' OR (status != 'failed' AND updated_at > ?))"""),
+            (user["id"], STYLE_STUDY_PREFIX + "%", since, time.time() - STALE_STUDY_S)).fetchone()["n"]
     limit = plans.style_clone_limit(user.get("plan"), is_admin=is_admin(user))
     if limit is not None:
         limit += extra

@@ -81,6 +81,40 @@ def test_failed_studies_free_their_slot(env):
     studio.native_begin(creator, study(env, 9))
 
 
+def _age(project_id, hours, status=None):
+    """Make a study look as if nothing happened on it for this many hours (and optionally set its status)."""
+    at = studio.time.time() - hours * 3600
+    with studio.db._conn() as conn:
+        conn.execute(studio.db._q("UPDATE frontier_projects SET updated_at=?, status=COALESCE(?, status) WHERE id=?"),
+                     (at, status, project_id))
+
+
+def test_a_study_killed_by_closing_studio_stops_counting_after_six_idle_hours(env):
+    """JamesElyse20 (2026-10-29): two studies died with Studio, never sent a finish, and used two clones forever."""
+    creator = user(1, "daily")
+    started = [studio.native_begin(creator, study(env, n))["project_id"] for n in range(3)]
+    _age(started[0], 7, "running")                   # a Claude stage was asked, then Studio was closed
+    _age(started[1], 5, "running")                   # quiet for 5 h: may still be working, still counts
+    assert studio.style_clone_usage(creator)["used"] == 2
+    studio.native_begin(creator, study(env, 9))      # the freed clone can be used again
+    with pytest.raises(HTTPException) as err:
+        studio.native_begin(creator, study(env, 10))
+    assert err.value.status_code == 402
+
+
+def test_an_idle_study_counts_again_when_it_does_anything_or_finishes(env):
+    creator = user(1, "daily")
+    first = studio.native_begin(creator, study(env, 0))["project_id"]
+    _age(first, 30, "ready")
+    assert studio.style_clone_usage(creator)["used"] == 0
+    _age(first, 0)                                   # a stage asked or answered: it is working again
+    assert studio.style_clone_usage(creator)["used"] == 1
+    _age(first, 30, "done")                          # finished (late receipt): always counts, however old
+    assert studio.style_clone_usage(creator)["used"] == 1
+    _age(first, 30, "failed")
+    assert studio.style_clone_usage(creator)["used"] == 0
+
+
 def test_videos_and_other_creative_work_never_count(env):
     creator = user(1, "daily")
     for n in range(5):
