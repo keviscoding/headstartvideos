@@ -92,7 +92,7 @@ def _shaper():
     try:
         import uharfbuzz
         return uharfbuzz
-    except ImportError:
+    except Exception:                                   # noqa: BLE001 - not installed, or its library won't load
         return None
 
 
@@ -122,9 +122,13 @@ def shape(text: str, path: Path, size: float) -> tuple:
         return out, x
     with _lock:
         if str(path) not in _hb:
-            face = hb.Face(hb.Blob.from_file_path(str(path)))
-            _hb[str(path)] = (hb.Font(face), face.upem)
-        font, upem = _hb[str(path)]
+            # the font's bytes read here, not HarfBuzz's own file opening: a Windows folder named in other letters
+            # (C:\Users\José) is then no question
+            data = Path(path).read_bytes()
+            blob = hb.Blob(data)
+            face = hb.Face(blob)
+            _hb[str(path)] = (hb.Font(face), face.upem, (data, blob, face))
+        font, upem, _keep = _hb[str(path)]
         buf = hb.Buffer()
         buf.add_str(text)
         buf.guess_segment_properties()
@@ -144,10 +148,12 @@ def _raw(name: str, owner):
 
 
 def _note(message: str) -> None:
-    try:
-        import make_video                                     # the engine's progress log, where it is running
-        make_video.log(message)
-    except Exception:                                         # noqa: BLE001 - no engine here: nothing to tell
+    import sys
+    engine = sys.modules.get("make_video")                    # the engine's progress log, where it is running (never
+    try:                                                      # imported here: that would load the whole engine)
+        if engine is not None:
+            engine.log(message)
+    except Exception:                                         # noqa: BLE001 - nothing to tell then
         pass
 
 
@@ -168,6 +174,7 @@ class _Line:
             box = b if box is None else (min(box[0], b[0]), min(box[1], b[1]), max(box[2], b[2]), max(box[3], b[3]))
         box = box or (0.0, 0.0, 0.0, 0.0)
         s = float(stroke or 0)
+        self.ink = box                                   # the letters alone: Pillow's "t" and "b" anchors
         self.box = (box[0] - s, box[1] - s, box[2] + s, box[3] + s)
 
     @staticmethod
@@ -180,22 +187,26 @@ class _Line:
         h, v = anchor[0], anchor[1]
         x, y = float(xy[0]), float(xy[1])
         x -= {"l": 0.0, "m": self.advance / 2.0, "r": self.advance}.get(h, 0.0)
-        y += {"a": self.ascent, "t": -self.box[1], "m": (self.ascent - self.descent) / 2.0, "s": 0.0,
-              "b": -self.box[3], "d": -self.descent}.get(v, self.ascent)
+        y += {"a": self.ascent, "t": -self.ink[1], "m": (self.ascent - self.descent) / 2.0, "s": 0.0,
+              "b": -self.ink[3], "d": -self.descent}.get(v, self.ascent)
         return x, y
 
 
 def _lines(text: str, font, stroke: float, spacing: float):
     lines = [_Line(t, font, stroke) for t in text.split("\n")]
-    step = _raw("getbbox", lines[0].font)(lines[0].font, "A")[3] + float(stroke or 0) + float(spacing)  # as Pillow
+    s = float(stroke or 0)
+    # as Pillow: the "A" box with its stroke, plus the stroke, plus the spacing
+    step = _raw("getbbox", lines[0].font)(lines[0].font, "A", stroke_width=s)[3] + s + float(spacing)
     return lines, step
 
 
 def _placed(xy, text: str, font, anchor, spacing, align, stroke) -> list:
-    """[(line, baseline origin)] for each line of the text, laid out as Pillow lays out its own (multi-line) text."""
+    """[(line, baseline origin, the point Pillow anchors that line at)] for each line of the text, laid out as Pillow
+    lays out its own (multi-line) text: each line placed at its row's point with the text's own anchor."""
     if "\n" not in text:
         line = _Line(text, font, stroke)
-        return [(line, line.origin(xy, anchor or "la"))]
+        point = (float(xy[0]), float(xy[1]))
+        return [(line, line.origin(point, anchor or "la"), point)]
     lines, step = _lines(text, font, stroke, spacing)
     anchor = anchor or "la"
     width = max(l.advance for l in lines)
@@ -205,7 +216,8 @@ def _placed(xy, text: str, font, anchor, spacing, align, stroke) -> list:
     out = []
     for i, line in enumerate(lines):
         shift = {"center": (width - line.advance) / 2.0, "right": width - line.advance}.get(align, 0.0)
-        out.append((line, (left + shift, top + i * step + line.ascent)))
+        point = (left + shift, top + i * step)
+        out.append((line, line.origin(point, "l" + (anchor[1:2] or "a")), point))
     return out
 
 
@@ -215,18 +227,27 @@ def draw(drawer, xy, text: str, fill=None, font=None, anchor=None, spacing=4, al
     text_of = _raw("text", drawer)
     passes = ([(stroke_fill if stroke_fill is not None else fill, stroke_width)] if stroke_width else []) + [(fill, 0)]
     for ink, width in passes:                       # every stroke first, then every letter on top
-        for line, (x0, y0) in placed:
+        for line, (x0, y0), _ in placed:
             for gid, x, y, ch in line.glyphs:
                 text_of(drawer, (x0 + x, y0 + y), line.char(gid, ch), fill=ink, font=line.font, anchor="ls",
                         stroke_width=width, stroke_fill=ink if width else None)
 
 
 def bbox(xy, text: str, font, anchor=None, spacing=4, align="left", stroke_width=0) -> tuple:
+    """As Pillow's: each line's box in whole pixels around the point it is anchored at, plus that point (so a box
+    asked at whole-pixel coordinates is whole pixels, as callers sizing an image from it expect)."""
+    import math
     box = None
-    for line, (x0, y0) in _placed(xy, text, font, anchor, spacing, align, stroke_width):
-        b = (line.box[0] + x0, line.box[1] + y0, line.box[2] + x0, line.box[3] + y0)
+    for line, (x0, y0), (px, py) in _placed(xy, text, font, anchor, spacing, align, stroke_width):
+        dx, dy = x0 - px, y0 - py
+        b = (math.floor(line.box[0] + dx) + px, math.floor(line.box[1] + dy) + py,
+             math.ceil(line.box[2] + dx) + px, math.ceil(line.box[3] + dy) + py)
         box = b if box is None else (min(box[0], b[0]), min(box[1], b[1]), max(box[2], b[2]), max(box[3], b[3]))
-    return box or (float(xy[0]), float(xy[1]), float(xy[0]), float(xy[1]))
+    if box is None:
+        return (xy[0], xy[1], xy[0], xy[1])
+    if all(isinstance(v, int) for v in xy[:2]):         # a centred line of several can sit half a pixel over
+        box = tuple(int(v) if float(v).is_integer() else v for v in box)
+    return box
 
 
 def _ours(text, font) -> bool:

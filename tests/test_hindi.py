@@ -129,6 +129,31 @@ def test_a_hindi_video_burns_every_caption_in_cr_devanagari_and_only_that_video(
     assert cr_language.caption_fonts(engine, "hi") == "", "no fontsdir at all: nothing to add to"
 
 
+def test_a_style_that_speaks_hindi_itself_runs_as_a_hindi_video(tmp_path):
+    """edit_style language Hindi (or a Hindi channel's clone) and a video that asked no language: the Devanagari rule,
+    the speech model's "hi" and the CR Devanagari captions all the same. A Spanish style's own language: as before."""
+    job, fonts = tmp_path / "job", tmp_path / "fonts"
+    job.mkdir()
+    fonts.mkdir()
+    (fonts / cr_language.DEVANAGARI_FONT).write_bytes((FONTS / cr_language.DEVANAGARI_FONT).read_bytes())
+    seen = []
+    engine = fake_engine(job, fonts, seen)
+    engine.STYLE_LANGUAGE = {"desi": "Hindi (हिंदी)", "latino": "Spanish (Español)"}
+    real = engine.run_custom
+    engine.run_custom = lambda *a, **k: (real(*a, **k), seen[-1].update(lang=cr_language.current()))
+    cr_language.install(engine)
+    engine.run_custom("t", 8, style="desi")
+    engine.run_custom("t", 8, style="latino")
+    assert seen[0]["lang"] == "hi" and seen[0]["fonts"].endswith(cr_language.DEVANAGARI_STYLE)
+    assert seen[1]["lang"] == "" and seen[1]["fonts"] == ":fontsdir=/studio/assets/fonts"
+    assert cr_language.current() == "" and engine._FONTSDIR == ":fontsdir=/studio/assets/fonts"
+
+
+def test_the_call_to_action_cue_is_found_however_the_speech_model_spells_it():
+    assert cr_language.words("स्क्रीन पर लिंक।") == cr_language.words("स्क्रिन पर लिंक")
+    assert cr_language.words("¡Mira el enlace!") == ["mira", "el", "enlace"], "other languages as before"
+
+
 SRT_NAMES = {"_script_words_into_srt", "_parse_srt_full", "_fold", "_strip_md", "_no_audio_tags", "_srt_ts"}
 SRT_VALUES = {"_AUDIO_TAG", "_FOLD_EXTRA"}
 
@@ -233,6 +258,27 @@ def test_multiline_hindi_lines_up_like_pillows_own(shaped):
     assert two[3] > one[3] + 40 and two[1] == pytest.approx(one[1], abs=1)
     d.multiline_text((20, 20), "पहली पंक्ति\nदूसरी पंक्ति", font=latin, fill=255, spacing=10)
     assert im.getbbox()[3] > one[3] + 30
+
+
+@pytest.mark.parametrize("anchor", ["la", "mm", "ls", "md", "rs", "ra", "lt", "mb"])
+def test_hindi_sits_where_pillow_puts_text_at_every_anchor(shaped, anchor):
+    """Measured against Pillow's own layout of the same font (text with no conjunct or reordered sign, so unshaped and
+    shaped agree): each line placed with the text's own anchor (a centred two-line headline was 37 px low), the "t"
+    and "b" anchors on the letters without their stroke, and whole-pixel boxes for whole-pixel points."""
+    from PIL import Image, ImageDraw
+    deva = shaped.truetype(str(cr_script_text.font_file(True)), 48)
+    d = ImageDraw.Draw(Image.new("L", (10, 10)))
+    for text in ("कमल नयन", "कमल नयन\nनमन करन"):
+        if "\n" in text and anchor[1] in "tb":
+            continue
+        cr_script_text.uninstall()
+        want = d.textbbox((400, 300), text, font=deva, anchor=anchor, stroke_width=3)
+        cr_script_text.install()
+        got = d.textbbox((400, 300), text, font=deva, anchor=anchor, stroke_width=3)
+        assert got[1] == pytest.approx(want[1], abs=1) and got[3] == pytest.approx(want[3], abs=1), (text, got, want)
+        assert got[0] == pytest.approx(want[0], abs=4) and got[2] == pytest.approx(want[2], abs=4), (text, got, want)
+        if "\n" not in text:
+            assert all(isinstance(v, int) for v in got), "whole pixels, as Pillow's"
 
 
 def test_without_the_shaper_hindi_letters_still_show_never_boxes(monkeypatch):

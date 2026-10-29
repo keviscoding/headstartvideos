@@ -357,8 +357,9 @@ def language_block(lang_id=None) -> str:
 
 def words(text) -> list:
     """A line's words, lower case, without the punctuation around them (¿¡ and quotes included), for matching
-    spoken words against a cue."""
-    return [w for w in (re.sub(r"^[\W_]+|[\W_]+$", "", t).casefold() for t in str(text or "").split()) if w]
+    spoken words against a cue. A Devanagari word is its plain-letter key (latin): Python's \\W takes a Hindi vowel sign
+    for punctuation, and the speech model spells the cue's sounds its own way (स्क्रीन / स्क्रिन)."""
+    return [w for w in (re.sub(r"^[\W_]+|[\W_]+$", "", t).casefold() for t in latin(text).split()) if w]
 
 
 # ── the closing scenes the engine draws when the narrator asks to subscribe or comment ─────────────────────────
@@ -567,6 +568,16 @@ def install(engine):
                 lang = remember(engine.job_dir(title, style))
             except Exception:                                  # noqa: BLE001 - the style's own language then
                 lang = ""
+            if not lang:
+                # a style that speaks Hindi itself (edit_style language, a Hindi channel's clone) and a video that
+                # asked nothing: run as a Hindi video all the same (Devanagari rule, full stops, the speech model told
+                # "hi", captions in CR Devanagari). Every other style's own language runs exactly as before.
+                try:
+                    own = find((getattr(engine, "STYLE_LANGUAGE", None) or {}).get(style))
+                except Exception:                              # noqa: BLE001
+                    own = None
+                if own and script(own["id"]) == "deva":
+                    lang = own["id"]
             if not lang:
                 return _start(title, minutes, *args, **kwargs)
             _current["id"] = lang
