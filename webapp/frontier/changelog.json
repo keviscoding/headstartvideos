@@ -1,5 +1,17 @@
 [
   {
+    "build": 116,
+    "date": "2026-10-29",
+    "title": "Hindi, Fish Audio voices, video previews and your Claude use",
+    "items": [
+      "New: make videos in Hindi. Pick Hindi in Create's Language: the script, the Gemini voice, the captions and the words on screen are all in Hindi, written in Devanagari with Studio's own font, and Roblox Story Shorts work in Hindi too.",
+      "New: Fish Audio voices on your own Fish Audio account. Paste your key in Setup and accounts, then pick your own cloned voices, a voice from Fish's library or any fish.audio voice link in Choose voice.",
+      "Recipes now play a few seconds of a real video when you hover them in Create, and your own styles play a few seconds of a video you made with them. Projects shows how much Claude Studio used today, this week and in total.",
+      "Thumbnails can be turned off in one click from Create's summary to save picture credits, and Nano Banana Pro (Gemini 3 Pro Image) is a new image model in Setup.",
+      "Fixed: vertical Shorts showed cropped to a wide band in Projects, and older clones of Shorts channels stayed 16:9. They now play whole and those clones switch to 9:16 by themselves."
+    ]
+  },
+  {
     "build": 115,
     "date": "2026-10-29",
     "title": "Render in the cloud on your own Modal account",
