@@ -21,7 +21,7 @@ class Stop(BaseException):
     """Claude's usage limit, as cr_claude raises it (a BaseException the engine's handlers don't catch)."""
 
 
-def fake_threed(stop_at=None):
+def fake_threed(stop_at=None, broken=None):
     """An engine shaped like threed.review: per round, previews (_render) then one review call per section (_look) with
     the prompt from SB.review_prompt; a reply fixes the shots it names; the board is saved only after the last round."""
     mod = types.ModuleType("threed")
@@ -41,7 +41,12 @@ def fake_threed(stop_at=None):
         outdir = Path(outdir)
         outdir.mkdir(parents=True, exist_ok=True)
         scenes = []
-        for s in video["scenes"]:
+        for k, s in enumerate(video["scenes"]):
+            if broken == "died" and k == 1:
+                break                                       # the renderer died mid-round (exit 5 on the pod)
+            if broken == "error" and k == 1:
+                scenes.append({"id": s["id"], "status": "error", "error": "GPU process crashed"})
+                continue
             seen["stills"] += 1
             f = outdir / f"{s['id']}_0.50.jpg"
             f.write_bytes(os.urandom(64))                   # a GPU render is never byte-identical
@@ -190,7 +195,7 @@ def test_calls_left_counts_this_rounds_unanswered_sections_and_later_rounds_at_m
 
 # ── final clips ───────────────────────────────────────────────────────────────────────────────────────────────────
 
-def fake_final(mod, stop_after=None):
+def fake_final(mod, stop_after=None, unbuildable=()):
     """The engine's final_render, shaped like it: its stamp is keyed on the whole board and written at the end; with
     no stamp it clears the folder; each clip is written whole (as render.py's .part.mp4 + replace)."""
     rendered = []
@@ -198,7 +203,7 @@ def fake_final(mod, stop_after=None):
     def final_render(engine, job, board, cfg, force):
         out = job / "threed" / "final"
         video = mod._video(board, cfg["sub"])
-        key = resume.digest(video)[:12]
+        key = resume.stamp_key(video)
         st = out / "stamp.json"
         have = {}
         if st.exists() and not force:
@@ -217,8 +222,10 @@ def fake_final(mod, stop_after=None):
         for s in todo:
             if stop_after is not None and len(rendered) == stop_after:
                 raise Stop("Studio closed")
-            (out / f"{s['id']}.mp4").write_bytes(b"clip " + s["id"].encode())
             rendered.append(s["id"])
+            if s["id"] in unbuildable:
+                continue                                    # a scene the engine can't build: no clip
+            (out / f"{s['id']}.mp4").write_bytes(b"clip " + s["id"].encode())
             got[s["id"]] = str(out / f"{s['id']}.mp4")
         st.write_text(json.dumps({"key": key, "mp4": got}), encoding="utf-8")
         return got
@@ -341,3 +348,144 @@ def test_create_says_a_long_3d_video_can_take_more_than_one_usage_window():
     assert "/cr-workspace/claude-use/" in script and "rec.groups" in script
     page = (Path(__file__).parents[1] / "local_runtime" / "cr_workspace.html").read_text(encoding="utf-8")
     assert 'id="crw-claude-use"' in page
+
+
+# ── the review's findings (coordinator, 2026-10-29) ──────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("broken", ["died", "error"])
+def test_a_round_the_renderer_did_not_finish_is_never_kept(job, broken):
+    mod, seen = fake_threed(stop_at=2, broken=broken)
+    resume.install(mod)
+    with pytest.raises(Stop):
+        run(mod, job)
+    assert not (job / "threed" / resume.KEEP / "previews").exists() or not any(
+        (job / "threed" / resume.KEEP / "previews").iterdir())
+    again, seen2 = fake_threed()
+    resume.install(again)
+    run(again, job)
+    assert seen2["renders"][0] == "previews round 1", "a broken round is rendered again"
+
+
+def test_an_updated_engine_reuses_no_answer_or_preview(job, tmp_path):
+    def versioned(version, stop_at=None):
+        mod, seen = fake_threed(stop_at=stop_at)
+        folder = tmp_path / f"engine-{version}"
+        folder.mkdir(exist_ok=True)
+        (folder / "threed.py").write_text(f"# engine {version}", encoding="utf-8")
+        (folder / "render.py").write_text(f"# renderer {version}", encoding="utf-8")
+        mod.__file__, mod.RENDER = str(folder / "threed.py"), folder / "render.py"
+        resume.install(mod)
+        return mod, seen
+    old, _ = versioned("111", stop_at=4)
+    with pytest.raises(Stop):
+        run(old, job)
+    new, seen = versioned("112")
+    run(new, job)
+    assert len(seen["calls"]) == 5 and seen["renders"][0] == "previews round 1"
+
+
+def test_the_answer_key_follows_the_effort_claude_is_asked_for(job):
+    mod, _ = fake_threed(stop_at=4)
+    resume.install(mod)
+    with pytest.raises(Stop):
+        run(mod, job)
+    again, seen = fake_threed()
+    resume.install(again)
+    with cr_claude.call_effort("low"):
+        run(again, job)
+    assert len(seen["calls"]) == 5, "another effort: its own answers"
+
+
+def test_wrappers_pass_any_engine_signature_through(job):
+    got = []
+
+    def _look(engine, prompt, images, model, max_tokens, *, extra=None):
+        got.append(extra)
+        return "{}"
+
+    def _render(engine, video, outdir, args, what, total_scenes=0, progress=None, *, gpu=None):
+        got.append(gpu)
+        return {"scenes": []}
+
+    def _cc(engine, prompt, model, images=None, what="call", *, timeout=None):
+        got.append((what, timeout, cr_claude.stage_label()))
+        return "ok"
+    mod = types.SimpleNamespace(SB=types.SimpleNamespace(_json_object=json.loads), _look=_look, _render=_render, _cc=_cc)
+    resume.install(mod)
+    assert mod._look(None, "p", [], "m", 10, extra=1) == "{}"
+    assert mod._render(None, {"scenes": []}, job / "threed" / "final", ["--quality", "final"], what="final render",
+                       gpu="x") == {"scenes": []}
+    assert mod._cc(None, "p", "m", what="director", timeout=5) == "ok"
+    assert got == [1, "x", ("director", 5, "3D shot planning")]
+
+
+def test_kept_previews_that_cant_be_put_back_are_rendered_again(job, monkeypatch):
+    mod, _ = fake_threed(stop_at=4)
+    resume.install(mod)
+    with pytest.raises(Stop):
+        run(mod, job)
+    if os.name != "nt":
+        kept = next((job / "threed" / resume.KEEP / "previews").rglob("*.jpg"))
+        assert kept.stat().st_nlink >= 2, "kept by a hard link, not a second copy"
+    again, seen = fake_threed()
+    resume.install(again)
+
+    def full(src, dst):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(resume, "_link", full)
+    done = run(again, job)
+    assert seen["renders"][:2] == ["previews round 1", "previews round 2"] and done["moments"]
+
+
+def test_a_finished_final_render_is_left_to_the_engines_own_cache(job):
+    mod, _ = fake_threed()
+    rendered = fake_final(mod, unbuildable=("m2s1",))
+    resume.install(mod)
+    first = mod.final_render(None, job, board(), CFG, False)
+    assert len(first) == 5 and "m2s1" in rendered
+    (job / "threed" / "final" / "_before_repair").mkdir()
+    (job / "threed" / "final" / "_before_repair" / "m0s0.mp4").write_bytes(b"before")
+    mod2, _ = fake_threed()
+    rendered2 = fake_final(mod2, unbuildable=("m2s1",))
+    resume.install(mod2)
+    again = mod2.final_render(None, job, board(), CFG, False)
+    assert rendered2 == ["m2s1"], "only the scene that couldn't be built is tried again, as the engine does"
+    assert len(again) == 5 and (job / "threed" / "final" / "_before_repair" / "m0s0.mp4").is_file()
+    assert (job / "threed" / "final" / "stamp.json").is_file()
+
+
+def test_the_reviewed_rounds_clause_is_for_review_stops_only(tmp_path):
+    assert "3D review rounds" in cr_allowance.stopped_message("x", threed=True)
+    source = (Path(__file__).parents[1] / "local_runtime" / "cr_claude.py").read_text(encoding="utf-8")
+    assert 'threed=label.startswith("3D picture review")' in source
+
+
+def test_the_card_promises_carrying_on_by_itself_only_when_chosen():
+    d = {"fix_first": [], "needs_approval": True, "media": [], "reset_label": "30 Oct, 03:00 AM",
+         "reset_passed": False, "claude_stages": [{"needs_approval": True}],
+         "usage_line": cr_allowance.stopped_message("30 Oct, 03:00 AM", threed=True)}
+    said = cr_recover._tell(dict(d, carry_on_after_reset=False), True, False, [1])
+    assert "You can carry it on where it stopped then" in said and "by itself" not in said
+    assert "Studio carries it on by itself then, as you chose." in cr_recover._tell(dict(d, carry_on_after_reset=True),
+                                                                                   True, False, [1])
+    script = (Path(__file__).parents[1] / "local_runtime" / "cr_workspace.js").read_text(encoding="utf-8")
+    assert "you can carry it on where it stopped once your limit resets" in script
+    assert "carries on where it stopped once your limit resets" not in script
+
+
+def test_a_finished_video_lets_its_kept_previews_go(job):
+    previews = job / "threed" / resume.KEEP / "previews" / "abc"
+    previews.mkdir(parents=True)
+    (previews / "report.json").write_text("{}", encoding="utf-8")
+    (job / cr_recover.RUN_FILE).write_text(json.dumps({"started": 1.0}), encoding="utf-8")
+    cr_recover.run_ended(job, {"state": "done"})
+    assert not (job / "threed" / resume.KEEP / "previews").exists()
+
+
+def test_write_leaves_no_temporary_file(tmp_path, monkeypatch):
+    def refuse(a, b):
+        raise PermissionError(13, "in use")
+    monkeypatch.setattr(resume.os, "replace", refuse)
+    monkeypatch.setattr(resume.time, "sleep", lambda s: None)
+    resume._write(tmp_path / "progress.json", {"a": 1})
+    assert list(tmp_path.iterdir()) == []

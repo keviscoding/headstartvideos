@@ -387,7 +387,7 @@
     const minutes = number('crw-minutes',10,1,60), [lo, hi] = threedEstimate(minutes, checked('crw-threed-quick'));
     // a long 3D video can outlast one Claude Pro usage window (Swapnil's 18 minutes, 2026-10-29): said plainly, with
     // what Studio does when the limit stops it
-    const long = minutes > LONG_3D_MINUTES ? ` On a Claude Pro plan a ${minutes}-minute 3D video can take more than one 5-hour usage window. When the limit stops it, Studio keeps everything made so far, finished 3D review rounds too, and carries on where it stopped once your limit resets.${checked('crw-threed-quick') ? '' : ' Quicker 3D review uses less.'}` : '';
+    const long = minutes > LONG_3D_MINUTES ? ` On a Claude Pro plan a ${minutes}-minute 3D video can take more than one 5-hour usage window. When the limit stops it, Studio keeps everything made so far, finished 3D review rounds too, and you can carry it on where it stopped once your limit resets.${checked('crw-threed-quick') ? '' : ' Quicker 3D review uses less.'}` : '';
     text('crw-threed-note', `3D adds about ${lo} to ${hi} minutes of Claude work to a ${minutes}-minute video, plus rendering: Claude directs every shot and reviews them, on your Claude plan. Quicker 3D review (Creative direction, 3D look) does one review round: about a quarter to a third less.${long}`);
   }
   // Research footage watches YouTube videos on the creator's video-model account before the video is made: what that

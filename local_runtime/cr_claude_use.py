@@ -6,7 +6,7 @@ counted itself.
 - calls: each Claude step of the video's project (its cr-claude-cache files: finished, failed or running); minutes:
   the time those calls took (each call's "seconds" from Studio 112; earlier calls count without a time). Calls run
   side by side, so this is Claude time, not the time on the clock.
-- 3D: the review's round and "about M review calls left" (cr_threed_resume's progress: the calls of this round not yet
+- 3D: the review's round and "up to about M review calls left" (cr_threed_resume's progress: the calls of this round not yet
   answered, plus each later round at most this round's shots; rounds end early when every shot passes).
 """
 from __future__ import annotations
@@ -88,6 +88,6 @@ def summary(home, job, project_id) -> dict:
         parts.append(said + ".")
     if three and not three.get("finished") and three.get("rounds"):
         left = three["left"]
-        parts.append(f"3D review: round {three['round']} of {three['rounds']}, about {left} review "
+        parts.append(f"3D review: round {three['round']} of {three['rounds']}, up to about {left} review "
                      f"call{'' if left == 1 else 's'} left (fewer if the shots pass sooner).")
     return {**use, "threed": three, "line": " ".join(parts)}

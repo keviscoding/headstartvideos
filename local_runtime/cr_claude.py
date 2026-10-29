@@ -841,7 +841,7 @@ class Runtime:
                     if completed is not None else None
                 # Carrying on is the way forward, not a new video (Swapnil, 2026-10-29): the stop says when and how
                 failure_message = cr_allowance.stopped_message((allowance or {}).get("reset_label"),
-                                                               threed=label.startswith("3D"))
+                                                               threed=label.startswith("3D picture review"))
             receipt["usage"] = {"duration_seconds": time.monotonic() - started, "reported": False}
             failed={"state":"failed_local",**named,"seconds":round(receipt["usage"]["duration_seconds"],1),
                 "input_fingerprint":fingerprint,"error_code":receipt["error_code"],"receipt":receipt,

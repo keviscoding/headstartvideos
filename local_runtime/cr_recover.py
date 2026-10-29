@@ -222,6 +222,10 @@ def run_ended(job, state, failure=None) -> None:
                       category=str(failure.get("category") or ""), step=str(failure.get("failed_step") or ""),
                       provider=str(failure.get("provider") or ""))
         _write(Path(job) / RUN_FILE, record)
+        if record["state"] == "done":
+            # a finished video needs no kept 3D review pictures (cr_threed_resume; the answers are small and stay)
+            import shutil
+            shutil.rmtree(Path(job) / "threed" / "review_keep" / "previews", ignore_errors=True)
     except OSError:
         pass
 
@@ -509,7 +513,7 @@ def diagnose(home, job, *, server_stages=None, allowance=None, message="", claud
     out["groups"] = stage_groups(stages)
     if usage:
         import cr_allowance
-        threed = any(s.get("label", "").startswith("3D") for s in stages) or (job / "threed").is_dir()
+        threed = any(s.get("label", "").startswith("3D picture review") for s in stages)
         out["usage_line"] = cr_allowance.stopped_message(out.get("reset_label") or None, threed=threed)
     out["what_to_tell_them"] = _tell(out, spent_claude, spent_money, usage)
     return out
@@ -582,7 +586,8 @@ def _tell(d, spent_claude, spent_money, usage) -> str:
     if usage and d.get("usage_line"):
         parts.append(d["usage_line"].split(". ", 1)[-1])        # "When your Claude limit resets (...), press Try..."
         if d.get("reset_label") and not d.get("reset_passed"):
-            parts.append("Studio can also carry it on by itself then, or now if you added usage.")
+            parts.append("Studio carries it on by itself then, as you chose." if d.get("carry_on_after_reset") else
+                         "You can carry it on where it stopped then, or now if you added usage.")
     parts.append("Everything else already made is reused. Nothing runs again unless you say yes.")
     return " ".join(parts)
 
