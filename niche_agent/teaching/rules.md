@@ -68,6 +68,30 @@ them must say so.
 }
 ```
 
+## 0. The owner's checklist: run it on every niche and show every tick
+
+The owner's doc [D] is called "More Checks Is Better". Every niche you show carries this checklist, one line per item,
+with ✅ or ❌ and the number or channel behind it. A niche passes only with ✅ on items 1-6, 8 and 9 (7 is a bonus).
+Never write "PASSED THE CHECKLIST" without the ticks under it.
+
+1. **Videos get consistent views on average, not random outliers** [D]: the proof channel's median and recent average
+   views, and its share of views in its top video (`one_hit_top_share`).
+2. **Recent videos are consistent: about 7:1 banger to flop** [D] (10:1 ideal, on fewer than 30 videos posted): the
+   banger:flop over the last uploads, and how many videos the channel has posted.
+3. **Has competitors** [D]: name them.
+4. **At least 2 competitors doing well** [D]: the proof channels, each with its numbers.
+5. **No failing competitor with similar quality and recipe (CRUCIAL)** [D]: name the look-alikes you checked. A failing
+   one is a ❌ unless you can show the recipe difference that explains it (pacing, look, length, subjects, cadence,
+   packaging) [K1].
+6. **The emergence stage** [D]: Pioneers → **Emergence (early first movers: where we want to be)** → Mass adoption →
+   Saturated. Say which, with the count of winners and how new they are.
+7. **Somewhat of an entry barrier** [D] (not required): what keeps others out, ideally something Claude removes [K1].
+8. **The recipe and format are clear: we know why it works and who watches** [D]: one line on why it works (the
+   format, the hook, the packaging) and one on the audience (who, adult or not, which countries).
+9. **Monetizable** [D]: the RPM band, an adult or mixed audience, nothing kids or quiz.
+
+Bonus [D]: evergreen, a long-term opportunity rather than a trend. Say which.
+
 ## 1. How outliers work (measure these, never guess them)
 
 1. **Views ÷ subscribers on one video is the headline signal** (2026-10-28, [K2]): "7.1 thousand subscribers and 3
@@ -165,3 +189,17 @@ A bad idea:
 ## 5. Lessons added later
 
 (New dated lessons go here, newest last, each quoting the owner.)
+
+- **2026-10-29, the owner** (on the doc's own examples): "I sent you a bunch of channels that you should take inspiration
+  from for what good niches are, what bad niches are. I even sent you a checklist." The doc's two pictures are the
+  model good and bad: Airspeed (aviation "Why…" explainers in one 3D look, about 6:0, "😎") and Ryoga (anime-drawn
+  fitness, 2:3, "🤮": a 1.7M hit and a 265K hit beside videos stuck at 10K-64K, so the views are random outliers, not a
+  format). Big views on one or two videos never make a niche; the ratio does.
+- **2026-10-29, [T1] Tim Danilov's tiers** (his ranking, used as inspiration, the owner's rules win where they differ):
+  the harder a format is to replicate, the higher it ranks. Top: high-quality, researched documentaries with their own
+  brand (S); a whiteboard + archival military explainer, "every bullet used in the war explained", 10M views (A); a
+  2D finance channel on a new angle (A). Middle: simple 2D/whiteboard true crime that stays relevant 6-12 months (B);
+  trendy formats that will saturate fast, like zombie-apocalypse stories (B, short-lived). Bottom: plain AI-image
+  channels (psychology, insects, ancient humans, AI-image finance) at D-E: cheap, crowded, demonetization risk, often
+  not in English. Tim's own bar ("no more than 2 months old, fewer than 3 competitors") is looser than the owner's
+  checklist: we still need 2+ competitors doing well and no failing same-quality look-alike.
