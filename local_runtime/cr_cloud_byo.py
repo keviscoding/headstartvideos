@@ -259,7 +259,8 @@ class VolumeBucket:
         out = []
         for e in self._entries(folder):
             path = e.path.lstrip("/")
-            if "FILE" not in str(getattr(e, "type", "FILE")).upper() or not path.startswith(prefix):
+            kind = getattr(getattr(e, "type", None), "name", "FILE")     # modal.volume.FileEntryType (FILE = 1)
+            if str(kind).upper() != "FILE" or not path.startswith(prefix):
                 continue
             stamp = time.gmtime(float(getattr(e, "mtime", 0) or 0))
             out.append({"key": path, "size": int(getattr(e, "size", 0) or 0),

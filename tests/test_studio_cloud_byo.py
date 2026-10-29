@@ -45,8 +45,17 @@ class FakeVolume:
         folder = "" if path in ("/", "") else path.rstrip("/") + "/"
         if folder and not any(k.startswith(folder) for k in self.files):
             raise FileNotFoundError(path)
-        return [SimpleNamespace(path=k, type="FileEntryType.FILE", mtime=1_700_000_000, size=len(v))
-                for k, v in self.files.items() if k.startswith(folder) and (recursive or "/" not in k[len(folder):])]
+        import enum
+
+        class FileEntryType(enum.IntEnum):                   # str() of Modal's own is "1", not its name
+            FILE = 1
+            DIRECTORY = 2
+        dirs = sorted({k[:i] for k in self.files for i in range(len(k)) if k[i] == "/" and k.startswith(folder)
+                       and len(k[:i]) > len(folder)})
+        return [SimpleNamespace(path=d, type=FileEntryType.DIRECTORY, mtime=1_700_000_000, size=4096) for d in dirs
+                if recursive] + \
+            [SimpleNamespace(path=k, type=FileEntryType.FILE, mtime=1_700_000_000, size=len(v))
+             for k, v in self.files.items() if k.startswith(folder) and (recursive or "/" not in k[len(folder):])]
 
     def remove_file(self, path, recursive=False):
         if path not in self.files:
@@ -103,6 +112,8 @@ def test_the_farms_bucket_is_the_creators_modal_volume(byo):
     assert not b.exists("status/b.json") and not b.exists("nothing/here.json")
     assert b.presign("jobs/a-assets.zip", 3600) == "modalvol://jobs/a-assets.zip"
     assert [r["key"] for r in b.list("status/")] == ["status/a.json"]
+    b.put_bytes("out/a/a.mp4", b"video")
+    assert [r["key"] for r in b.list("out/")] == ["out/a/a.mp4"], "folders aren't files (the library lists videos)"
     assert b.list("status/")[0]["modified"].endswith(".000Z"), "S3's own date format"
     from farm.s3 import S3Error
     with pytest.raises(S3Error):
