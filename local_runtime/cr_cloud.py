@@ -561,6 +561,17 @@ def blocked(p: dict) -> str:
         return "A character picture of your own renders on this computer for now."
     if (p.get("render_backend") or "original") != "original":
         return "Fast mode renders on this computer."
+    if p.get("language"):
+        # the machine's queue route makes the video in its style's own language: another one is made here for now
+        import cr_language
+        row = cr_language.find(p.get("language"))
+        try:
+            info = json.loads((HOME / "styles" / f"{style}.json").read_text(encoding="utf-8")) \
+                if re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", style) else {}
+        except (OSError, ValueError):
+            info = {}
+        if row and row["id"] != cr_language.style_language(info):
+            return f"A video in {row['name']} renders on this computer for now."
     return ""
 
 

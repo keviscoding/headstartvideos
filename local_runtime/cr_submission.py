@@ -38,10 +38,17 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
     if backend not in {"original", "manimgx"}:
         raise ValueError("Choose the standard renderer or Fast mode.")
     import cr_cta
+    import cr_language
     import cr_threed_look
     try:
         cta = cr_cta.clean(payload.get("cta"))         # your call to action (cr_cta), checked before any work
         threed_look = cr_threed_look.clean(payload.get("threed_look"))
+        # the language this video speaks (cr_language): one Studio offers, or its style's own
+        style_info = (getattr(getattr(studio, "styles", None), "STYLES", None) or {}).get(payload.get("style")) or {}
+        language = cr_language.clean(payload.get("language"), style_info)
+        refusal = cr_language.shorts_refusal(style_info, language, str(style_info.get("label") or "This Shorts recipe"))
+        if refusal:
+            raise ValueError(refusal)
     except ValueError as error:
         from flask import jsonify
         return studio.app.make_response((jsonify(error=str(error)), 400))
@@ -132,6 +139,8 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_pictures_per_min"] = ppm
         if threed_look:
             spec["cr_threed_look"] = threed_look
+        if language:
+            spec["cr_language"] = language          # its script, voice, captions and words on screen (cr_language)
         if payload.get("burn_subs") is False:
             spec["cr_captions"] = "off"          # switched off for this video: a request kept from before never wins
         elif payload.get("cr_captions") == "on":
