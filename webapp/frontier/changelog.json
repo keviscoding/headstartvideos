@@ -4,7 +4,7 @@
     "date": "2026-10-29",
     "title": "New: the niche agent finds niches and video ideas with real outlier proof",
     "items": [
-      "New: ask Claude Code for /niche-agent (or just ask what you should make) and it finds faceless YouTube niches and video ideas with proof: small, new channels whose videos beat their subscriber count many times over, with a repeated formula, not a one-hit.",
+      "New: the niche agent finds niches with real outlier proof. Ask Claude Code for /niche-agent (or just ask what you should make) and it finds faceless YouTube niches and video ideas with proof: small, new channels whose videos beat their subscriber count many times over, with a repeated formula, not a one-hit.",
       "Every niche is checked live on YouTube and in ChannelRecipe's niche database: how young the channel is, its recent average views, its hits against its flops, and the look-alikes that are failing and why. AI slop niches are thrown out.",
       "Each idea comes with its proof video, the twist that makes it yours and which ChannelRecipe recipe can make it. Save the ones you like: they appear under Saved ideas in Create, and Use fills in Create without starting anything.",
       "It's free to run: it reads public YouTube pages and uses your own Claude Code plan. It keeps learning: new examples of good and bad niches from the ChannelRecipe team reach it without an update."
