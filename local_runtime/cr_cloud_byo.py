@@ -711,25 +711,27 @@ class Relay:
             idle_since = time.time()
 
             def work(item=item, answers=answers):
+                text, error = "", ""
                 try:
-                    request = answers.pop("q:" + item["id"], None)
-                    if request is None:
-                        return
-                    if not running_job(item.get("job")):
-                        # only this Studio's own running jobs get its Claude Code and connection: never a question
-                        # someone else with access to the Modal workspace put in the queue, nor a finished job's
-                        text, error = "", "not a cloud video this Studio is running"
-                    else:
-                        text, error = None, ""
                     try:
-                        if text is None:
-                            text, error = cr_cloud.answer(request), ""
+                        raw = answers.pop("q:" + item["id"], None)
+                        if raw is None:
+                            # never silently: the machine would wait half an hour for an answer (2026-10-29: a
+                            # 20 MB question came back from Modal's Dict as nothing)
+                            error = "the question didn't arrive at your Studio"
+                        elif not running_job(item.get("job")):
+                            # only this Studio's own running jobs get its Claude Code and connection: never a
+                            # question someone else with access to the Modal workspace put in the queue
+                            error = "not a cloud video this Studio is running"
+                        else:
+                            text = cr_cloud.answer(_unstow(raw, bucket(home)))
                     except BaseException as e:              # noqa: BLE001 - the engine exits on Claude errors
                         text, error = "", f"{type(e).__name__}: {str(e)[:200]}"
+                    if error:
                         print(f"Studio Cloud: a question from your Modal machine failed here: {error}", flush=True)
                     for _ in range(3):
                         try:
-                            answers.put("a:" + item["id"], {"text": text, "error": error})
+                            _stow(answers, "a:" + item["id"], {"text": text, "error": error}, bucket(home))
                             break
                         except Exception:                   # noqa: BLE001
                             time.sleep(3)
@@ -743,18 +745,54 @@ def ask(request: dict, wait: float = RELAY_WAIT_S) -> dict | None:
     modal = _modal()
     q = modal.Queue.from_name(QUEUE, create_if_missing=True)
     answers = modal.Dict.from_name(ANSWERS, create_if_missing=True)
+    store = VolumeBucket(modal.Volume.from_name(VOLUME, create_if_missing=True))
     rid = secrets.token_hex(10)
     deadline = time.time() + wait
-    answers.put("q:" + rid, request)
+    _stow(answers, "q:" + rid, request, store)
     q.put({"id": rid, "deadline": deadline, "job": os.getenv("CR_CLOUD_JOB", "")},
           partition=os.getenv("CR_RELAY_PARTITION") or "studio")
     while time.time() < deadline:
         got = answers.pop("a:" + rid, None)
         if got is not None:
-            return got
+            try:
+                return _unstow(got, store)
+            except Exception as e:                          # noqa: BLE001 - an answer that can't be read
+                return {"text": "", "error": f"the answer couldn't be read ({type(e).__name__})"}
         time.sleep(1.0)
     answers.pop("q:" + rid, None)
     return None
+
+
+# Modal's Dict carries a relay question or answer up to here; a bigger one (a vision question with a dozen full-size
+# stills is 20-60 MB) goes through the creator's volume, and the Dict carries only where it is. Measured 2026-10-29:
+# Dict values of 20 and 80 MB came back from pop() as nothing or cut short, so a depth check's question was lost and
+# the machine waited on it.
+INLINE_MAX = 1_000_000
+_RELAY_FILE = re.compile(r"relay/[aq]-[0-9a-f]{20}\.json")
+
+
+def _stow(answers, key: str, value, store) -> None:
+    raw = json.dumps(value)
+    if len(raw) <= INLINE_MAX:
+        answers.put(key, value)
+        return
+    path = f"relay/{key.replace(':', '-')}.json"
+    store.put_bytes(path, raw.encode("utf-8"), "application/json")
+    answers.put(key, {"_relay_file": path})
+
+
+def _unstow(value, store):
+    if isinstance(value, dict) and set(value) == {"_relay_file"}:
+        path = str(value["_relay_file"])
+        if not _RELAY_FILE.fullmatch(path):
+            raise ValueError("not a relay file")
+        data = json.loads(store.get_bytes(path).decode("utf-8"))
+        try:
+            store.delete(path)
+        except Exception:                                   # noqa: BLE001 - tidy() removes it after a day
+            pass
+        return data
+    return value
 
 
 def _sse(event: dict) -> bytes:
