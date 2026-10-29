@@ -57,12 +57,11 @@ def test_cloud_work_budgets_and_profiles_validate():
     with pytest.raises(ValidationError): request(review_cap=100000)
 
 
-def _fallback_routes(monkeypatch, *, fallback, reason):
+def _fallback_routes(monkeypatch, *, reason):
     import threading
     import uuid
     import config
     from webapp import fly_bridge
-    monkeypatch.setattr(config, 'NICHE_WEB_FALLBACK', fallback, raising=False)
     monkeypatch.setattr(fly_bridge, 'spawn_niche_scrape_machine_with_reason', lambda job_id: ('', reason))
     events = {'progress': [], 'finished': [], 'ran': []}
     done = threading.Event()
@@ -82,24 +81,17 @@ def _start(ns):
         min_recent_avg_views=0, max_subscribers=300000, trigger='cron')
 
 
-def test_refused_fly_worker_runs_light_discovery_on_the_web_server(monkeypatch):
+def test_a_refused_fly_worker_never_runs_discovery_on_the_web_server(monkeypatch):
+    """Owner (2026-10-29): discovery on our web server would slow the site for everyone. When Fly refuses a Machine
+    (billing, image, credentials), the run fails with Fly's reason and nothing runs here."""
     reason = 'Fly API POST /v1/apps/channelrecipe-cook/machines → 422: {"error":"We require your billing information"}'
-    ns, events, done = _fallback_routes(monkeypatch, fallback=True, reason=reason)
-    job_id = _start(ns)
-    assert done.wait(5)
-    assert events['ran'] == [(job_id, 'web')]
-    assert not events['finished']
-    assert any('Fly worker unavailable' in m and 'billing information' in m for m in events['progress'])
-
-
-def test_without_web_fallback_the_run_records_flys_reason(monkeypatch):
-    ns, events, done = _fallback_routes(monkeypatch, fallback=False, reason='FLY_NICHE_IMAGE missing')
+    ns, events, done = _fallback_routes(monkeypatch, reason=reason)
     with pytest.raises(HTTPException) as error:
         _start(ns)
     assert error.value.status_code == 503
     assert not events['ran']
     (args, kwargs), = events['finished']
-    assert kwargs['status'] == 'error' and 'FLY_NICHE_IMAGE missing' in kwargs['error']
+    assert kwargs['status'] == 'error' and 'billing information' in kwargs['error']
 
 
 def test_fly_refusal_reason_is_returned(monkeypatch):

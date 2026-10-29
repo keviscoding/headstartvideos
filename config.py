@@ -108,8 +108,6 @@ FLY_COOK_APP = (os.getenv("FLY_COOK_APP", "channelrecipe-cook") or "channelrecip
 FLY_COOK_IMAGE = (os.getenv("FLY_COOK_IMAGE", "") or "").strip()
 FLY_NICHE_IMAGE = (os.getenv("FLY_NICHE_IMAGE", "") or "").strip()
 FLY_NICHE_MEMORY_MB = max(256, min(1024, int(os.getenv("FLY_NICHE_MEMORY_MB", "512"))))
-# When Fly refuses a discovery Machine, run the light (HTTP + metadata) hunt on the web server.
-NICHE_WEB_FALLBACK = os.getenv("NICHE_WEB_FALLBACK", "1").strip().lower() in ("1", "true", "yes", "on")
 FLY_COOK_REGION = (os.getenv("FLY_COOK_REGION", "sjc") or "sjc").strip()
 FLY_COOK_CPUS = max(1, int(os.getenv("FLY_COOK_CPUS", "2")))
 FLY_COOK_MEMORY_MB = max(1024, int(os.getenv("FLY_COOK_MEMORY_MB", "4096")))
