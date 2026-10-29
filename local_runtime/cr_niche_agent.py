@@ -901,5 +901,8 @@ def install(studio, token: str, home=None) -> None:
             try:
                 return bridge_call("niche-agent/breakouts?" + breakout_query(request.args))
             except RuntimeError as error:
+                if "not found" in str(error).lower():         # a server from before the niche agent
+                    raise RuntimeError("ChannelRecipe's niche database can't be searched this way yet. Carry on "
+                                       "with live YouTube search (yt_search).") from None
                 raise RuntimeError(f"The niche database couldn't be read: {error}") from None
         return answer(run)
