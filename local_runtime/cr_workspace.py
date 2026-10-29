@@ -167,6 +167,8 @@ def install(studio, activity, *, token, home=None):
             # the language its videos speak by its own file; Create's Language starts here unless Studio has a default
             import cr_language
             row["language"] = cr_language.style_language(info)
+            # a ready-made Shorts recipe whose pipeline makes its Shorts in any language (Roblox Story Shorts first)
+            row["any_language"] = cr_language.short_speaks_any(info)
             # a cloned style's own narrator (its channel's kind of voice, or the one chosen for it): Create shows it
             row["narrator"] = (cr_media.style_voice(row.get("name"), info if isinstance(info, dict) else {})
                                .get("voice") or None)

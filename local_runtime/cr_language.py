@@ -35,52 +35,64 @@ STICKY = "cr-language.json"            # that choice, kept with the video for it
 # The languages every step can make: Claude writes them, Kie's Gemini voices and ElevenLabs read them and the speech
 # model times them. id: the speech model's code. engine: the name the engine's language table and prompts use (its
 # figure formats key off it). cue: the words a call-to-action mention says ("link on screen"), label: the line under
-# it on the card. offered: every font Studio ships draws all of its letters (checked glyph by glyph, 2026-10-27), so
+# it on the card. pace: words a second against English, for the Shorts' words-a-second targets (longer words are
+# fewer a second: Spanish narrators say about as many syllables a second as English ones, in longer words;
+# estimates from published speech-rate measurements, the voice fitter stretches the rest). offered: every font Studio
+# ships draws all of its letters (checked glyph by glyph, 2026-10-27), so
 # Create and make_videos offer it for any recipe. Lilita One (the comic kit) and Share Tech Mono (DOSSIER's teletype)
 # lack Polish, Czech, Romanian, Hungarian and Turkish letters (ą ě ș ő ğ...): those languages are known, so a style
 # that speaks one keeps it, but not offered until those fonts have them. Vietnamese and Cyrillic: most fonts lack them.
 LANGUAGES = (
-    {"id": "en", "offered": True, "name": "English", "native": "English", "engine": "English",
+    {"id": "en", "offered": True, "pace": 1.0, "name": "English", "native": "English", "engine": "English",
      "cue": "link on screen", "label": "Scan the code, or use the link below"},
-    {"id": "es", "offered": True, "name": "Spanish", "native": "Español", "engine": "Spanish (español)",
+    {"id": "es", "offered": True, "pace": 0.85, "name": "Spanish", "native": "Español", "engine": "Spanish (español)",
      "cue": "enlace en pantalla", "label": "Escanea el código o usa el enlace de abajo"},
-    {"id": "pt", "offered": True, "name": "Portuguese", "native": "Português", "engine": "Portuguese (português)",
+    {"id": "pt", "offered": True, "pace": 0.85, "name": "Portuguese", "native": "Português",
+     "engine": "Portuguese (português)",
      "cue": "link na tela", "label": "Escaneie o código ou use o link abaixo"},
-    {"id": "fr", "offered": True, "name": "French", "native": "Français", "engine": "French (français)",
+    {"id": "fr", "offered": True, "pace": 0.95, "name": "French", "native": "Français", "engine": "French (français)",
      "cue": "lien à l'écran", "label": "Scannez le code ou utilisez le lien ci-dessous"},
-    {"id": "de", "offered": True, "name": "German", "native": "Deutsch", "engine": "German (Deutsch)",
+    {"id": "de", "offered": True, "pace": 0.8, "name": "German", "native": "Deutsch", "engine": "German (Deutsch)",
      "cue": "Link im Bild", "label": "Scanne den Code oder nutze den Link unten"},
-    {"id": "it", "offered": True, "name": "Italian", "native": "Italiano", "engine": "Italian (italiano)",
+    {"id": "it", "offered": True, "pace": 0.85, "name": "Italian", "native": "Italiano",
+     "engine": "Italian (italiano)",
      "cue": "link sullo schermo", "label": "Inquadra il codice o usa il link qui sotto"},
-    {"id": "nl", "offered": True, "name": "Dutch", "native": "Nederlands", "engine": "Dutch (Nederlands)",
+    {"id": "nl", "offered": True, "pace": 0.9, "name": "Dutch", "native": "Nederlands",
+     "engine": "Dutch (Nederlands)",
      "cue": "link in beeld", "label": "Scan de code of gebruik de link hieronder"},
-    {"id": "pl", "offered": False, "name": "Polish", "native": "Polski", "engine": "Polish (polski)",
+    {"id": "pl", "offered": False, "pace": 0.8, "name": "Polish", "native": "Polski", "engine": "Polish (polski)",
      "cue": "link na ekranie", "label": "Zeskanuj kod lub użyj linku poniżej"},
-    {"id": "ro", "offered": False, "name": "Romanian", "native": "Română", "engine": "Romanian (română)",
+    {"id": "ro", "offered": False, "pace": 0.85, "name": "Romanian", "native": "Română",
+     "engine": "Romanian (română)",
      "cue": "linkul de pe ecran", "label": "Scanează codul sau folosește linkul de mai jos"},
-    {"id": "cs", "offered": False, "name": "Czech", "native": "Čeština", "engine": "Czech (čeština)",
+    {"id": "cs", "offered": False, "pace": 0.85, "name": "Czech", "native": "Čeština", "engine": "Czech (čeština)",
      "cue": "odkaz na obrazovce", "label": "Naskenuj kód nebo použij odkaz níže"},
-    {"id": "sv", "offered": True, "name": "Swedish", "native": "Svenska", "engine": "Swedish (svenska)",
+    {"id": "sv", "offered": True, "pace": 0.9, "name": "Swedish", "native": "Svenska", "engine": "Swedish (svenska)",
      "cue": "länken på skärmen", "label": "Skanna koden eller använd länken nedan"},
-    {"id": "da", "offered": True, "name": "Danish", "native": "Dansk", "engine": "Danish (dansk)",
+    {"id": "da", "offered": True, "pace": 0.9, "name": "Danish", "native": "Dansk", "engine": "Danish (dansk)",
      "cue": "linket på skærmen", "label": "Scan koden, eller brug linket nedenfor"},
-    {"id": "no", "offered": True, "name": "Norwegian", "native": "Norsk", "engine": "Norwegian (norsk)",
+    {"id": "no", "offered": True, "pace": 0.9, "name": "Norwegian", "native": "Norsk", "engine": "Norwegian (norsk)",
      "cue": "lenken på skjermen", "label": "Skann koden, eller bruk lenken nedenfor"},
-    {"id": "fi", "offered": True, "name": "Finnish", "native": "Suomi", "engine": "Finnish (suomi)",
+    {"id": "fi", "offered": True, "pace": 0.7, "name": "Finnish", "native": "Suomi", "engine": "Finnish (suomi)",
      "cue": "linkki ruudulla", "label": "Skannaa koodi tai käytä alla olevaa linkkiä"},
-    {"id": "hu", "offered": False, "name": "Hungarian", "native": "Magyar", "engine": "Hungarian (magyar)",
+    {"id": "hu", "offered": False, "pace": 0.75, "name": "Hungarian", "native": "Magyar",
+     "engine": "Hungarian (magyar)",
      "cue": "link a képernyőn", "label": "Olvasd be a kódot, vagy használd a lenti linket"},
-    {"id": "tr", "offered": False, "name": "Turkish", "native": "Türkçe", "engine": "Turkish (Türkçe)",
+    {"id": "tr", "offered": False, "pace": 0.75, "name": "Turkish", "native": "Türkçe", "engine": "Turkish (Türkçe)",
      "cue": "ekrandaki bağlantı", "label": "Kodu tara ya da aşağıdaki bağlantıyı kullan"},
-    {"id": "id", "offered": True, "name": "Indonesian", "native": "Bahasa Indonesia", "engine": "Indonesian (Bahasa Indonesia)",
+    {"id": "id", "offered": True, "pace": 0.8, "name": "Indonesian", "native": "Bahasa Indonesia",
+     "engine": "Indonesian (Bahasa Indonesia)",
      "cue": "tautan di layar", "label": "Pindai kodenya atau pakai tautan di bawah"},
-    {"id": "tl", "offered": True, "name": "Filipino", "native": "Filipino", "engine": "Filipino (Tagalog)",
+    {"id": "tl", "offered": True, "pace": 0.8, "name": "Filipino", "native": "Filipino",
+     "engine": "Filipino (Tagalog)",
      "cue": "link sa screen", "label": "I-scan ang code o gamitin ang link sa ibaba"},
 )
 BY_ID = {row["id"]: row for row in LANGUAGES}
 # The ready-made Shorts recipes (cr_shorts: Ranking, 3D, photo and Roblox Shorts) write, voice and caption in their own
-# pipelines, whose prompts say nothing about a language yet: until they do, they speak their recipe's own language,
-# and a Short asked for another one is refused before anything starts rather than made in English.
+# pipelines. A pipeline that reads the language (CR_LANGUAGE, CR_LANGUAGE_CODE, CR_LANGUAGE_PACE) is listed here; the
+# others speak their recipe's own language, and a Short asked for another one is refused before anything starts rather
+# than made in English. Roblox Story Shorts first (a Max customer asked for them in Spanish, 2026-10-29).
+SHORTS_WITH_LANGUAGES = {"roblox"}
 SHORTS_NOTE = ("{recipe} speaks {own} for now: its Shorts are written, voiced and captioned by their own pipeline. "
                "Make it in {own}, or pick a video recipe or a style written in code for a video in {asked}.")
 # Ranking Shorts already speak the language their topic is typed in (its search plan reads it from the topic)
@@ -88,16 +100,28 @@ RANKING_NOTE = ("Ranking Shorts speak the language you type the topic in: leave 
                 "in {asked} for a Short in {asked}.")
 
 
+def short_pipeline(info) -> str:
+    """A ready-made Shorts recipe's pipeline ("roblox", "ranking", "zack3d", "photo2d"), "" for any other style."""
+    if not (isinstance(info, dict) and info.get("format") == "short"):
+        return ""
+    return str((info.get("shorts") or {}).get("pipeline") or "zack3d")
+
+
+def short_speaks_any(info) -> bool:
+    """Whether a ready-made Shorts recipe makes its Shorts in any offered language (its pipeline reads it)."""
+    return short_pipeline(info) in SHORTS_WITH_LANGUAGES
+
+
 def shorts_refusal(info, lang_id, recipe="This Shorts recipe", ranking=None) -> str:
-    """Why a ready-made Shorts recipe can't make this language ("" when it can: its own language, or none asked).
-    ranking: whether it is Ranking Shorts (else read from its file)."""
-    if not lang_id or not (isinstance(info, dict) and info.get("format") == "short"):
+    """Why a ready-made Shorts recipe can't make this language ("" when it can: its own language, none asked, or a
+    pipeline that reads the language). ranking: whether it is Ranking Shorts (else read from its file)."""
+    if not lang_id or not short_pipeline(info) or short_speaks_any(info):
         return ""
     own = style_language(info)
     if lang_id == own:
         return ""
     if ranking is None:
-        ranking = str((info.get("shorts") or {}).get("pipeline") or "") == "ranking"
+        ranking = short_pipeline(info) == "ranking"
     return (RANKING_NOTE if ranking else SHORTS_NOTE).format(recipe=recipe, own=name(own), asked=name(lang_id))
 _current = {"id": ""}                  # the language of the run in this worker process (one video per process)
 
@@ -230,6 +254,12 @@ def current() -> str:
 def whisper_code() -> str:
     """What the speech-timing model is told the narration speaks ("" lets it detect the language, as before)."""
     return _current["id"]
+
+
+def pace(lang_id) -> float:
+    """Words a second in this language against English (1.0 for English or a language Studio doesn't know)."""
+    row = find(lang_id)
+    return float(row["pace"]) if row else 1.0
 
 
 def cue(lang_id=None) -> str:

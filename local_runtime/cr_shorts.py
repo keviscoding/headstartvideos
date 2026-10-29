@@ -394,9 +394,11 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
         import cr_language
         lang = cr_language.remember(job) or cr_language.style_language(info)
         if lang != "en":
-            # the language the Short was asked for (its recipe's own: cr_language refuses another one before the
-            # Short starts), for the pipelines to read once they take one; Ranking follows its topic's language
+            # the language the Short speaks (Create's Language, make_videos options.language, or its recipe's own): a
+            # pipeline in cr_language.SHORTS_WITH_LANGUAGES writes, voices, times and captions it, and sets its words a
+            # second by its pace; the others are refused another language before this (Ranking follows its topic's)
             env["CR_LANGUAGE"], env["CR_LANGUAGE_CODE"] = cr_language.BY_ID[lang]["name"], lang
+            env["CR_LANGUAGE_PACE"] = str(cr_language.pace(lang))
         tone = str((info.get("shorts") or {}).get("tone") or "").strip().lower()
         if tone:
             env["CR_SHORTS_TONE"] = tone                         # dark: true crime / horror (the director's dark-story rules)

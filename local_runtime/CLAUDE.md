@@ -185,7 +185,9 @@ Studio through its own checks, so nothing needs the Studio web page.
   sound → Language). Its script, voice, captions and words on screen are all in that language. Studio keeps the
   creator's last choice for their next videos; a learned style's own language changes with `edit_style` language.
   Choose voice's samples are in English; every voice reads the video in its language. A video in another language
-  than its style's renders on this computer, not Studio Cloud, for now.
+  than its style's renders on this computer, not Studio Cloud, for now. Of the ready-made Shorts recipes, Roblox Story
+  Shorts take any of these languages (on Kie the narrator is a Gemini voice that speaks it); the others speak English
+  for now (Ranking Shorts follow the language the topic is typed in), and `make_videos` says so.
 - Voices: Kie narrates with Gemini voices only (70 of them, in Create → Choose voice, each with a free sample). For
   ElevenLabs voices the customer adds their own ElevenLabs key in Setup & accounts (its whole voice library then shows
   in Choose voice). Studio moved any saved Kie ElevenLabs voice to the Gemini voice of its kind and says so once.

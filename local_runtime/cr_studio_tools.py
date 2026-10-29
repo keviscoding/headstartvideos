@@ -285,9 +285,9 @@ def language_of(cat: dict, row: dict, options: dict) -> str:
         asked = cr_language.clean(options.get("language"), {"language": row.get("language") or "en"})
     except ValueError as error:
         raise Refused(str(error)) from None
-    if kind(row) == "short":
-        # a ready-made Shorts recipe speaks its own language for now (cr_language.SHORTS_NOTE): asked for another,
-        # it says so before anything starts; Studio's default for other videos never applies to it
+    if kind(row) == "short" and not row.get("any_language"):
+        # a ready-made Shorts recipe whose pipeline doesn't take a language yet speaks its own (cr_language.SHORTS_NOTE):
+        # asked for another, it says so before anything starts; Studio's default for other videos never applies to it
         own = row.get("language") or "en"
         if asked and asked != own:
             raise Refused(cr_language.shorts_refusal({"format": "short", "language": own}, asked,
