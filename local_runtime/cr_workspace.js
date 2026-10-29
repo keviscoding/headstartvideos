@@ -1212,6 +1212,40 @@
     // auto: a check that stopped before waits for the button (Studio says so), never runs again by itself
     await claudeStep('verify', true);
   }
+  // Saved ideas (the niche agent, /niche-agent in Claude Code): each with its proof; Use fills Create in, never starts
+  function ideaLine(i) {const p = i.proof || {}, bits = [];
+    if (i.niche) bits.push(i.niche);
+    if (p.channel) bits.push(p.channel + (p.subs ? ` · ${compactNumber(p.subs)} subs` : ''));
+    if (p.views) bits.push(`${compactNumber(p.views)} views` + (p.views_per_sub ? ` (${Math.round(p.views_per_sub)}× subs)` : ''));
+    if (p.channel_age_days != null) bits.push(`channel ${p.channel_age_days} days old`);
+    if (p.banger_flop) bits.push(`banger:flop ${p.banger_flop}`);
+    return bits.join(' · ');}
+  function compactNumber(n) {n = Number(n) || 0; return n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${+(n / 1e3).toFixed(1)}K` : String(Math.round(n));}
+  async function loadIdeas() {
+    let list = []; try {list = (await api('/cr-ideas')).ideas || [];} catch (_) {list = [];}
+    state.ideas = list; hide('crw-ideas', !list.length); text('crw-ideas-count', list.length ? `(${list.length})` : '');
+    const items = list.slice(0, 30).map(i => {const li = el('li', 'crw-idea' + (i.status === 'used' ? ' is-used' : ''));
+      li.append(el('strong', '', i.title), el('p', '', ideaLine(i)));
+      if (i.twist) li.append(el('p', '', i.twist));
+      if (i.risk) li.append(el('p', 'crw-idea-risk', 'Risk: ' + i.risk));
+      const p = i.proof || {}; if (/^https:\/\/(youtu\.be|www\.youtube\.com)\//.test(p.video_url || '')) {const a = el('a', '', 'Watch the proof video ↗'); a.href = p.video_url; a.target = '_blank'; a.rel = 'noopener'; const line = el('p'); line.append(a); li.append(line);}
+      const row = el('div', 'crw-idea-actions'), use = el('button', 'crw-secondary-button', i.status === 'used' ? 'Use again' : 'Use'), drop = el('button', 'crw-text-button', 'Dismiss');
+      use.type = drop.type = 'button'; use.addEventListener('click', () => useIdea(i)); drop.addEventListener('click', () => ideaStatus(i, 'dismissed'));
+      row.append(use, drop); li.append(row); return li;});
+    $('crw-ideas-list').replaceChildren(...items);
+    return list;
+  }
+  async function ideaStatus(i, status) {try {await api('/cr-ideas/' + encodeURIComponent(i.id), {method: 'POST', body: {status}});} catch (_) {} if (status === 'dismissed') loadIdeas();}
+  function useIdea(i) {
+    const recipe = i.style ? findRecipe(i.style) : null;
+    if (recipe) selectRecipe(recipe);
+    setInput('idea', false); $('crw-title').value = i.title || '';
+    if (i.minutes && !isShort(state.selected)) {$('crw-minutes').value = String(i.minutes); chooseGroup('[data-minutes]', 'minutes', String(i.minutes));}
+    if (i.extra && !$('crw-extra').value.includes(i.extra)) $('crw-extra').value = [$('crw-extra').value.trim(), i.extra].filter(Boolean).join('\n\n');
+    save(); summary(); gate(); ideaStatus(i, 'used');
+    if ($('crw-ideas')) $('crw-ideas').open = false;
+    $('crw-title').focus(); $('crw-title').scrollIntoView({block: 'center'});
+  }
   async function start() {
     const draft=restore();
     try {
@@ -1223,6 +1257,7 @@
       const initial=findRecipe(boot.preset?.style||draft.recipe)||findRecipe('documentary')||rows()[0]; if(!initial)throw new Error('No visual recipes are installed. Update this studio from your ChannelRecipe account.');
       if(boot.preset?.features)state.featureDrafts[initial.name]=boot.preset.features;
       selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();checkForUpdate();autoVerify();refreshCloud();
+      loadIdeas().then(list=>{const wanted=new URLSearchParams(location.search).get('idea');const i=wanted&&list.find(x=>x.id===wanted);if(i){useIdea(i);history.replaceState(null,'',location.pathname+location.hash);}});
     }catch(e){error(e.message);text('crw-readiness','The workspace could not finish loading. Keep the launcher open and refresh this page.');}
     finally{gate();}
   }

@@ -50,6 +50,15 @@ def runtime_resources(root: Path):
             if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
                 raise ValueError("Claude Code skills must be ordinary owned files.")
             yield path, ".claude/skills/" + path.parent.name + "/SKILL.md"
+    # the niche agent's teaching (the owner's rules and examples): the server serves the newest copy; Studio keeps
+    # this one for when it can't be reached (cr_niche_agent.teaching_folder)
+    teaching = root / "niche_agent" / "teaching"
+    if teaching.exists():
+        for name in ("rules.md", "examples.jsonl"):
+            path = teaching / name
+            if path.is_symlink() or teaching.is_symlink() or not path.is_file():
+                raise ValueError("The niche agent's teaching must be ordinary owned files.")
+            yield path, "niche_teaching/" + name
     art = runtime / "workspace_art"
     if art.exists():
         if art.is_symlink() or not art.is_dir():
