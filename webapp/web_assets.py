@@ -94,6 +94,18 @@ def cache_for(asked: str, current: str) -> str:
     return YEAR if asked == current else STALE
 
 
+class RevalidatedStatic(StaticFiles):
+    """Files that pages link without a version (relative links, script fetches), as under /creators: browsers and the
+    edge keep them but ask again every time (a 304 when unchanged), so a deploy never pairs a new page with an old
+    stylesheet."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code in (200, 206, 304):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 class CachedStatic(StaticFiles):
     """/static with cache headers: a year at the file's current version, an hour without a version, never stored at
     another version (see the module's note)."""
