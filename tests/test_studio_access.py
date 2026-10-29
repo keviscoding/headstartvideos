@@ -81,6 +81,101 @@ def test_failed_studies_free_their_slot(env):
     studio.native_begin(creator, study(env, 9))
 
 
+def _age(project_id, hours, status=None):
+    """Make a study look as if nothing happened on it for this many hours (and optionally set its status)."""
+    at = studio.time.time() - hours * 3600
+    with studio.db._conn() as conn:
+        conn.execute(studio.db._q("UPDATE frontier_projects SET updated_at=?, status=COALESCE(?, status) WHERE id=?"),
+                     (at, status, project_id))
+
+
+def test_a_study_killed_by_closing_studio_stops_counting_after_six_idle_hours(env):
+    """JamesElyse20 (2026-10-29): two studies died with Studio, never sent a finish, and used two clones forever."""
+    creator = user(1, "daily")
+    started = [studio.native_begin(creator, study(env, n))["project_id"] for n in range(3)]
+    for project in started:
+        _release(project, "5.3-admin.111")           # begun on a Studio that never settles its own studies
+    _age(started[0], 7, "running")                   # a Claude stage was asked, then Studio was closed
+    _age(started[1], 5, "running")                   # quiet for 5 h: may still be working, still counts
+    assert studio.style_clone_usage(creator)["used"] == 2
+    studio.native_begin(creator, study(env, 9))      # the freed clone can be used again
+    with pytest.raises(HTTPException) as err:
+        studio.native_begin(creator, study(env, 10))
+    assert err.value.status_code == 402
+
+
+def test_an_idle_study_counts_again_when_it_does_anything_or_finishes(env):
+    creator = user(1, "daily")
+    first = studio.native_begin(creator, study(env, 0))["project_id"]
+    _release(first, "5.3-admin.111")
+    _age(first, 30, "ready")
+    assert studio.style_clone_usage(creator)["used"] == 0
+    _age(first, 0)                                   # a stage asked or answered: it is working again
+    assert studio.style_clone_usage(creator)["used"] == 1
+    _age(first, 30, "done")                          # finished (late receipt): always counts, however old
+    assert studio.style_clone_usage(creator)["used"] == 1
+    _age(first, 30, "failed")
+    assert studio.style_clone_usage(creator)["used"] == 0
+
+
+def _release(project_id, version):
+    """The Studio release a study was begun on, as its native session saved it."""
+    with studio.db._conn() as conn:
+        row = conn.execute(studio.db._q("SELECT setup_json FROM frontier_native_sessions WHERE project_id=?"),
+                           (project_id,)).fetchone()
+        setup = {**studio.json.loads(row["setup_json"]), "local_version": version}
+        conn.execute(studio.db._q("UPDATE frontier_native_sessions SET setup_json=? WHERE project_id=?"),
+                     (studio.json.dumps(setup), project_id))
+
+
+def test_studio_112_studies_never_stop_counting_by_idling(env):
+    """112+ sends a stopped study's finish itself: holding back a done finish offline never gets a clone back."""
+    creator = user(1, "daily")
+    new, old = (studio.native_begin(creator, study(env, n))["project_id"] for n in range(2))
+    _release(new, "5.3-admin.112")
+    _release(old, "5.3-admin.111")
+    for project in (new, old):
+        _age(project, 30, "ready")
+    assert studio.style_clone_usage(creator)["used"] == 1, "only the pre-112 one stops counting"
+    _age(new, 30, "failed")                          # its own stopped finish frees it
+    assert studio.style_clone_usage(creator)["used"] == 0
+    assert studio._release_number('{"local_version": "5.3-admin.112"}') == 112
+    assert studio._release_number("not json") == studio._release_number("{}") == 0
+
+
+def _save_completed(env, creator, n, version):
+    saved = studio.native_begin(creator, studio.NativeBegin(
+        begin_id=f"save_completed_{n:04d}", title=f"Save completed style: Channel {n}", style="history",
+        setup={**env.proof, "purpose": "creative"}, max_calls=1))["project_id"]
+    _release(saved, version)
+    return saved
+
+
+def test_saving_a_completed_study_counts_as_its_clone_from_studio_112(env):
+    """112 settles a closed Studio's completed study to failed; its Save completed style then uses the clone, so a
+    study plus its save is one clone, never zero."""
+    creator = user(1, "daily")
+    begun = studio.native_begin(creator, study(env, 0))["project_id"]
+    _release(begun, "5.3-admin.112")
+    _age(begun, 0, "failed")
+    assert studio.style_clone_usage(creator)["used"] == 0
+    saved = _save_completed(env, creator, 0, "5.3-admin.112")
+    assert studio.style_clone_usage(creator)["used"] == 1
+    _age(saved, 30, "done")
+    assert studio.style_clone_usage(creator)["used"] == 1, "study + save stays one clone"
+    _age(saved, 30, "failed")
+    assert studio.style_clone_usage(creator)["used"] == 0, "a save that failed saved nothing"
+
+
+def test_an_older_studios_save_never_counts_so_no_count_jumps_on_deploy(env):
+    creator = user(1, "daily")
+    begun = studio.native_begin(creator, study(env, 0))["project_id"]
+    _age(begun, 0, "failed")
+    saved = _save_completed(env, creator, 0, "5.3-admin.111")
+    _age(saved, 0, "done")
+    assert studio.style_clone_usage(creator)["used"] == 0
+
+
 def test_videos_and_other_creative_work_never_count(env):
     creator = user(1, "daily")
     for n in range(5):

@@ -79,7 +79,7 @@ _STAGE_CATEGORIES = {"timeout": "timeout", "usage_limit": "usage_limit", "cancel
                      "authentication_required": "auth"}
 
 
-def _failure_record(home, saved, error, step=""):
+def _failure_record(home, saved, error, step="", category=""):
     """Why this study stopped, privacy-safe (cr_failure): sent with its stopped finish so ChannelRecipe can count it."""
     try:
         import cr_failure
@@ -88,7 +88,7 @@ def _failure_record(home, saved, error, step=""):
         return cr_failure.from_exception(error, step=step or PHASE_STEPS.get(saved.get("phase"), "study"),
                                          source="style_study", recipe=spec.get("base_style", ""),
                                          titles=[spec.get("title"), spec.get("label"), spec.get("name")],
-                                         category=_STAGE_CATEGORIES.get(native, ""),
+                                         category=category or _STAGE_CATEGORIES.get(native, ""),
                                          provider="claude" if native else "")
     except Exception:                                           # noqa: BLE001 - the stop itself is what matters
         return None
@@ -729,6 +729,185 @@ def settle_improvement(home, operation_id, bridge) -> dict:
     return _saved(home, operation_id, bridge)[1]
 
 
+STUDIO_CLOSED = "Studio was closed during this study, so it stopped."
+# Studio stayed open but the study's own process ended without a word (the system ended it, out of memory)
+WORKER_ENDED = "The study's own process ended unexpectedly, so it stopped."
+
+
+def pid_alive(pid) -> bool:
+    """Is this process still running? os.kill(pid, 0) ENDS a process on Windows (TerminateProcess), so Windows asks
+    OpenProcess and waits on it for no time instead."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x00100000, False, pid)         # SYNCHRONIZE
+        if not handle:
+            return False
+        try:
+            return kernel.WaitForSingleObject(handle, 0) == 258      # WAIT_TIMEOUT: still running
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def worker_alive(folder, saved) -> bool:
+    """Is a worker still on this study? Its saved process first (ended = nobody is), then the study folder's lock,
+    which run() holds for the whole study and the system lets go of however its process ends (so a pid reused by
+    another program never keeps a dead study "running")."""
+    pid = saved.get("pid")
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and not pid_alive(pid):
+        return False
+    return change_working(folder)
+
+
+# This Studio process, written in launch.json beside the worker it starts: its own worker thread marks the worker's
+# end ("finished") the moment the process returns, so until then a study it launched was never "closed with Studio".
+PROCESS = secrets.token_hex(8)
+LAUNCH_GRACE_S = 120
+
+
+def _launcher_will_mark(folder, saved) -> bool:
+    """The Studio that started this worker is still running and hasn't marked the worker's end yet (it does so right
+    after the process returns): the study is not settled until it has, so it is never blamed on a closed Studio."""
+    launch = _read(Path(folder) / "launch.json")
+    if launch.get("state") != "running":
+        return False
+    if launch.get("studio") == PROCESS:
+        return True
+    # another Studio process that is still running (or a pid reused since): a short grace after the study's last sign
+    return pid_alive(launch.get("studio_pid")) and time.time() - _last_activity(folder, saved) < LAUNCH_GRACE_S
+
+
+def _last_activity(folder, saved) -> float:
+    """When the study last wrote anything (its phase, its log): when it really stopped, for its elapsed time."""
+    times = [float(saved.get("started_at") or 0)]
+    for name in ("operation.json", "worker.log"):
+        try:
+            times.append((Path(folder) / name).stat().st_mtime)
+        except OSError:
+            pass
+    return max(times) or time.time()
+
+
+def settle_study(home, operation_id, bridge, *, send=True) -> dict:
+    """A study no worker is on any more never stays "running" (JamesElyse20, 2026-10-29: Studio closed mid-study,
+    the worker died with no exception, and the study read "Studying the channel..." forever while its clone stayed
+    used). One left running stops, saying Studio was closed, with a stopped finish for ChannelRecipe (so it no longer
+    uses a clone) and Study again on its page; one left validated (Claude's work done) is saved as the style, nothing
+    redone. A change to a style is settled by settle_improvement; a metadata-only save is resumed by its own button.
+    send=False only saves the finish here (a page that must not call the network); sync() or the next start sends it.
+    Returns the saved record as it is after."""
+    folder, saved = _saved(home, operation_id, bridge)
+    if saved.get("renderer_improve"):
+        return settle_improvement(home, operation_id, bridge) if send else saved
+    if (saved.get("state") not in {"running", "validated"} or saved.get("metadata_only")
+            or worker_alive(folder, saved) or _launcher_will_mark(folder, saved)):
+        return saved
+    held = _lock(folder)
+    try:
+        held.__enter__()
+    except RuntimeError:                                    # a worker (or a request) is on it now
+        return saved
+    try:
+        folder, saved = _saved(home, operation_id, bridge)
+        if saved.get("state") == "validated":
+            try:
+                _publish(home, folder, saved)               # free: the style Claude finished, saved as it is
+            except (OSError, RuntimeError, ValueError, KeyError):
+                pass
+        if saved.get("state") == "running":
+            # Studio writes launch.json "finished" when the worker's process returns: without it, Studio itself closed
+            ended = _read(folder / "launch.json").get("state") == "finished"
+            error = StudyStopped(WORKER_ENDED if ended else STUDIO_CLOSED)
+            _record_failure(folder, saved, error)
+            saved.update(state="failed", completed_at=_last_activity(folder, saved),
+                         stopped_by="worker_ended" if ended else "studio_closed")
+            if saved.get("project_id"):
+                saved["finish_receipt"] = {"project_id": saved["project_id"], "status": "failed", "artifacts": [],
+                                           "error_code": "runtime_failed"}
+                failure = _failure_record(home, saved, error, category="crash" if ended else "studio_closed")
+                if failure:
+                    saved["finish_receipt"]["failure"] = failure
+            _write(folder / "operation.json", saved)
+    finally:
+        held.__exit__(None, None, None)
+    if send:
+        try:
+            _sync(folder, saved, bridge)
+        except Exception:                                   # noqa: BLE001 - kept for the next start or Sync
+            pass
+    return _saved(home, operation_id, bridge)[1]
+
+
+def settle_all(home, bridge) -> int:
+    """On Studio's start: every study left running or validated by a Studio that closed is settled (settle_study),
+    and every finish still waiting (offline at the time) is sent. Never starts Claude, a download or a render.
+    Returns how many studies changed."""
+    changed = 0
+    root = _folder(home)
+    if not root.is_dir():
+        return 0
+    for folder in sorted(root.glob("op_*")):
+        try:
+            if not re.fullmatch(r"op_[a-f0-9]{24}", folder.name) or folder.is_symlink() or not folder.is_dir():
+                continue
+            before = _read(folder / "operation.json")
+            after = before
+            if before.get("state") in {"running", "validated", "prepared"}:
+                # the workspace list (or the study's page) may hold the folder for a moment as Studio starts: tried
+                # again for up to 10 s, unless a worker really is on it (its process still running)
+                for attempt in range(20):
+                    after = settle_study(home, folder.name, bridge)
+                    if (after.get("state") not in {"running", "validated"} or after.get("metadata_only")
+                            or pid_alive(after.get("pid"))):
+                        break
+                    time.sleep(0.5)
+                changed += after.get("state") != before.get("state")
+            if after.get("finish_receipt") and after.get("state") in {"failed", "complete_local", "complete"}:
+                sync(home, folder.name, bridge)             # saved metadata only: never a model call
+        except Exception:                                   # noqa: BLE001 - another account's or a broken study
+            continue
+    return changed
+
+
+def refresh_retry(home, operation_id, bridge) -> dict:
+    """Study again on a stopped study: its saved preview (the channels' listed videos) is good for a day, and a study
+    stopped by a closed Studio is usually found the next day, so the same listing is saved again for today (no
+    YouTube or model call). Returns the study's status with a retry_spec naming it."""
+    result = status(home, operation_id, bridge)            # checks this account owns it
+    spec = result.get("retry_spec")
+    if result.get("state") != "failed" or not spec:
+        raise RuntimeError("Only a stopped study can be studied again.")
+    path = _folder(home) / ".previews" / (spec["preview_id"] + ".json")
+    listed = _read(path)
+    if not listed:                                          # gone: rebuilt from the study's own references
+        listed = {"reference_url": spec["reference_url"], "no_model_requests": True,
+                  "candidates": [{key: row[key] for key in row if key not in
+                                  ("duration", "named", "ratio", "median", "rank")} for row in spec["references"]]}
+        if len(spec.get("reference_urls") or []) > 1:
+            listed.update(reference_urls=list(spec["reference_urls"]), combined=True)
+        spec["preview_id"] = "pv_" + _hash(listed)
+        path = _folder(home) / ".previews" / (spec["preview_id"] + ".json")
+    _write(path, {**{k: v for k, v in listed.items() if k != "created_at"}, "created_at": time.time()})
+    return result
+
+
 def prepare_improvement(home, source_operation, request, proof, bridge):
     """One change to a coded style's renderer, in the creator's words, as its own owned operation (Improve this style
     on the study page). Nothing runs here; the style changes only when the creator saves the new version. One change
@@ -951,6 +1130,7 @@ def status(home, operation_id, bridge):
                                        and failure_code != "metadata_handoff_failed"
                                        and not (said and stop_type == "StudyStopped"))
     result["stop_reason"] = said
+    result["studio_closed"] = state == "failed" and saved.get("stopped_by") == "studio_closed"
     if state == "failed" and not result["metadata_recovery_available"]:
         result["retry_spec"] = {key: copy.deepcopy(saved["spec"][key]) for key in (
             "preview_id", "reference_url", "reference_urls", "references", "base_style", "name", "label", "title",

@@ -504,9 +504,18 @@ def install(studio, activity, *, token, home=None):
                             or record.resolve().parent != folder.resolve()):
                         continue
                     candidates.append((record.stat().st_mtime, folder))
-            operations = []
+            operations, other_account = [], 0
             for _, folder in sorted(candidates, reverse=True)[:12]:
                 try:
+                    if not cr_style_clone._read(folder / "operation.json").get("renderer_improve"):
+                        try:
+                            # a study whose worker died with a closed Studio reads "stopped", never "Studying..."
+                            # forever: settled here on this computer only (a GET here never calls the network). Its
+                            # stopped finish waits in operation.json and goes from the study's own status (page or
+                            # Claude Code's progress), at most once a minute, or from the next start of Studio
+                            cr_style_clone.settle_study(home, folder.name, cr_bridge, send=False)
+                        except Exception:             # noqa: BLE001 - status below says what it can
+                            pass
                     status = cr_style_clone.status(home, folder.name, cr_bridge)
                     if status.get("renderer_improve"):
                         continue                      # a change to a saved style shows on that style's own page
@@ -517,12 +526,19 @@ def install(studio, activity, *, token, home=None):
                         "title": _text(spec.get("title"), 300), "label": _text(spec.get("label"), 80),
                         "state": status["state"], "phase": status["phase"], "percent": status["percent"],
                         "elapsed_seconds": status["elapsed_seconds"],
+                        "studio_closed": status.get("studio_closed") is True,
+                        "can_study_again": bool(status.get("retry_spec")),
+                        # its Claude work finished before it stopped: the page saves it (Save completed style)
+                        "can_save_completed": status.get("metadata_recovery_available") is True,
                         "link": "/cr-style-clone?operation=" + folder.name})
-                except (OSError, ValueError, RuntimeError, KeyError, TypeError, AttributeError):
+                except RuntimeError as error:
+                    # a study another ChannelRecipe connection started: counted, never shown (no title or brief)
+                    other_account += "Reconnect" in str(error)
+                except (OSError, ValueError, KeyError, TypeError, AttributeError):
                     # Old malformed/foreign operations never expose credentials,
                     # private briefs, model proofs or authoring responses.
                     continue
-            return protect(jsonify(busy=busy, operations=operations))
+            return protect(jsonify(busy=busy, operations=operations, other_account=other_account))
         except Exception as error:
             return failure(error)
 

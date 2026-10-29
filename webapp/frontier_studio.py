@@ -36,15 +36,15 @@ from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.111"
+VERSION = "5.3-admin.112"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.111.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.112.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104", "5.3-admin.105", "5.3-admin.106", "5.3-admin.107", "5.3-admin.108", "5.3-admin.109", "5.3-admin.110", "5.3-admin.111")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98", "5.3-admin.99", "5.3-admin.100", "5.3-admin.101", "5.3-admin.102", "5.3-admin.103", "5.3-admin.104", "5.3-admin.105", "5.3-admin.106", "5.3-admin.107", "5.3-admin.108", "5.3-admin.109", "5.3-admin.110", "5.3-admin.111", "5.3-admin.112")
 # Releases that may also START or RESUME a video: every release from MIN_SUPPORTED_RELEASE to the newest. A new release
 # never forces an update (2026-10-24: with "the newest two", five releases in one night made creators stop their work
 # to update, twice). Raise the minimum only on purpose, when older Studios can no longer work with this server, and say
@@ -190,6 +190,27 @@ STUDIO_UPGRADE_MESSAGE = ("ChannelRecipe Studio is included in the Creator, Pro 
                           "Choose a plan at " + UPGRADE_URL + " to download and use it.")
 # Style studies begin with this title; the allowance counts them per account.
 STYLE_STUDY_PREFIX = "Style study: "
+# A completed study whose own save stopped is saved by a separate project with this title (Studio's Save completed
+# style): from Studio 112 the study itself then ends "failed" (a closed Studio's study settles so), so a save begun by
+# 112+ is what counts as its clone (never refused at begin: the creator's paid work is always saved). Saves by older
+# Studios never count, so nobody's count jumps when this deploys.
+SAVE_COMPLETED_PREFIX = "Save completed style: "
+# A study begun by a Studio before 112 and closed mid-study died with no finish, so it stayed "running" and counted
+# forever. Such a study, not done and with no activity (a Claude stage asked or answered, its finish) for this long,
+# stops counting; it counts again the moment it does anything. Studio 112 and later send a stopped study's finish
+# themselves, so theirs always count until that finish (no holding back a done finish to get a clone back).
+STALE_STUDY_S = 6 * 3600
+SETTLES_ITS_STUDIES = 112
+
+
+def _release_number(setup_json) -> int:
+    """Studio's release number from a native session's saved setup ("5.3-admin.111" -> 111), 0 when unknown."""
+    try:
+        version = str((json.loads(setup_json or "{}") or {}).get("local_version") or "")
+    except (TypeError, ValueError):
+        return 0
+    match = re.search(r"\.(\d+)$", version)
+    return int(match.group(1)) if match else 0
 
 
 def is_admin(user: dict | None) -> bool:
@@ -210,16 +231,29 @@ def style_clone_usage(user: dict) -> dict:
     """Style studies this account has started or kept, against its plan limit.
 
     Stopped studies that failed outright don't use up the allowance, so a
-    creator can try again with the same reference.
+    creator can try again with the same reference. Neither does one left
+    unfinished with no activity for STALE_STUDY_S, begun by a Studio before
+    112 (closed mid-study, it never said so). A finished study always counts,
+    and so does a completed study's separate save (SAVE_COMPLETED_PREFIX)
+    begun by Studio 112 or later.
     """
     initialize()
     with db._conn() as conn:
         grant = conn.execute(db._q("SELECT extra, counted_from FROM style_clone_grants WHERE user_id=?"),
                              (user["id"],)).fetchone()
         extra, since = (int(grant["extra"]), float(grant["counted_from"])) if grant else (0, 0.0)
-        used = conn.execute(db._q("""SELECT COUNT(*) AS n FROM frontier_projects
-            WHERE user_id=? AND title LIKE ? AND status != 'failed' AND created_at > ?"""),
-            (user["id"], STYLE_STUDY_PREFIX + "%", since)).fetchone()["n"]
+        rows = conn.execute(db._q("""SELECT p.title, p.status, p.updated_at, s.setup_json FROM frontier_projects p
+            LEFT JOIN frontier_native_sessions s ON s.project_id = p.id
+            WHERE p.user_id=? AND (p.title LIKE ? OR p.title LIKE ?) AND p.created_at > ? AND p.status != 'failed'"""),
+            (user["id"], STYLE_STUDY_PREFIX + "%", SAVE_COMPLETED_PREFIX + "%", since)).fetchall()
+    stale = time.time() - STALE_STUDY_S
+
+    def counts(row) -> bool:
+        settles = _release_number(row["setup_json"]) >= SETTLES_ITS_STUDIES
+        if row["title"].startswith(SAVE_COMPLETED_PREFIX):
+            return settles
+        return row["status"] == "done" or float(row["updated_at"]) > stale or settles
+    used = sum(1 for row in rows if counts(row))
     limit = plans.style_clone_limit(user.get("plan"), is_admin=is_admin(user))
     if limit is not None:
         limit += extra

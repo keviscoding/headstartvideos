@@ -8,6 +8,7 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 
 import cr_bridge
 import cr_claude
@@ -35,6 +36,25 @@ def install(studio, activity, setup_status, *, token, home=None):
     app = studio.app
     # A reservation for another studio task is not evidence this worker lives.
     live_workers = set()
+    sent_at = {}                           # operation -> when its waiting stopped finish was last tried
+
+    def send_waiting_finish(operation):
+        """A study's finish not yet sent (settled by the workspace list, which never calls the network, or offline
+        then) goes now, whoever settled it: a stopped one's, so its clone stops counting, or a left-behind finished
+        one's, so it counts and is done. Saved metadata only, tried at most once a minute."""
+        try:
+            saved = cr_style_clone._saved(home, operation, cr_bridge)[1]
+        except Exception:                  # noqa: BLE001 - status says why below
+            return
+        if not saved.get("finish_receipt") or saved.get("state") not in {"failed", "complete_local"}:
+            return
+        if time.monotonic() - sent_at.get(operation, -1e9) < 60:
+            return
+        sent_at[operation] = time.monotonic()
+        try:
+            cr_style_clone.sync(home, operation, cr_bridge)
+        except Exception:                  # noqa: BLE001 - the page offers Sync, and the next start sends it
+            pass
 
     def local_access(mutation=False):
         if request.host not in {"127.0.0.1:7860", "localhost:7860"}:
@@ -80,14 +100,21 @@ def install(studio, activity, setup_status, *, token, home=None):
                     cr_style_clone.settle_improvement(home, operation, cr_bridge)
                 except Exception:          # noqa: BLE001 - status says what it can below
                     pass
+                try:                       # nor a study whose worker died with a closed Studio (JamesElyse20)
+                    cr_style_clone.settle_study(home, operation, cr_bridge, send=False)
+                except Exception:          # noqa: BLE001 - status says what it can below
+                    pass
+        send_waiting_finish(operation)     # off the shared lock: the network
+        with activity.lock:
             result = cr_style_clone.status(home, operation, cr_bridge)
             working = operation in live_workers
             busy = activity.busy()
         if result["state"] == "prepared" and working:
             result.update(state="running", message="Starting your approved study and checking its owned Claude session.")
         elif result["state"] == "running" and not working:
-            result.update(state="failed", needs_manual_recovery=True,
-                message="This study was interrupted. Review its saved Claude stages in setup; it will not restart automatically.")
+            # settle_study found its worker still at work: started by a Studio before this one, it carries on
+            result.update(message="This study is still working from before Studio restarted. Keep Studio open "
+                                  "until it finishes.")
         elif result["state"] == "validated":
             result.update(state="pending", reconciliation_pending=True,
                 message="Your validated kit is saved. Sync to publish its preset and completion record; no generation will repeat.")
@@ -128,6 +155,7 @@ def install(studio, activity, setup_status, *, token, home=None):
                     result = subprocess.run([sys.executable, str(home / "cr_style_clone.py"), "--operation", operation],
                         cwd=home, stdout=handle, stderr=subprocess.STDOUT)
                 cr_claude._private_write(location, {"state": "finished", "returncode": result.returncode})
+                print("The style study has ended. Its page in Studio shows how it went.", flush=True)
             except BaseException:
                 # Details stay local. Prepared means no creative stage started;
                 # running/failed must be reviewed rather than blindly rerun.
@@ -137,9 +165,14 @@ def install(studio, activity, setup_status, *, token, home=None):
                     live_workers.discard(operation)
                     activity.release(reservation)
         try:
-            cr_claude._private_write(location, {"state": "running"})
+            # this Studio process: until its thread marks the worker finished, the study is never "closed with Studio"
+            cr_claude._private_write(location, {"state": "running", "studio": cr_style_clone.PROCESS,
+                                                "studio_pid": os.getpid()})
             live_workers.add(operation)
             threading.Thread(target=work, daemon=True).start()
+            # in the launcher's window too: closing it stops the study (plain ASCII for any Windows console)
+            print("A style study is running. Keep this launcher window open until it finishes: closing it (or "
+                  "shutting down the computer) stops the study. Closing the browser tab does not.", flush=True)
         except BaseException:
             try:
                 cr_claude._private_write(location, {"state": "finished", "returncode": 1})
@@ -300,6 +333,16 @@ def install(studio, activity, setup_status, *, token, home=None):
             data()
             cr_style_clone.sync(home, operation, cr_bridge)
             return no_store(jsonify(safe_status(operation)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/<operation>/again")
+    def cr_style_again(operation):
+        """Study again on a stopped study: its saved listing of the channels is saved again for today (a day-old
+        one is refused at start), so the same links and choices fill the form. No YouTube, model or paid call."""
+        try:
+            data()
+            return no_store(jsonify(cr_style_clone.refresh_retry(home, operation, cr_bridge)))
         except Exception as error:
             return error_response(error)
 

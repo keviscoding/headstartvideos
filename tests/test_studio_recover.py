@@ -85,8 +85,10 @@ def test_a_failed_claude_step_is_named_with_its_reason_cost_and_reset(tmp_path):
     assert s["stage_id"] == S1 and s["error_code"] == "usage_limit" and s["spent"] == "unclear"
     assert s["may_have_spent"] and s["step"] == "a Claude step that looks at pictures (Opus)"
     assert s["reset_label"].startswith("26 Oct") and s["reset_passed"] is False
-    assert "usage resets at 26 Oct" in d["what_to_tell_them"] and "Nothing runs again unless you say yes" in \
-        d["what_to_tell_them"]
+    assert "When your Claude limit resets (26 Oct" in d["what_to_tell_them"] and "press Try again and carry on" in \
+        d["what_to_tell_them"] and "Nothing runs again unless you say yes" in d["what_to_tell_them"]
+    assert "create a new video" not in d["what_to_tell_them"] + d["usage_line"]
+    assert [g["line"] for g in d["groups"]] == ["Claude picture checks (Opus): 1 call stopped at your Claude plan's limit."]
     assert not d["free_to_resume"]
 
 

@@ -6,7 +6,7 @@
   const boot = window.CR_WORKSPACE || {};
   const state = {catalog: null, setup: null, selected: null, inspected: null, input: 'idea', narration: 'ai',
     audio: '', featureDrafts: {}, captionsDrafts: {}, language: null, page: 'create', family: 'all', projectFilter: 'all',
-    queue: [], jobs: [], studies: [], busy: false, submitting: false, uploading: false,
+    queue: [], jobs: [], studies: [], otherStudies: 0, busy: false, submitting: false, uploading: false,
     openJob: null, currentOutput: null, timer: null, refresh: null, optionalLoaded: false, projectNodes: new Map()};
   const STORAGE = 'channelrecipe.workspace.v1';
   const posterQueue = [];
@@ -374,6 +374,7 @@
   // video spent 84 of its 116 minutes in Claude Opus, 2026-10-25). Said before Create, with Quicker 3D review. Sections
   // of about 50 s, three at a time; one Claude round took 8-22 minutes on customers' runs (a 2-minute video's calls
   // alone were ~69 min); Quicker 3D review measured 22-32% less, not half.
+  const LONG_3D_MINUTES = 8;
   function threedEstimate(minutes, quick) {
     const groups = Math.max(1, Math.ceil(minutes * 60 * 0.85 / 50 / 3)), rounds = quick ? 1 : 3;
     const calls = (1 + rounds) * groups, nearest = v => Math.max(5, Math.round(v / 5) * 5);
@@ -384,7 +385,10 @@
     hide('crw-threed-note', !on);
     if (!on) return;
     const minutes = number('crw-minutes',10,1,60), [lo, hi] = threedEstimate(minutes, checked('crw-threed-quick'));
-    text('crw-threed-note', `3D adds about ${lo} to ${hi} minutes of Claude work to a ${minutes}-minute video, plus rendering: Claude directs every shot and reviews them, on your Claude plan. Quicker 3D review (Creative direction, 3D look) does one review round: about a quarter to a third less.`);
+    // a long 3D video can outlast one Claude Pro usage window (Swapnil's 18 minutes, 2026-10-29): said plainly, with
+    // what Studio does when the limit stops it
+    const long = minutes > LONG_3D_MINUTES ? ` On a Claude Pro plan a ${minutes}-minute 3D video can take more than one 5-hour usage window. When the limit stops it, Studio keeps everything made so far, finished 3D review rounds too, and you can carry it on where it stopped once your limit resets.${checked('crw-threed-quick') ? '' : ' Quicker 3D review uses less.'}` : '';
+    text('crw-threed-note', `3D adds about ${lo} to ${hi} minutes of Claude work to a ${minutes}-minute video, plus rendering: Claude directs every shot and reviews them, on your Claude plan. Quicker 3D review (Creative direction, 3D look) does one review round: about a quarter to a third less.${long}`);
   }
   // Research footage watches YouTube videos on the creator's video-model account before the video is made: what that
   // adds, said before Create (a customer's 10-minute video watched clips for 22 hours, 2026-10-25). The numbers are
@@ -486,7 +490,9 @@
     { const tab = document.querySelector('[data-family="shorts"]'); if (tab) tab.hidden = !rows().some(isShort); }   // private recipes: no tab without them
     const query = $('crw-gallery-search').value.trim().toLowerCase();
     const recipes = rows().filter(r => (state.family === 'all' || (state.family === 'custom' ? r.custom : familyKey(r.family) === state.family)) && [r.label,r.description,...(r.capabilities || [])].join(' ').toLowerCase().includes(query));
-    $('crw-gallery-grid').replaceChildren(...recipes.map(r => recipeCard(r, selected=>inspect(selected,true)))); text('crw-gallery-count', `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}`); hide('crw-gallery-empty',!!recipes.length); hide('crw-gallery-detail',!recipes.length);
+    // My styles also shows the styles still being studied or stopped (a closed Studio), never an empty tab for them
+    const studies = state.family === 'custom' && !query ? unfinishedStudies() : [];
+    $('crw-gallery-grid').replaceChildren(...recipes.map(r => recipeCard(r, selected=>inspect(selected,true))), ...studies.map(studyCard)); text('crw-gallery-count', `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}${studies.length ? ` · ${studies.length} style ${studies.length === 1 ? 'study' : 'studies'} not finished` : ''}`); hide('crw-gallery-empty',!!(recipes.length || studies.length)); hide('crw-gallery-detail',!recipes.length);
     if (state.inspected && recipes.includes(state.inspected)) inspect(state.inspected); else if (recipes[0]) inspect(recipes[0]);
   }
   function openGallery() {gallery(); $('crw-gallery').showModal(); $('crw-gallery-search').focus();}
@@ -495,9 +501,12 @@
     const clones = state.setup?.account?.style_clones; box.replaceChildren();
     if (!clones) {box.hidden = true; return;}
     const used = Number(clones.used || 0), limit = clones.limit;
-    const label = el('span','crw-clone-count', limit == null ? `${used} style${used === 1 ? '' : 's'} cloned · unlimited on your plan` : `${used} of ${limit} style clones used`);
+    const label = el('span','crw-clone-count', limit == null ? `${used} style${used === 1 ? '' : 's'} cloned · unlimited on your plan` : `${used} of ${limit} style clones used on your plan`);
     box.append(label);
-    if (limit != null) {const bar = el('span','crw-clone-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, limit ? used / limit * 100 : 100)}%`; bar.append(fill); box.append(bar);}
+    // the plan's clones used, never a study's progress (JamesElyse20 read a third-full bar as a study a third done):
+    // said in words beside it and to screen readers; a study's own progress is on its card below
+    if (limit != null) {const bar = el('span','crw-clone-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, limit ? used / limit * 100 : 100)}%`; bar.append(fill);
+      const said = `${used} of ${limit} style clones used on your plan (not a study's progress)`; bar.title = said; bar.setAttribute('role','img'); bar.setAttribute('aria-label', said); box.append(bar);}
     if (clones.upgrade_label && limit != null && used >= limit) {const a = el('a','crw-inline-link',`Upgrade to ${clones.upgrade_label} to clone more ↗`); a.href = clones.upgrade_url || 'https://channelrecipe.com/app#billing'; a.target = '_blank'; a.rel = 'noopener'; box.append(a);}
     box.hidden = false;
   }
@@ -518,13 +527,32 @@
       }
       actions.append(edit, del); item.append(card, actions); target.append(item);
     }
-    hide('crw-styles-empty',!!customs.length);
-    // a finished study is already a saved style above; only studies still running or stopped are listed here
-    const studies = state.studies.filter(study => study.state !== 'done');
+    // a finished study is already a saved style above; only studies still running or stopped are listed here, and
+    // "No styles of your own yet" is said only when there are none of those either
+    const studies = unfinishedStudies();
+    hide('crw-styles-empty',!!(customs.length || studies.length || state.otherStudies));
     if (studies.length) {
       const heading = el('h3','crw-library-subheading','Style studies'); target.append(heading);
-      for (const study of studies) {const a = el('a','crw-study-card'); a.href = study.link; a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${study.state === 'running' ? 'running' : study.state === 'done' ? 'done' : 'stopped'}`,study.state === 'running' ? 'Studying the channel…' : study.state === 'done' ? 'Style saved' : 'Stopped. Open to review')); target.append(a);}
+      for (const study of studies) target.append(studyCard(study));
     }
+    if (state.otherStudies) target.append(el('p','crw-study-other',`${state.otherStudies} style ${state.otherStudies === 1 ? 'study was' : 'studies were'} started with another ChannelRecipe connection. Connect that account in setup to see ${state.otherStudies === 1 ? 'it' : 'them'}.`));
+  }
+  const unfinishedStudies = () => state.studies.filter(study => study.state !== 'done');
+  // a style study that isn't a saved style yet, as a card: still studying (with its own progress), or stopped and why
+  function studyCard(study) {
+    const a = el('a','crw-study-card'); a.href = study.link;
+    const kind = study.state === 'running' ? 'running' : ['pending','validated'].includes(study.state) ? 'done' : 'stopped';
+    const pct = Number.isFinite(study.percent) ? ` ${Math.round(study.percent)}%` : '';
+    const said = study.state === 'running' ? `Studying the channel…${pct}`
+      : study.state === 'pending' ? 'Saved. Open to finish saving it'
+      : study.state === 'validated' ? 'Finished. Open to save the style'
+      : study.state === 'prepared' ? 'Approved, not started. Open to start it'
+      : study.can_save_completed ? `Stopped${study.studio_closed ? ': Studio was closed' : ''}. Open to save the finished style`
+      : study.studio_closed ? 'Stopped: Studio was closed. Study again'
+      : study.can_study_again ? 'Stopped. Study again' : 'Stopped. Open to review';
+    a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${kind}`,said));
+    if (study.state === 'running') a.append(el('small','crw-study-note','Keep the ChannelRecipe launcher window open until it finishes.'));
+    return a;
   }
   const phaseCopy = line => {
     const v = String(line || ''); if (/DONE|published:/i.test(v)) return 'Finishing your video';
@@ -626,6 +654,10 @@
       }
       text('crw-progress-log',lines.join('\n')); text('crw-progress-label', data.state === 'done' ? 'READY' : data.done ? 'STOPPED' : 'IN PRODUCTION');
       text('crw-progress-note',data.error || (data.state === 'done' ? 'Your video is ready. Open it to watch, download or change it.' : data.done ? 'Saved work remains with this project. Starting another video creates a fresh attempt.' : 'Your studio is working. Completed steps and elapsed time come from the live job.'));
+      // What this video has used of Claude so far, from Studio's own records (never a plan's quota: Claude Code
+      // doesn't say what is left), and a 3D review's round and calls left (Swapnil, 2026-10-29)
+      try {const use = await api(`/cr-workspace/claude-use/${encoded(state.openJob)}`); text('crw-claude-use', use.line || ''); hide('crw-claude-use', !use.line);}
+      catch (_) {hide('crw-claude-use', true);}
       const cancel = data.cr_cancel || {}; $('crw-progress-cancel').disabled = cancel.can_cancel !== true; hide('crw-progress-cancel',cancel.can_cancel !== true); $('crw-progress-cancel').dataset.run = cancel.run_id || '';
       if (data.done && !$('crw-progress-actions').childElementCount) {
         const another = el('button','crw-secondary-button','Create another video'); another.type='button'; another.addEventListener('click',()=>showPage('create')); $('crw-progress-actions').append(another);
@@ -684,9 +716,13 @@
     const plain = $('crw-progress-actions').querySelector('.crw-resume-saved');
     box.append(el('p', 'crw-voice-title', rec.needs_approval ? 'Try the stopped steps again?' : 'Why this video stopped'));
     const list = el('ul', 'crw-recovery-list');
-    for (const s of rec.claude_stages || []) list.append(el('li', '', `${s.step.charAt(0).toUpperCase()}${s.step.slice(1)}: ${s.reason} ${s.spent_note}${s.reset_label ? ` Claude said your usage resets at ${s.reset_label}.` : ''}`));
+    // one bullet per kind of stopped step with its count ("3D picture review, round 1: 3 calls stopped at your Claude
+    // plan's limit."), its cost note once; never the same sentence once per call
+    if (rec.groups) for (const g of rec.groups) list.append(el('li', '', `${g.line}${g.spent_note ? ' ' + g.spent_note : ''}`));
+    else for (const s of rec.claude_stages || []) list.append(el('li', '', `${s.step.charAt(0).toUpperCase()}${s.step.slice(1)}: ${s.reason} ${s.spent_note}${s.reset_label ? ` Claude said your usage resets at ${s.reset_label}.` : ''}`));
     for (const m of rec.media || []) list.append(el('li', '', m.reason));
     if (list.childElementCount) box.append(list);
+    if (rec.usage_line && !/press Try again and carry on/.test($('crw-progress-note').textContent)) box.append(el('p', 'crw-field-help crw-recovery-usage', rec.usage_line.replace(/^[^.]*\.\s*/, '')));
     for (const f of [...new Set([...(rec.fix_first || []), ...(rec.do_first || [])])]) box.append(el('p', 'crw-field-help crw-recovery-fix', f));
     if (rec.auto?.safe) box.append(el('p', 'crw-field-help', `Studio carries this on by itself in a minute or so (${rec.auto.why}). Everything already made is reused.`));
     if (rec.carry_on_after_reset && rec.reset_label && !rec.reset_passed) box.append(el('p', 'crw-field-help', `Studio carries it on by itself after ${rec.reset_label}, as you chose.`));
@@ -937,7 +973,7 @@
           api(`/api/status/${encoded(was.slug)}`).then(st=>{if(st.done && st.state==='done')celebrate({...was,...(now||{})});}).catch(()=>{});
         }
       }
-      if (results[1].status==='fulfilled') {state.activityLoaded=true;state.busy=results[1].value.busy===true || results[0].status==='fulfilled' && results[0].value.busy===true;state.studies=results[1].value.operations || [];}
+      if (results[1].status==='fulfilled') {state.activityLoaded=true;state.busy=results[1].value.busy===true || results[0].status==='fulfilled' && results[0].value.busy===true;state.studies=results[1].value.operations || [];state.otherStudies=Number(results[1].value.other_account || 0);}
       if (results[2].status==='fulfilled' && results[2].value) state.jobs=results[2].value.jobs || [];
       const active = state.studies.find(x=>x.state==='running') || state.queue.find(x=>['running','queued'].includes(x.state));
       const notice=$('crw-active-notice');notice.replaceChildren();notice.hidden=!state.busy;
