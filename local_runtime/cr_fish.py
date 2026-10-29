@@ -43,6 +43,7 @@ import re
 import shutil
 import subprocess
 import time
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -79,6 +80,8 @@ PART_CHARS = 2000               # a part of the narration per request: ~2 minute
 FORMAT, MP3_BITRATE = "mp3", 192
 LATENCY = "normal"              # Fish Audio: "most stable output"; this is long-form narration, not a live reply
 TIMEOUT = (10, 600)             # (connect, read) seconds for one part
+DOWNLOAD_SECONDS = 20 * 60      # a part's whole answer: a trickle that never ends stops the video, never hangs it
+JOIN_SECONDS = 600              # ffmpeg joining the parts
 REFUSED_PAUSES = (30, 90)       # 429 (at the concurrency limit) and 503 (high load): nothing made, wait and ask again
 UNSENT_PAUSES = (10,)           # the connection never opened: nothing reached Fish Audio
 MIN_AUDIO_BYTES = 1000
@@ -318,17 +321,46 @@ def remember_voice(cfg: dict, row: dict) -> dict:
 
 # ── narration ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+# Where a part may end: after a sentence (Latin, CJK, Devanagari, Arabic), else after a clause, else at a space.
+SENTENCE_ENDS = (". ", "! ", "? ", "\n", "\u3002", "\uff01", "\uff1f", "\u2026", "\u0964", "\u061f")
+CLAUSE_ENDS = (", ", "; ", ": ", "\uff0c", "\u3001", "\uff1b", "\uff1a", "\u060c")
+_JOINERS = {"\u200d", "\ufe0e", "\ufe0f"}
+
+
+def _after_last(window: str, marks) -> int:
+    """The position just after the last of these marks in the window (0 when there is none)."""
+    best = 0
+    for mark in marks:
+        at = window.rfind(mark)
+        if at >= 0:
+            best = max(best, at + max(1, len(mark.rstrip())))
+    return best
+
+
+def _whole_character(text: str, end: int) -> int:
+    """A hard cut moved back so it never splits a letter from its accent or an emoji from its joiners/modifiers."""
+    while 1 < end < len(text) and (unicodedata.combining(text[end]) or text[end] in _JOINERS
+                                   or text[end - 1] in _JOINERS or 0x1F3FB <= ord(text[end]) <= 0x1F3FF):
+        end -= 1
+    return end
+
+
 def chunks(text: str, limit: int = PART_CHARS):
-    """Parts of at most `limit` characters, cut after a sentence where one ends in the second half, else at a space."""
+    """Parts of at most `limit` characters, cut after a sentence where one ends in the second half, else after a
+    clause there, else at the last space; text without spaces (Chinese, Japanese, Thai) is cut after its last
+    sentence or clause mark, and only as a last resort mid-text, never inside a character. The cuts depend only on
+    the text, so a Resume cuts the same parts and finds their receipts."""
     remaining = str(text or "").strip()
     while remaining:
         end = min(len(remaining), limit)
         if end < len(remaining):
             window = remaining[:end]
-            sentence = max(window.rfind(". "), window.rfind("! "), window.rfind("? "), window.rfind("\n"))
-            cut = sentence + 1 if sentence >= limit // 2 else window.rfind(" ")
-            if cut > 0:
-                end = cut
+            cut = _after_last(window, SENTENCE_ENDS)
+            if cut < limit // 2:
+                cut = max(cut, _after_last(window, CLAUSE_ENDS))
+            if cut < limit // 2:
+                cut = max(cut, window.rfind(" "))
+            end = cut if cut > 0 else _whole_character(remaining, end)
         yield remaining[:end].strip()
         remaining = remaining[end:].lstrip()
 
@@ -398,6 +430,13 @@ def synthesize(api_key: str, text: str, voice: str, model: str, part: Path, *, p
     if part.is_file() and part.stat().st_size >= MIN_AUDIO_BYTES and receipt.get("fingerprint") == sign \
             and receipt.get("state") == "done":
         return receipt                                       # made before: reused, never paid again
+    if part.is_file() and part.stat().st_size >= MIN_AUDIO_BYTES and receipt.get("fingerprint") == sign \
+            and receipt.get("state") == "sending":
+        # its audio arrived whole (a part file appears only by an atomic rename after the full download, and any older
+        # file is removed before a request): Studio closed before the receipt said done. Kept, never paid again.
+        done = {**receipt, "state": "done", "audio_bytes": part.stat().st_size, "recovered": True}
+        write_receipt(part, done)
+        return done
     if receipt.get("fingerprint") == sign and receipt.get("state") == "sending" and not receipt.get("released"):
         usd = cost_usd(text, model)
         raise Stop(f"Fish Audio may already have read part {part.stem.split('-')[-1]} of this narration (Studio sent it, "
@@ -410,6 +449,7 @@ def synthesize(api_key: str, text: str, voice: str, model: str, part: Path, *, p
         body["language"] = language
     headers = {**_headers(api_key, model), "Content-Type": "application/json"}
     refused = unsent = 0
+    part.unlink(missing_ok=True)       # another text's or voice's audio: never mistaken for this request's answer
     while True:
         write_receipt(part, {"fingerprint": sign, "state": "sending", "model": model, "voice": voice,
                              "bytes": len(text.encode("utf-8")), "usd": round(cost_usd(text, model), 5),
@@ -451,10 +491,13 @@ def synthesize(api_key: str, text: str, voice: str, model: str, part: Path, *, p
                 continue
             raise Stop(_refusal(status, reason, model), category=cat, code=code, charged=0)
         try:
+            deadline = time.monotonic() + DOWNLOAD_SECONDS
             with open(tmp, "wb") as out:
                 for piece in r.iter_content(64 * 1024):
                     if piece:
                         out.write(piece)
+                    if time.monotonic() > deadline:
+                        raise requests.exceptions.ReadTimeout("the answer kept trickling past its time limit")
         except (requests.RequestException, OSError):
             tmp.unlink(missing_ok=True)
             raise Stop("The connection to Fish Audio dropped while part "
@@ -564,13 +607,18 @@ def narrate(engine, text, mp3, srt, cfg: dict, *, time_narration=None, post=None
     except Stop as error:
         _failed(job, model, error)
         raise
+    except Exception as error:                                 # noqa: BLE001 - a disk error, an odd answer
+        stop = Stop(f"Fish Audio narration stopped on this computer ({type(error).__name__}: {str(error)[:160]}). "
+                    "Nothing more was sent. Press Resume to carry on; finished parts are reused.", category="request")
+        _failed(job, model, stop)
+        raise stop from error
     if len(parts) == 1:
         shutil.copyfile(parts[0], mp3)
     else:
         listing = folder / "parts.txt"
         listing.write_text("".join(f"file '{p.name}'\n" for p in parts), encoding="utf-8")
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(listing),
-                        "-c:a", "libmp3lame", "-b:a", "192k", str(mp3)], check=True)
+                        "-c:a", "libmp3lame", "-b:a", "192k", str(mp3)], check=True, timeout=JOIN_SECONDS)
     if time_narration is None:
         time_narration = cr_media._time_narration
     time_narration(engine, mp3, srt, text)
@@ -616,7 +664,8 @@ def install(studio, activity, write_provider):
             return jsonify(error="Finish your current video before changing its accounts."), 409
         supplied = str(data.get("key", "")).strip()
         api_key = supplied or key()
-        if not 16 <= len(api_key) <= 512 or any(c.isspace() for c in api_key):
+        if not 16 <= len(api_key) <= 512 or not (api_key.isascii() and api_key.isprintable()) \
+                or any(c.isspace() for c in api_key):
             return jsonify(error="Paste your complete Fish Audio API key."), 400
         model = str(data.get("model") or (cfg.get("narration") or {}).get("model") or DEFAULT_MODEL)
         if model not in {m["id"] for m in MODELS}:

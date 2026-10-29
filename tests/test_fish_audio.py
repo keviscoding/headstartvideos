@@ -371,3 +371,78 @@ def test_a_video_doesnt_start_on_fish_audio_without_a_chosen_voice(home, monkeyp
     row = voice_row({"title": "T", "minutes": 1})
     assert row["ready"] is False and "Fish Audio voice" in row["message"]
     assert voice_row({"title": "T", "minutes": 1, "cr_voice": {"provider": "fish", "voice": VOICE}})["ready"] is True
+
+
+# ── review fixes (2026-10-29) ──────────────────────────────────────────────────────────────────────────────────
+
+def test_text_without_spaces_is_cut_after_its_sentences_and_never_inside_a_character():
+    zh = "这是一个关于历史的故事，" * 40 + "它很长。" + "这是一个关于历史的故事，" * 300      # Chinese: no spaces at all
+    parts = list(cr_fish.chunks(zh))
+    assert len(parts) > 1 and all(len(p) <= cr_fish.PART_CHARS for p in parts) and "".join(parts) == zh
+    assert all(p.endswith(("。", "，")) for p in parts[:-1])                 # after a sentence or clause mark
+    accents = "x" + "e\u0301" * 1500                                           # é as e + a combining accent
+    parts = list(cr_fish.chunks(accents))
+    assert "".join(parts) == accents and all(p.startswith("e") for p in parts[1:])
+    emoji = "\U0001F469\u200d\U0001F52C" * 1000                               # a woman scientist: three code points
+    parts = list(cr_fish.chunks(emoji))
+    assert "".join(parts) == emoji and all(p.startswith("\U0001F469") and p.endswith("\U0001F52C") for p in parts)
+    hindi = "यह एक कहानी है। " * 300                                              # 3 UTF-8 bytes a letter
+    parts = list(cr_fish.chunks(hindi))
+    assert all(p.endswith("।") for p in parts)
+    assert sum(cr_fish.cost_usd(p, "s2.1-pro") for p in parts) == pytest.approx(     # priced by bytes, not letters
+        cr_fish.cost_usd(hindi, "s2.1-pro"), rel=0.01) and cr_fish.cost_usd(hindi, "s2.1-pro") > 2 * len(hindi) * 15e-6
+
+
+def test_audio_that_arrived_before_studio_closed_is_kept_not_stuck(home):
+    """Studio closed between the download's rename and its receipt: the receipt still says sending. The whole audio
+    is there, so it is reused (no POST), never an uncertain stop that the creator's yes can't release."""
+    folder = home / "audio-fish-voice"
+    folder.mkdir()
+    part = folder / "part-000.mp3"
+    sign = cr_fish.fingerprint("Hi.", VOICE, "s2.1-pro")
+    cr_fish.write_receipt(part, {"fingerprint": sign, "state": "sending"})
+    part.write_bytes(AUDIO)
+    assert cr_fish.synthesize(KEY, "Hi.", VOICE, "s2.1-pro", part, post=Poster(), sleep=lambda s: None)["state"] == "done"
+    assert cr_fish.uncertain_parts(home) == []
+
+
+def test_old_audio_never_stands_in_for_a_new_request(home):
+    """A part's earlier audio (another text) is removed before its new request, so if the new answer never arrives
+    the old file can't be taken for it, and the uncertain part can be released."""
+    folder = home / "audio-fish-voice"
+    folder.mkdir()
+    part = folder / "part-000.mp3"
+    cr_fish.synthesize(KEY, "Old words.", VOICE, "s2.1-pro", part, post=Poster(Answer()), sleep=lambda s: None)
+    with pytest.raises(cr_fish.Stop) as stop:
+        cr_fish.synthesize(KEY, "New words.", VOICE, "s2.1-pro", part,
+                           post=Poster(requests.exceptions.ReadTimeout()), sleep=lambda s: None)
+    assert stop.value.uncertain and not part.exists() and cr_fish.uncertain_parts(home) == [part]
+    assert cr_fish.release_uncertain(home) == 1
+
+
+def test_an_answer_that_never_finishes_stops_instead_of_hanging(home, monkeypatch):
+    monkeypatch.setattr(cr_fish, "DOWNLOAD_SECONDS", -1)
+    part = home / "part-000.mp3"
+    with pytest.raises(cr_fish.Stop) as stop:
+        cr_fish.synthesize(KEY, "Hi.", VOICE, "s2.1-pro", part, post=Poster(Answer()), sleep=lambda s: None)
+    assert stop.value.uncertain and not part.exists()
+
+
+def test_an_unexpected_error_stops_like_a_voice_stop(home, monkeypatch):
+    """Never a plain exception (the engine answers some by trying another paid voice): a Stop, kept for the choices."""
+    def broken(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(cr_fish, "synthesize", broken)
+    with pytest.raises(cr_media.AccountStop, match="disk full"):
+        cr_fish.narrate(engine(), "Hello.", home / "audio.mp3", home / "subs.srt", cr_media.fish_voice(home),
+                        post=Poster(), sleep=lambda s: None, time_narration=lambda *a: None)
+    assert json.loads((home / cr_media.VOICE_FAILED).read_text())["provider"] == "fish"
+
+
+def test_a_video_with_its_own_fish_voice_is_ready_before_any_recipe_voice(home):
+    import cr_readiness
+    studio = types.SimpleNamespace(voices=None)
+    cr_bridge.save_settings({"narration": {"provider": "fish"}})                 # no Fish voice chosen yet
+    assert cr_readiness.own_narration(studio, "jung", {}, "x")[0] is False
+    asked = {"cr_voice": {"provider": "fish", "voice": OTHER}}
+    assert cr_readiness.own_narration(studio, "jung", {}, "x", asked) == (True, "")
