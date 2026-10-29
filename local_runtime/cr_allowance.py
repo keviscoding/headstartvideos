@@ -48,6 +48,15 @@ def status(home, account, *, now=None):
         return {"blocked": False}
 
 
+def stopped_message(reset_label=None, *, threed=False):
+    """What a video that stopped at Claude's usage limit says (the progress card's note). Carrying it on is the way
+    forward, never a new video (which pays again for everything): Swapnil's 18-minute 3D video, 2026-10-29."""
+    when = f" ({reset_label})" if reset_label else ""
+    kept = "everything already made is kept" + (", including finished 3D review rounds" if threed else "")
+    return (f"Claude stopped at your plan's usage limit. When your Claude limit resets{when}, press Try again and "
+            f"carry on: {kept}.")
+
+
 def record(home, account, message, *, now=None):
     reset = reset_from_message(message, now=now)
     if not account or not reset:

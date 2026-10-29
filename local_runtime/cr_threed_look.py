@@ -135,6 +135,11 @@ def install(engine=None):
         import threed
     except Exception:                                           # noqa: BLE001 - no 3D here
         return
+    try:
+        import cr_threed_resume
+        cr_threed_resume.install(threed)                    # a stopped 3D video carries on where it stopped
+    except Exception:                                       # noqa: BLE001 - the engine as it is
+        pass
     if getattr(threed._cfg, "_cr_look", False):
         return
     original_cfg = threed._cfg

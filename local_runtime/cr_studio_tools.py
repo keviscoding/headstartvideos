@@ -1128,6 +1128,10 @@ def _recovery(slug: str, out: dict) -> bool:
         out["stopped_on"] = r["stopped_on"]
     if steps:
         out["stuck_claude_steps"] = steps
+        # one line per kind of stopped step with its count ("3D picture review, round 1: 3 calls stopped at ...")
+        out["stuck_claude_summary"] = [g.get("line") for g in r.get("groups") or [] if g.get("line")]
+    if (r.get("claude_use") or {}).get("line"):
+        out["claude_so_far"] = r["claude_use"]["line"]      # Studio's own count, never the plan's quota
     if media:
         out["stuck_media"] = media
     out.update(needs_approval=bool(r.get("needs_approval")), free_to_resume=bool(r.get("free_to_resume")),

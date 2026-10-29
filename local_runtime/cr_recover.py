@@ -222,6 +222,10 @@ def run_ended(job, state, failure=None) -> None:
                       category=str(failure.get("category") or ""), step=str(failure.get("failed_step") or ""),
                       provider=str(failure.get("provider") or ""))
         _write(Path(job) / RUN_FILE, record)
+        if record["state"] == "done":
+            # a finished video needs no kept 3D review pictures (cr_threed_resume; the answers are small and stay)
+            import shutil
+            shutil.rmtree(Path(job) / "threed" / "review_keep" / "previews", ignore_errors=True)
     except OSError:
         pass
 
@@ -313,6 +317,7 @@ def stuck_stages(home, project_id, server_stages=None, *, allowance=None, now=No
                      "error_code": str(stage.get("error_code") or cache.get("error_code") or ""),
                      "attempts": int(stage.get("attempts") or 1), "can_retry": bool(stage.get("can_retry")),
                      "minutes": round(float((stage.get("usage") or {}).get("duration_seconds") or 0) / 60, 1),
+                     "label": str(cache.get("label") or ""),
                      # cr_claude marks a step "running" here before Claude Code starts: without it, it never started
                      "never_started": status == "authorized" and cache.get("state") != "running"}
     if server_stages is None:
@@ -320,7 +325,7 @@ def stuck_stages(home, project_id, server_stages=None, *, allowance=None, now=No
             if cache.get("state") in ("running", "failed", "failed_local"):
                 rows[sid] = {"stage_id": sid, "status": "authorized" if cache["state"] == "running" else "failed",
                              "kind": "", "model_role": "", "error_code": str(cache.get("error_code") or ""),
-                             "attempts": 0, "can_retry": None, "minutes": 0}
+                             "attempts": 0, "can_retry": None, "minutes": 0, "label": str(cache.get("label") or "")}
     out = []
     for row in rows.values():
         row.update(stage_words(row["error_code"], row["status"]))
@@ -505,7 +510,56 @@ def diagnose(home, job, *, server_stages=None, allowance=None, message="", claud
     if reset:
         out.update(reset_at=reset["reset_at"], reset_label=reset.get("reset_label") or "",
                    reset_passed=bool(reset.get("reset_passed")))
+    out["groups"] = stage_groups(stages)
+    if usage:
+        import cr_allowance
+        threed = any(s.get("label", "").startswith("3D picture review") for s in stages)
+        out["usage_line"] = cr_allowance.stopped_message(out.get("reset_label") or None, threed=threed)
     out["what_to_tell_them"] = _tell(out, spent_claude, spent_money, usage)
+    return out
+
+
+# one bullet per kind of stopped step (Swapnil's card, 2026-10-29, repeated "A Claude step that looks at pictures
+# (Opus): Claude stopped at your plan's usage limit..." once per call, four times)
+GROUP_NAMES = {"text": "Claude writing", "vision": "Claude picture checks", "research": "Claude research"}
+GROUP_WORDS = {"usage_limit": "stopped at your Claude plan's limit",
+               "timeout": "ran out of time and {was} stopped",
+               "network_interrupted": "lost Claude's connection mid-answer",
+               "cli_failed": "ended without an answer",
+               "auth_missing": "stopped: Claude Code was signed out",
+               "authentication_required": "stopped: Claude Code was signed out",
+               "model_unavailable": "couldn't use the chosen model",
+               "cancelled": "{was} cut off when the video was cancelled",
+               "": "{was} cut off mid-way (Studio closed, the computer slept, or the video worker stopped)"}
+
+
+def stage_groups(stages) -> list:
+    """The stuck Claude steps grouped by what they are and what happened, each in one plain line with a count:
+    "3D picture review, round 1: 3 calls stopped at your Claude plan's limit." The spent note follows once."""
+    groups = {}
+    for s in stages or []:
+        name = s.get("label") or (GROUP_NAMES.get(s.get("kind"), "Claude steps") + (
+            " (Opus)" if s.get("model_role") == "visual" else " (Sonnet)" if s.get("model_role") == "general" else ""))
+        if s.get("status") == "retry_allowed" or s.get("never_started"):
+            what = s.get("reason", "")
+        else:
+            what = GROUP_WORDS.get(s.get("error_code") if s.get("status") != "authorized" else "",
+                                   GROUP_WORDS["cli_failed"])
+        row = groups.setdefault((name, what), {"name": name, "count": 0, "what": what, "error_code": s.get("error_code", ""),
+                                                "spent_note": s.get("spent_note", ""), "needs_approval": False,
+                                                "stage_ids": []})
+        row["count"] += 1
+        row["needs_approval"] = row["needs_approval"] or bool(s.get("needs_approval"))
+        row["stage_ids"].append(s.get("stage_id"))
+    out = []
+    for row in groups.values():
+        n = row["count"]
+        what = row["what"].format(was="was" if n == 1 else "were")
+        if row["what"] in GROUP_WORDS.values():
+            row["line"] = f"{row['name']}: {n} call{'' if n == 1 else 's'} {what}."
+        else:
+            row["line"] = f"{row['name']} ({n} call{'' if n == 1 else 's'}): {what}"
+        out.append(row)
     return out
 
 
@@ -529,9 +583,11 @@ def _tell(d, spent_claude, spent_money, usage) -> str:
     if m:
         parts.append(f"{m} paid media task{'s' if m > 1 else ''} got no clear result" +
                      (": trying again can pay for it a second time" if spent_money else "") + ".")
-    if usage and d.get("reset_label") and not d.get("reset_passed"):
-        parts.append(f"Claude said your usage resets at {d['reset_label']}: carry on after that (Studio can do it by "
-                     "itself then), or now if you added usage.")
+    if usage and d.get("usage_line"):
+        parts.append(d["usage_line"].split(". ", 1)[-1])        # "When your Claude limit resets (...), press Try..."
+        if d.get("reset_label") and not d.get("reset_passed"):
+            parts.append("Studio carries it on by itself then, as you chose." if d.get("carry_on_after_reset") else
+                         "You can carry it on where it stopped then, or now if you added usage.")
     parts.append("Everything else already made is reused. Nothing runs again unless you say yes.")
     return " ".join(parts)
 
@@ -876,7 +932,15 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
             diag["finished"] = False
         plan = _auto_plan(job, home=home, server_stages=stages, allowance=allowance, live=diag["live"])
         diag["auto"] = {"safe": plan["safe"], "why": plan["why"], "count": diag["auto_resumes"], "limit": AUTO_LIMIT}
+        try:
+            diag["claude_use"] = claude_use(job)
+        except Exception:                                      # noqa: BLE001 - only an extra detail
+            pass
         return diag
+
+    def claude_use(job):
+        import cr_claude_use
+        return cr_claude_use.summary(home, job, saved_project(job).get("id"))
 
     def resume(project_id):
         client = app.test_client()
@@ -886,6 +950,16 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
         if not 200 <= answer.status_code < 300:
             raise Refused(str(data.get("error") or "Studio couldn't carry this video on."), data)
         return data
+
+    @app.get("/cr-workspace/claude-use/<slug>")
+    def cr_claude_use_route(slug):
+        """What this video has used of Claude so far (the progress and stopped cards); never a plan's quota."""
+        try:
+            return jsonify(claude_use(find(slug)))
+        except Refused as error:
+            return jsonify(error=str(error)), 404
+        except Exception:                                      # noqa: BLE001
+            return jsonify(error="Studio couldn't read this video's Claude use."), 500
 
     @app.get("/cr-workspace/recovery/<slug>")
     def cr_recovery(slug):
