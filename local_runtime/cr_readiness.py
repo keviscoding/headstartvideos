@@ -146,6 +146,12 @@ def own_narration(studio, style, info, why):
         if eleven or os.getenv("KIE_API_KEY", "").strip():
             return True, ""
         return False, "Connect ElevenLabs or Kie.ai in Setup & accounts for the narrator."
+    import cr_fish
+    if cr_fish.selected():
+        # the creator's own Fish Audio key (Setup's Fish Audio card): any recipe that isn't a self-voiced Short
+        if cr_fish.voice_for_style(style).get("voice"):
+            return True, ""
+        return False, "Choose this recipe's Fish Audio voice in Create, under Narration, Choose voice."
     if eleven:
         try:
             pick = (studio.voices.picks() or {}).get(style) or {}

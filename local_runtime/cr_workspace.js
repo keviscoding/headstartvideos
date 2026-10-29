@@ -1368,8 +1368,9 @@
     }
     if (!ordered.length) list.append(el('p', 'crw-voices-note', 'No voices match that search.'));
   }
-  // ElevenLabs connected directly (cr_voice_library): the creator's own voices and ElevenLabs' shared library, each
-  // with its own free sample, kept per recipe. The media-hub picker above is unchanged.
+  // ElevenLabs or Fish Audio connected directly (cr_voice_library, cr_fish): the creator's own voices and the
+  // provider's shared library, each with its own free sample where it has one, kept per recipe. A fish.audio voice
+  // link pasted in the search box finds that voice. The media-hub picker above is unchanged.
   const library = {source: 'mine', rows: [], timer: null};
   async function loadLibrary() {
     const q = $('crw-voices-search').value.trim(), source = library.source;
@@ -1389,19 +1390,19 @@
       const play = el('button', 'crw-secondary-button crw-voice-play', '▶'); play.type = 'button'; play.setAttribute('aria-label', 'Preview ' + v.name); play.disabled = !v.preview;
       play.addEventListener('click', () => {if (voices.playing === v.id && !audio.paused) {audio.pause(); return;}
         voices.playing = v.id; audio.src = v.preview; audio.play().catch(() => text('crw-voices-status', 'Press ▶ again to play.'));});
-      const copy = el('div'); copy.append(el('strong', '', v.name), el('span', '', [v.gender, v.accent, v.age, v.description].filter(Boolean).join(' · ') || 'ElevenLabs voice'));
+      const copy = el('div'); copy.append(el('strong', '', v.name), el('span', '', [v.gender, v.accent, v.age, v.description].filter(Boolean).join(' · ') || `${data.provider_label || 'ElevenLabs'} voice`));
       row.append(play, copy);
       if (current) row.append(el('span', 'crw-voice-badge', 'Selected'));
       else {const use = el('button', 'crw-primary-button', 'Use'); use.type = 'button'; use.addEventListener('click', () => chooseLibraryVoice(v, use)); row.append(use);}
       list.append(row);
     }
     if (!library.rows.length) list.append(el('p', 'crw-voices-note', library.source === 'mine'
-      ? 'No voices on your ElevenLabs account match. Try the Voice library.' : 'No voices match that search.'));
+      ? `No voices on your ${data.provider_label || 'ElevenLabs'} account match. Try the Voice library.` : 'No voices match that search.'));
   }
   async function chooseLibraryVoice(v, button) {
     button.disabled = true;
     try {
-      const result = await api('/cr-voices/select', {method: 'POST', body: {voice_id: v.id, name: v.name, gender: v.gender, style: voices.data.style}});
+      const result = await api('/cr-voices/select', {method: 'POST', body: {voice_id: v.id, name: v.name, gender: v.gender, mine: !!v.mine, style: voices.data.style}});
       voices.data.voice = v.name; voices.data.voice_id = v.id; if (state.setup?.narration) state.setup.narration.voice = v.name;
       text('crw-narration-name', v.name); text('crw-voices-status', result.message); renderLibrary(); summary();
     } catch (e) {text('crw-voices-status', e.message); button.disabled = false;}
@@ -1414,8 +1415,8 @@
     $('crw-voices-sources').hidden = !voices.data.library; $('crw-voices-search').hidden = false;
     if (voices.data.library) {
       if (!voices.data.style) {error('Choose a recipe first, then its voice.'); return;}
-      text('crw-voices-sub', `ElevenLabs · for ${state.selected?.label || state.selected?.name || 'this recipe'}`);
-      text('crw-voices-note', 'Press ▶ to hear a voice (free). Your choice is kept for this recipe.');
+      text('crw-voices-sub', `${voices.data.provider_label || 'ElevenLabs'} · for ${state.selected?.label || state.selected?.name || 'this recipe'}`);
+      text('crw-voices-note', [voices.data.provider === 'fish' ? voices.data.note : '', 'Press ▶ to hear a voice (free). Your choice is kept for this recipe.'].filter(Boolean).join(' '));
       library.source = 'mine'; chooseGroup('[data-voice-source]', 'voiceSource', 'mine');
       $('crw-voices').showModal(); $('crw-voices-search').focus(); await loadLibrary(); return;
     }

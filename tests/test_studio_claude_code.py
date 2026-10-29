@@ -789,7 +789,7 @@ def test_a_video_that_stopped_on_its_voice_offers_the_ways_to_voice_it(studio):
     assert studio.posted("/cr-workspace/voice/zombie--abc") == [{"choice": "own", "recording": "/Users/me/take.m4a"}]
     assert studio.posted("/cr-submit-project") == [{"project_id": "crv_" + "1" * 24}], "the choice, then Resume"
     schema = tools.TOOLS["resume_video"][2]["properties"]["voice"]
-    assert schema["enum"] == ["again", "gemini-man", "gemini-woman", "elevenlabs", "own"]
+    assert schema["enum"] == ["again", "gemini-man", "gemini-woman", "elevenlabs", "fish", "own"]
 
 
 def test_a_video_that_stopped_on_its_presenter_offers_to_finish_without_it(studio):

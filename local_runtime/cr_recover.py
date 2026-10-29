@@ -686,8 +686,10 @@ def engine_voice(job, saved) -> bool:
         # Shorts read their lines on the creator's ElevenLabs key when one is set (shorts/ranking/voice.py)
         return bool(os.getenv("ELEVENLABS_API_KEY", "").strip())
     chosen = cr_media.job_voice(job)
-    if chosen.get("provider") in ("own", "kie"):
+    if chosen.get("provider") in ("own", "kie", "fish"):
         return False
+    if cr_media.fish_voice(job, str(spec.get("style") or saved.get("style") or "")):
+        return False                                           # Fish Audio parts keep receipts too (cr_fish)
     if chosen.get("provider") == "original":
         return True
     try:

@@ -52,6 +52,19 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
         # the creator's own narration recording on a Shorts recipe: only a pipeline that can be narrated by it, and a
         # recording a Short can be (cr_shorts.own_recording_problem); a long video's recording is the engine's own
         import cr_shorts
+        fish_voice = None
+        if payload.get("cr_voice") is not None:
+            # a Fish Audio voice for these videos only (make_videos options.voice): the creator's own key, a voice ID
+            import cr_fish
+            asked = payload.get("cr_voice") if isinstance(payload.get("cr_voice"), dict) else {}
+            voice = str(asked.get("voice") or "").lower()
+            if asked.get("provider") != "fish" or not cr_fish.VOICE_ID.fullmatch(voice):
+                raise ValueError("Choose a Fish Audio voice ID for this video's voice.")
+            if not cr_fish.key():
+                raise ValueError("Add your Fish Audio key in Setup & accounts first to read a video with a Fish Audio "
+                                 "voice.")
+            fish_voice = {"provider": "fish", "voice": voice,
+                          "model": cr_fish.model_info(cr_fish.narration().get("model"))["id"]}
         refusal = cr_shorts.own_recording_problem(style_info, payload.get("byo_audio"),
                                                   str(style_info.get("label") or "This Shorts recipe"))
         if refusal:
@@ -148,6 +161,8 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_threed_look"] = threed_look
         if language:
             spec["cr_language"] = language          # its script, voice, captions and words on screen (cr_language)
+        if fish_voice:
+            spec["cr_voice"] = dict(fish_voice)      # a Fish Audio voice for this video only (cr_fish, make_videos)
         if payload.get("burn_subs") is False:
             spec["cr_captions"] = "off"          # switched off for this video: a request kept from before never wins
         elif payload.get("cr_captions") == "on":
