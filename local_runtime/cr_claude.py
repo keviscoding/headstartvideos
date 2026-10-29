@@ -682,7 +682,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.115")
+            installed_version=cfg.get("local_version","5.3-admin.116")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text(encoding="utf-8"))
@@ -778,6 +778,7 @@ class Runtime:
         failure_code="cli_failed"
         failure_message="Claude could not finish this stage. Review recovery in ChannelRecipe."
         completed=None
+        streamed_usage = {}
         try:
             run_command, prompt_files = prompts_on_disk(command, cache.parent)
             try:
@@ -792,6 +793,12 @@ class Runtime:
                 # The stream lists rate-limit events on every run: classify a failure by its result alone.
                 whole = _whole_answer(getattr(completed, "stdout", "") or "")
                 if long_text:
+                    # what Claude Code reported for this call, kept for cr_claude_use's tokens only (the plain answer
+                    # handed back has none; the receipt stays as it was)
+                    try:
+                        streamed_usage = json.loads(whole).get("usage") or {}
+                    except (ValueError, AttributeError):
+                        streamed_usage = {}
                     whole = _plain_answer(whole)
                 completed = subprocess.CompletedProcess(getattr(completed, "args", command), completed.returncode,
                                                         whole, getattr(completed, "stderr", ""))
@@ -822,7 +829,16 @@ class Runtime:
             receipt.update(status="complete", result_fingerprint=output_digest, usage=safe_usage, error_code="")
             # seconds: what this call took, for "Claude so far for this video" (cr_claude_use); after the state, which
             # cr_recover reads from each file's first bytes
-            timed = {**named, "seconds": round(safe_usage["duration_seconds"], 1)}
+            # at and tokens: when it finished and what Claude Code reported it used, for Projects' Claude use across
+            # every video (cr_claude_use.overall); a call without a report has no tokens, never a guess
+            reported = safe_usage if any(name.endswith("_tokens") for name in safe_usage) else \
+                (streamed_usage if isinstance(streamed_usage, dict) else {})
+            tokens = {name: int(reported[name]) for name in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                                             "cache_creation_input_tokens")
+                      if isinstance(reported.get(name), (int, float)) and not isinstance(reported[name], bool)
+                      and reported[name] >= 0}
+            timed = {**named, "seconds": round(safe_usage["duration_seconds"], 1), "at": round(time.time()),
+                     **({"tokens": tokens} if tokens else {})}
             _private_write(cache, {"state": "complete_local", **timed, "stdout": output, "result_fingerprint": output_digest,
                                    "input_fingerprint": fingerprint, "receipt": receipt, "origin": origin,
                                    "execution_binding": execution_binding})
@@ -843,7 +859,7 @@ class Runtime:
                 failure_message = cr_allowance.stopped_message((allowance or {}).get("reset_label"),
                                                                threed=label.startswith("3D picture review"))
             receipt["usage"] = {"duration_seconds": time.monotonic() - started, "reported": False}
-            failed={"state":"failed_local",**named,"seconds":round(receipt["usage"]["duration_seconds"],1),
+            failed={"state":"failed_local",**named,"seconds":round(receipt["usage"]["duration_seconds"],1),"at":round(time.time()),
                 "input_fingerprint":fingerprint,"error_code":receipt["error_code"],"receipt":receipt,
                 "diagnostic":private_diagnostic(completed,cfg) if completed is not None else {"exception_type":type(error).__name__}}
             _private_write(cache,failed)

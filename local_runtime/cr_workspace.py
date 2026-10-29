@@ -106,6 +106,8 @@ def install(studio, activity, *, token, home=None):
         if not isinstance(data, dict) or not isinstance(data.get("channels"), list):
             raise RuntimeError("The local recipe catalogue is unavailable.")
         data = dict(data)
+        import cr_media as media_prices
+        media_prices.price_catalog(data)       # picture prices at the creator's Setup image model
         styles = getattr(studio.styles, "STYLES", {})
         automatic = next((row for row in data["channels"]
                           if row.get("name") == "documentary" and row.get("auto_style") is True), None)
@@ -184,6 +186,11 @@ def install(studio, activity, *, token, home=None):
                              + preview_version(source)) if source else None,
                 preview_label=source.label if source else "No video preview yet",
                 preview_video_url=source.video_url if source else None)
+            # a few moving seconds for the card (hover or open): our loop of a ready-made recipe, else a few seconds of
+            # the creator's own latest video in it (cr_recipe_clips); None keeps the picture
+            import cr_recipe_clips
+            own = outputs.get(row.get("name"))
+            row["preview_clip"] = cr_recipe_clips.clip_for(row.get("name"), own.video_url if own else None)
         preview_cache.update(at=time.monotonic(), sources=sources)
         # what Research footage may watch for each length, 1 to 60 minutes (Create says it before a video starts)
         import cr_watch
@@ -194,6 +201,15 @@ def install(studio, activity, *, token, home=None):
         import cr_language
         data["languages"] = cr_language.choices(also={row.get("language") for row in data["channels"]})
         data["default_language"] = cr_language.default(home) or None
+        # narration on the creator's own Fish Audio key: its price a minute replaces the catalogue's voice price
+        # in quotes (cr_studio_tools.media_estimate)
+        import cr_fish
+        if cr_fish.selected():
+            fish = cr_fish.narration()
+            data["narration_voice"] = {"provider": "fish", "label": "Fish Audio", "model": fish["model"],
+                                       "usd_per_min": round(cr_fish.usd_per_minute(fish["model"]), 4),
+                                       "usd_per_million_bytes": cr_fish.usd_per_million(fish["model"]),
+                                       "voice": fish.get("voice_name") or fish.get("voice") or ""}
         return cr_presentation.plain_copy(data)
 
     def selected_preset():
@@ -627,18 +643,45 @@ def install(studio, activity, *, token, home=None):
             raise ValueError("Unavailable project.")
         return job
 
+    def fish_choice(job) -> dict:
+        """The Fish Audio voice this video would read with if picked: its own earlier choice, else the voice chosen in
+        Setup & accounts or Choose voice (for its recipe when it has one), else the last voice picked from the library."""
+        import cr_fish
+        import cr_media
+        own = cr_media.job_voice(job)
+        if own.get("provider") == "fish" and own.get("voice"):
+            return own
+        cfg = cr_bridge.load_settings()
+        spec = _read(job / "run_spec.json") if (job / "run_spec.json").is_file() else {}
+        pick = (cfg.get(cr_fish.PICKS) or {}).get(str(spec.get("style") or "")) or {}
+        saved = cfg.get("narration") or {}
+        for voice, name, model in ((pick.get("id"), pick.get("name"), saved.get("model")),
+                                   (saved.get("voice"), saved.get("voice_name"), saved.get("model")),
+                                   *(((v.get("id"), v.get("name"), None) for v in (cfg.get(cr_fish.SAVED) or [])
+                                      if isinstance(v, dict)))):
+            if cr_fish.VOICE_ID.fullmatch(str(voice or "")):
+                return {"provider": "fish", "model": cr_fish.model_info(model)["id"], "voice": voice,
+                        "voice_name": str(name or "")[:90]}
+        return {}
+
     def voice_choices(job):
         import os
         import cr_media
         failed = _read(job / cr_media.VOICE_FAILED) if (job / cr_media.VOICE_FAILED).is_file() else {}
         chosen = cr_media.job_voice(job)
         current = ("own" if chosen.get("provider") == "own" else "elevenlabs" if chosen.get("provider") == "original"
+                   else "fish" if chosen.get("provider") == "fish"
                    else next((k for k, (v, _) in GEMINI_VOICES.items() if v == chosen.get("voice")), "gemini-man")
                    if chosen.get("provider") == "kie" else "again")
         kie, eleven = bool(os.getenv("KIE_API_KEY", "").strip()), bool(os.getenv("ELEVENLABS_API_KEY", "").strip())
         kie_empty = failed.get("provider") == "kie" and failed.get("category") == "balance"
+        import cr_fish
+        unsure = cr_fish.uncertain_parts(job)
         rows = [{"id": "again", "label": "Try the same voice again", "ready": True,
-                 "note": "The voice in Setup & accounts, once more. Best after waiting a few minutes."}]
+                 "note": ("Fish Audio may already have read part of this narration (its audio never arrived): trying "
+                          "again reads that part once more, which can pay for it twice (a few cents at most)."
+                          if unsure else
+                          "The voice in Setup & accounts, once more. Best after waiting a few minutes.")}]
         if failed.get("model") != GEMINI_TTS or current != "again":
             for key, (voice, words) in GEMINI_VOICES.items():
                 rows.append({"id": key, "label": f"Gemini voice through Kie ({words})", "ready": kie and not kie_empty,
@@ -649,12 +692,22 @@ def install(studio, activity, *, token, home=None):
                      "note": "Skips Kie: ElevenLabs reads it directly, charged to your ElevenLabs plan." if eleven
                      else "Add your ElevenLabs key in Setup & accounts first (paste it there, never in a chat).",
                      **({} if eleven else {"setup": "/cr-setup"})})
+        fish_key = bool(cr_fish.key())
+        fish_pick = fish_choice(job)
+        if failed.get("provider") != "fish" or current != "again":
+            rows.append({"id": "fish", "label": "Your own Fish Audio account", "ready": bool(fish_key and fish_pick),
+                         "note": (f"Fish Audio reads it with {fish_pick.get('voice_name') or 'your chosen voice'}, "
+                                  "charged to your Fish Audio API balance." if fish_key and fish_pick else
+                                  "Choose a Fish Audio voice in Create → Choose voice first." if fish_key else
+                                  "Add your Fish Audio key in Setup & accounts first (paste it there, never in a chat)."),
+                         **({} if fish_key else {"setup": "/cr-setup"})})
         rows.append({"id": "own", "label": "Your own recording", "ready": True,
                      "note": "Read the script aloud and upload the recording (mp3, wav or m4a). Nothing is paid for "
                              "the voice, and the video is timed to your reading."})
         script = job / "script.txt"
         return {"stopped_on_voice": bool(failed), "current": current, "choices": rows,
-                "failed": {k: failed.get(k) for k in ("label", "reason", "category", "charged", "at")} if failed else None,
+                "failed": {k: failed.get(k) for k in ("label", "reason", "category", "charged", "uncertain", "at")}
+                if failed else None,
                 "has_voice": (job / "audio.mp3").is_file(),
                 "script": script.read_text(encoding="utf-8", errors="replace")[:40000] if script.is_file() else "",
                 "script_file": str(script) if script.is_file() else ""}
@@ -685,8 +738,13 @@ def install(studio, activity, *, token, home=None):
             if not offer[pick]["ready"]:
                 return protect(jsonify(error=offer[pick]["note"])), 409
             target = job / cr_media.VOICE_CHOICE
+            import cr_fish
+            if pick in ("again", "fish"):
+                cr_fish.release_uncertain(job)        # the creator's yes: an uncertain Fish Audio part is read again
             if pick == "again":
                 target.unlink(missing_ok=True)
+            elif pick == "fish":
+                target.write_text(json.dumps(fish_choice(job)), encoding="utf-8")
             elif pick in GEMINI_VOICES:
                 target.write_text(json.dumps({"provider": "kie", "model": GEMINI_TTS, "voice": GEMINI_VOICES[pick][0]}),
                                   encoding="utf-8")

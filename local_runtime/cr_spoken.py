@@ -42,10 +42,11 @@ def strip_cues(text: str) -> str:
 
 _LEAD_IN = re.compile(r"[^\n]{3,200}:[\s*_\"'”’»)]*")
 # the word for the script itself in a lead-in, accents folded: es guion/narracion, pt roteiro/narracao, fr script/
-# texte, de Skript/Sprechertext, it copione/sceneggiatura/testo, nl/sv/da/no manus, fi kasikirjoitus, id naskah, tl iskrip
+# texte, de Skript/Sprechertext, it copione/sceneggiatura/testo, nl/sv/da/no manus, fi kasikirjoitus, id naskah, tl iskrip,
+# hi स्क्रिप्ट/पटकथा (by their cr_language.latin keys: skript, ptktha)
 _SCRIPT_WORD = re.compile(r"\b(?:guion|guiones|libreto|narracion|roteiro|narracao|script|scripts|texte|skript|"
                           r"sprechertext|copione|sceneggiatura|testo|draaiboek|manus|manuset|manuskript|kasikirjoitus|"
-                          r"naskah|iskrip)\b")
+                          r"naskah|iskrip|ptktha)\b")
 
 
 def strip_lead_in(text: str) -> str:
@@ -61,7 +62,8 @@ def strip_lead_in(text: str) -> str:
         return text
     parts = re.split(r"(\n\s*\n)", str(text or "").lstrip(), maxsplit=1)
     first = parts[0].strip()
-    folded = "".join(c for c in unicodedata.normalize("NFKD", first.casefold()) if not unicodedata.combining(c))
+    first_key = cr_language.latin(first)                 # Hindi: "यह रही स्क्रिप्ट:" is keyed "yh rhi skript:"
+    folded = "".join(c for c in unicodedata.normalize("NFKD", first_key.casefold()) if not unicodedata.combining(c))
     if (len(parts) == 3 and "\n" not in first and _LEAD_IN.fullmatch(first) and len(first.split()) <= 16
             and _SCRIPT_WORD.search(folded)):
         return parts[2].lstrip()

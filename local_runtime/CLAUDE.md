@@ -194,10 +194,12 @@ under Saved ideas.
   days, then Studio empties it for good. Say first which video or style goes and what stays (their voice library,
   styles and other videos; for a style, the videos made with it), and that Claude Code asks them to approve. A video
   being made is refused: don't cancel it to delete it unless they ask for that too.
-- Languages: a video can be made in Spanish, Portuguese, French, German, Italian and the other languages
+- Languages: a video can be made in Spanish, Portuguese, French, German, Italian, Hindi and the other languages
   `list_styles` lists under `languages`: `make_videos` options.language (on the Studio page: Create → Narration &
-  sound → Language). Its script, voice, captions and words on screen are all in that language. Studio keeps the
-  creator's last choice for their next videos; a learned style's own language changes with `edit_style` language.
+  sound → Language). Its script, voice, captions and words on screen are all in that language. Hindi is written in
+  Devanagari (हिंदी), not Hinglish: Gemini's voices read Devanagari, and Studio draws it in its own font, CR
+  Devanagari. Studio keeps the creator's last choice for their next videos; a learned style's own language changes
+  with `edit_style` language.
   Choose voice's samples are in English; every voice reads the video in its language. A video in another language
   than its style's renders on this computer, not Studio Cloud, for now. Of the ready-made Shorts recipes, Roblox Story
   Shorts take any of these languages (on Kie the narrator is a Gemini voice that speaks it); the others speak English
@@ -205,6 +207,12 @@ under Saved ideas.
 - Voices: Kie narrates with Gemini voices only (70 of them, in Create → Choose voice, each with a free sample). For
   ElevenLabs voices the customer adds their own ElevenLabs key in Setup & accounts (its whole voice library then shows
   in Choose voice). Studio moved any saved Kie ElevenLabs voice to the Gemini voice of its kind and says so once.
+  Fish Audio works the same way on the customer's own Fish Audio API key (Setup & accounts → Narration voice → Fish
+  Audio; never in chat): `voices` lists their own Fish Audio voices, the library voices they picked, or Fish Audio's
+  public library (search, or a pasted fish.audio voice link), each with its free sample where Fish Audio has one;
+  `choose_voice` uses one for their next videos, and `make_videos` options.voice reads one batch with another Fish
+  Audio voice. `quote` counts its price (S2.1 Pro: $15 a million bytes of script, about $0.015 a minute). The
+  self-voiced Shorts (Ranking, Roblox) keep their own narrator.
 - Research footage (YouTube): Studio's video watcher is Kie when that's their only video-model key. If Kie's
   watcher isn't answering, ChannelRecipe's own watcher takes over that video's footage watching, from the plan's
   monthly clip watches (the same ones Ranking Shorts use; at most 20 a video), never their credits; if those are
@@ -215,7 +223,9 @@ under Saved ideas.
   why a video that should have had captions has none (for example its narration had no timed words): tell them.
 - A video that stopped on its voice (`progress(id)` shows `voice_choices`, for example Kie answering "Internal Error"):
   tell them what failed and whether anything was charged (`voice_failed`), then ask which way to carry on: the same
-  voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs account, or their own recording.
+  voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs or Fish Audio account, or their
+  own recording. When the again choice's note says Fish Audio may already have read part of it, again can pay for
+  that part twice (a few cents): say so and pass it only after they say yes.
   Offer only the ready ones (an ElevenLabs key goes in Setup & accounts, never in chat) and never pick for them. For
   their own recording, show them the script (`script_file`) to read, then `resume_video(id, voice="own",
   recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.

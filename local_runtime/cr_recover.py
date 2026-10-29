@@ -686,8 +686,10 @@ def engine_voice(job, saved) -> bool:
         # Shorts read their lines on the creator's ElevenLabs key when one is set (shorts/ranking/voice.py)
         return bool(os.getenv("ELEVENLABS_API_KEY", "").strip())
     chosen = cr_media.job_voice(job)
-    if chosen.get("provider") in ("own", "kie"):
+    if chosen.get("provider") in ("own", "kie", "fish"):
         return False
+    if cr_media.fish_voice(job, str(spec.get("style") or saved.get("style") or "")):
+        return False                                           # Fish Audio parts keep receipts too (cr_fish)
     if chosen.get("provider") == "original":
         return True
     try:
@@ -960,6 +962,30 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
         if not 200 <= answer.status_code < 300:
             raise Refused(str(data.get("error") or "Studio couldn't carry this video on."), data)
         return data
+
+    def video_names():
+        """project id -> {"slug", "title"} for every saved video of this Studio (overall Claude use names them)."""
+        engine = getattr(studio, "mv", None)
+        names = {}
+        for job in (engine.list_jobs() if hasattr(engine, "list_jobs") else []):
+            try:
+                job = Path(job)
+                saved = saved_project(job)
+                if saved and _SLUG.fullmatch(job.name):
+                    names[saved["id"]] = {"slug": job.name, "title": job_title(job, saved)}
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+        return names
+
+    @app.get("/cr-workspace/claude-use")
+    def cr_claude_use_overall():
+        """Studio's Claude use across every video (today, the last 7 days, all time, by video): Projects' card and the
+        claude_usage tool. What Studio counted, never a plan's quota."""
+        try:
+            import cr_claude_use
+            return jsonify(cr_claude_use.overall(home, video_names()))
+        except Exception:                                      # noqa: BLE001
+            return jsonify(error="Studio couldn't add up its Claude use."), 500
 
     @app.get("/cr-workspace/claude-use/<slug>")
     def cr_claude_use_route(slug):

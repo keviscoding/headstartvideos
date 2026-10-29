@@ -123,6 +123,8 @@ html[data-cr-screen="editor"] .side{background:var(--panel)}
  .cr-3d-top{align-items:flex-start}.cr-3d-panel{padding:16px}.cr-3d-actions button{width:100%}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+/* a vertical video plays whole in the library card, never cropped to a wide band of its middle */
+.card video{object-fit:contain}
 </style>"""
 
 _BRANDING = r"""<script id="cr-studio-branding">

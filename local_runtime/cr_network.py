@@ -53,11 +53,14 @@ HOSTS = (
     ("huggingface.co", "downloading the speech-timing model (once)", "", "speech_model"),
     ("www.youtube.com", "YouTube footage, Ranking Shorts' clips and cloning styles from YouTube", "", "youtube"),
     ("api.elevenlabs.io", "your ElevenLabs voice", "", "elevenlabs"),
+    ("api.fish.audio", "your Fish Audio voice", "", "fish"),
 )
+KEYED = ("elevenlabs", "fish")      # checked only when the creator saved that account's key
 LABELS = {"channelrecipe.com": "ChannelRecipe", "channelrecipe-media.sfo3.digitaloceanspaces.com": "Studio downloads",
           "api.kie.ai": "Kie.ai", "tempfile.aiquickdraw.com": "Kie.ai's file host",
           "kieai.redpandaai.co": "Kie.ai's upload host", "huggingface.co": "Hugging Face",
-          "www.youtube.com": "YouTube", "api.elevenlabs.io": "ElevenLabs"}
+          "www.youtube.com": "YouTube", "api.elevenlabs.io": "ElevenLabs",
+          "api.fish.audio": "Fish Audio"}
 RELAYED = ("tempfile.aiquickdraw.com", "kieai.redpandaai.co")    # cr_relay goes around these once marked blocked
 
 REASONS = {
@@ -299,7 +302,7 @@ def summarise(rows: list, local: dict | None = None) -> dict:
 
 
 def _hosts(wants: dict) -> list:
-    return [h for h in HOSTS if h[3] != "elevenlabs" or wants.get("elevenlabs")]
+    return [h for h in HOSTS if h[3] not in KEYED or wants.get(h[3])]
 
 
 def probe_all(hosts, *, probe=handshake, retry: bool = True) -> dict:
@@ -376,7 +379,7 @@ def status(wants: dict | None = None, *, wait: float = TIMEOUT * 2 + 2, probe=ha
             return _answer(last, wants)
         worker = _running.get("thread")
         if worker is None or not worker.is_alive():
-            hosts = [h[0] for h in HOSTS if h[3] != "elevenlabs" or wants.get("elevenlabs")]
+            hosts = [h[0] for h in HOSTS if h[3] not in KEYED or wants.get(h[3])]
 
             def run():
                 try:
@@ -449,4 +452,5 @@ def wants_from_env(*, speech_model_missing: bool, hub_provider: str = "") -> dic
     """What this Studio needs, from its saved keys (never read into anything but booleans)."""
     kie = bool(os.getenv("KIE_API_KEY", "").strip()) or hub_provider in ("", "kie")
     return {"kie": kie, "speech_model": speech_model_missing, "youtube": True,
-            "elevenlabs": bool(os.getenv("ELEVENLABS_API_KEY", "").strip())}
+            "elevenlabs": bool(os.getenv("ELEVENLABS_API_KEY", "").strip()),
+            "fish": bool(os.getenv("FISH_AUDIO_API_KEY", "").strip())}

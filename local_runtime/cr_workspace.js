@@ -256,10 +256,23 @@
     if (pics) {const r = $('crw-pictures'); r.min = pics.floor; r.max = pics.ceiling; r.value = pics.default; showPictures();}
     updateOptional(); summary(); gate(); if (persist) save();
   }
+  // one AI picture at the creator's Setup image model (the catalog's picture_price: Nano Banana Pro is ~$0.09)
+  function pictureUsd() {const v = Number(state.catalog?.picture_price?.usd || state.catalog?.prices?.picture); return v > 0 ? v : 0.02;}
+  // The YouTube thumbnails, said in the summary with their cost and a one-click Turn off/on (Swapnil, 2026-10-29: he
+  // didn't want them, to save Kie credits, and the switch sat folded away under Captions & publishing). The choice
+  // is remembered with the others; a video made without them shows a frame of itself in Projects and the library.
+  function thumbsSummary() {
+    const r = state.selected, on = checked('crw-thumbnails'), n = number('crw-thumbnail-count', 2, 1, 4);
+    hide('crw-summary-thumbs-row', !r || isShort(r));
+    const usd = n * pictureUsd();
+    text('crw-summary-thumbs', on ? `${n} YouTube thumbnail${n === 1 ? '' : 's'} (about $${usd.toFixed(2)} in pictures)` : 'Off · saves their picture credits');
+    text('crw-summary-thumbs-toggle', on ? 'Turn off' : 'Turn on');
+    text('crw-thumbnails-help', `Each thumbnail is one AI picture on your image account (about $${pictureUsd().toFixed(2)}). Turn this off to skip them and save those credits: Projects and your library show a frame of the video instead.`);
+  }
   function showPictures() {
     const pics = state.selected?.pictures; if (!pics) return; const v = Number($('crw-pictures').value);
     text('crw-pictures-value', `· ${v}`);
-    text('crw-pictures-help', `The recipe draws ${pics.default} a minute. Fewer pictures cost less (about $${(v * 0.02).toFixed(2)} a minute in pictures); never fewer than ${pics.floor}, so each picture stays on its own words.`);
+    text('crw-pictures-help', `The recipe draws ${pics.default} a minute. Fewer pictures cost less (about $${(v * pictureUsd()).toFixed(2)} a minute in pictures); never fewer than ${pics.floor}, so each picture stays on its own words.`);
   }
   function threedLook(features) {
     const v = $('crw-palette').value;
@@ -369,6 +382,7 @@
     text('crw-script-length', reads ? `${scriptWords} words: ${reads} of video at this style's reading pace. Your script sets the length.` : '');
     hide('crw-script-length', !reads);
     text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) && !isShort(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) && state.narration !== 'own' ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
+    thumbsSummary();
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     // a cloned style reads with its own narrator (the kind of voice its channel has), else the account's voice
     const narrator = state.selected?.narrator || state.setup?.narration?.voice;
@@ -461,13 +475,15 @@
     for (const button of all('.crw-nav [data-nav]')) {const active = button.dataset.nav === state.page; button.classList.toggle('is-active', active); active ? button.setAttribute('aria-current','page') : button.removeAttribute('aria-current');}
     text('crw-page-name', {create:'Create video',projects:'Your projects',styles:'Style library'}[state.page]);
     if (persist) history.replaceState(null,'',`${location.pathname}${location.search}#${state.page}`);
-    if (state.page === 'projects') {renderProjects(); cloudPanel();} if (state.page === 'styles') renderStyles();
+    if (state.page === 'projects') {renderProjects(); cloudPanel(); claudeOverall();} if (state.page === 'styles') renderStyles();
     if (state.page !== 'create') loadTrash();
     $('crw-main').focus({preventScroll:true});
   }
   function inspect(recipe, reveal = false) {
     state.inspected = recipe; text('crw-detail-name', recipe.label); text('crw-detail-description',recipe.description || recipe.tagline);
     recipePreview($('crw-detail-art'),recipe);
+    // the opened recipe plays its clip by itself (a tap on a phone), unless the computer asks for less motion
+    {const clip = recipeClip($('crw-detail-art').parentElement, recipe); if (clip && !calmMotion() && $('crw-gallery').open) clip.cr(true);}
     text('crw-detail-family', recipe.family || 'Visual recipe'); tags('crw-detail-tags', recipe.capabilities);
     text('crw-detail-policy',recipe.visual_policy_label || ''); hide('crw-detail-policy',!recipe.visual_policy_label);
     $('crw-detail-points').replaceChildren(...(recipe.capabilities || []).map(v => el('li','',v)));
@@ -487,9 +503,39 @@
       img.src=recipe.preview_url;
     } else {img.removeAttribute('src');img.onload=null;img.onerror=null;}
   }
+  // A few moving seconds of a recipe (cr_recipe_clips; Swapnil, 2026-10-29: judge a style by how it moves, not by a
+  // picture): our loop of a ready-made recipe, or seconds start..end of the creator's own video in it. Nothing loads
+  // until it plays (preload none); a clip that can't load leaves the picture. play(true) starts it, play(false) stops.
+  function recipeClip(parent, recipe) {
+    const clip = recipe?.preview_clip, old = parent.querySelector('.crw-recipe-clip');
+    if (old && clip?.url && old.dataset.clip === clip.url) return old;     // the same recipe again: keep what loaded
+    old?.remove(); if (!clip?.url) return null;
+    const v = el('video', 'crw-recipe-clip'); v.muted = true; v.defaultMuted = true; v.playsInline = true; v.preload = 'none';
+    v.dataset.clip = clip.url; v.setAttribute('muted', ''); v.setAttribute('aria-hidden', 'true'); v.tabIndex = -1; v.disablePictureInPicture = true;
+    let start = Number(clip.start) || 0, end = Number(clip.end) || 0;
+    v.loop = !end;
+    v.addEventListener('loadedmetadata', () => {if (end && v.duration && v.duration < end + 1) {start = 0; end = 0; v.loop = true;} if (start) v.currentTime = start;});
+    v.addEventListener('timeupdate', () => {if (end && v.currentTime >= end) v.currentTime = start;});
+    v.addEventListener('ended', () => {if (end) {v.currentTime = start; v.play().catch(() => {});}});
+    v.addEventListener('playing', () => v.classList.add('is-playing'));
+    v.addEventListener('error', () => v.remove());
+    parent.append(v);
+    v.cr = (on) => {
+      if (!v.isConnected) return;
+      if (!on) {v.pause(); v.classList.remove('is-playing'); return;}
+      if (!v.getAttribute('src')) v.src = clip.url;
+      v.play().catch(() => {});
+    };
+    return v;
+  }
+  // no clip plays by itself when the computer asks for less motion or the connection for less data (Save-Data); a
+  // hover or focus still plays one
+  const calmMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches || navigator.connection?.saveData === true;
   function recipeCard(recipe, action) {
     const b = el('button','crw-recipe-card'); b.type = 'button'; b.dataset.recipe = identity(recipe); b.setAttribute('aria-label', `Explore ${recipe.label}`);
     const art = el('div','crw-card-art'); const img = el('img'); img.loading='lazy';art.append(img);recipePreview(img,recipe);
+    const clip = recipeClip(art, recipe);
+    if (clip) {for (const [type, on] of [['mouseenter', true], ['focus', true], ['mouseleave', false], ['blur', false]]) b.addEventListener(type, () => clip.cr(on));}
     const body = el('div','crw-card-body'); body.append(el('small','crw-card-meta',recipe.family || 'Your style'),el('h3','',recipe.label),el('p','crw-card-description',recipe.description || recipe.tagline || ''));
     b.append(art,body); b.addEventListener('click',()=>action(recipe)); return b;
   }
@@ -502,7 +548,8 @@
     $('crw-gallery-grid').replaceChildren(...recipes.map(r => recipeCard(r, selected=>inspect(selected,true))), ...studies.map(studyCard)); text('crw-gallery-count', `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}${studies.length ? ` · ${studies.length} style ${studies.length === 1 ? 'study' : 'studies'} not finished` : ''}`); hide('crw-gallery-empty',!!(recipes.length || studies.length)); hide('crw-gallery-detail',!recipes.length);
     if (state.inspected && recipes.includes(state.inspected)) inspect(state.inspected); else if (recipes[0]) inspect(recipes[0]);
   }
-  function openGallery() {gallery(); $('crw-gallery').showModal(); $('crw-gallery-search').focus();}
+  function detailClip() {return $('crw-detail-art').parentElement.querySelector('.crw-recipe-clip');}
+  function openGallery() {gallery(); $('crw-gallery').showModal(); $('crw-gallery-search').focus(); if (!calmMotion()) detailClip()?.cr(true);}
   function renderAllowance() {
     const box = $('crw-clone-allowance'); if (!box) return;
     const clones = state.setup?.account?.style_clones; box.replaceChildren();
@@ -624,6 +671,18 @@
     hide('crw-projects-empty',!!projects.length);text('crw-project-count',combinedProjects().length);hide('crw-project-count',!combinedProjects().length);
     requestAnimationFrame(visiblePosters);
   }
+  // Claude used by Studio across every video (Swapnil, 2026-10-29: "per project & overall"): today, the last 7 days,
+  // all time and by video, from Studio's own counts. Claude Code never says what's left of a plan, so no percentage.
+  async function claudeOverall() {
+    let d; try {d = await api('/cr-workspace/claude-use');} catch (_) {hide('crw-claude-overall', true); return;}
+    if (!d || !d.all || !d.all.calls) {hide('crw-claude-overall', true); return;}
+    const words = t => !t.calls ? 'No Claude calls' : `${t.calls} call${t.calls === 1 ? '' : 's'}` + (t.timed ? ` · about ${Math.max(1, t.minutes)} min` : '') + (t.tokens_counted ? ` · ${shortCount(t.tokens_in + t.tokens_out)} tokens` + (t.tokens_counted < t.calls ? ` (reported for ${t.tokens_counted} of ${t.calls} calls)` : '') : '');
+    text('crw-claude-overall-line', `Today ${words(d.today).toLowerCase()} · all time ${words(d.all).toLowerCase()}`);
+    $('crw-claude-overall-stats').replaceChildren(...[['Today', d.today], ['Last 7 days', d.week], ['All time', d.all]].map(([name, t]) => {const box = el('div'); box.append(el('strong', '', name), el('span', '', words(t))); return box;}));
+    $('crw-claude-overall-videos').replaceChildren(...(d.videos || []).slice(0, 10).map(v => {const li = el('li', '', v.title || 'A video'); li.append(' ', el('small', '', words(v))); return li;}));
+    text('crw-claude-overall-note', d.note || ''); hide('crw-claude-overall', false);
+  }
+  function shortCount(n) {return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n);}
   async function openProgress(job) {
     state.openJob = job.slug; showPage('projects'); hide('crw-progress',false); text('crw-progress-title',job.title || 'Your project');
     $('crw-progress-actions').replaceChildren(); await refreshProgress(); $('crw-progress').scrollIntoView({behavior:'smooth',block:'start'});
@@ -1303,6 +1362,8 @@
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
   $('crw-form').addEventListener('input',()=>{error('');updateOptional();summary();save();cloudChoice();});
+  $('crw-gallery').addEventListener('close',()=>{for(const v of all('#crw-gallery .crw-recipe-clip'))v.cr?.(false);});
+  $('crw-summary-thumbs-toggle').addEventListener('click',()=>{$('crw-thumbnails').checked=!checked('crw-thumbnails');updateOptional();summary();save();});
   $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
   // the language chosen is kept as Studio's default for the next videos (any recipe); taken on its first event, before
   // the form's own refresh (which starts the picker at the kept choice) sees it
@@ -1317,10 +1378,13 @@
   $('crw-recipe-open').addEventListener('click',openGallery);$('crw-styles-browse').addEventListener('click',openGallery);
   $('crw-gallery-search').addEventListener('input',gallery);$('crw-gallery-close').addEventListener('click',()=>{$('crw-gallery').close();$('crw-recipe-open').focus();});
   $('crw-detail-use').addEventListener('click',()=>{if(state.inspected){selectRecipe(state.inspected);$('crw-gallery').close();showPage('create');$('crw-recipe-open').focus();}});
+  // a vertical Short gets a tall player (it was a 16:9 box with the Short small in its middle)
+  $('crw-output-video').addEventListener('loadedmetadata',()=>{const v=$('crw-output-video');v.classList.toggle('is-tall',v.videoHeight>v.videoWidth*1.1);});
+  $('crw-output-video').addEventListener('emptied',()=>$('crw-output-video').classList.remove('is-tall'));
   $('crw-output-close').addEventListener('click',()=>{$('crw-output-video').pause();$('crw-output').close();});
   $('crw-output').addEventListener('close',()=>{$('crw-output-video').pause();$('crw-output-video').removeAttribute('src');$('crw-output-video').load();});
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
-  $('crw-projects-refresh').addEventListener('click',()=>refreshActivity(true));
+  $('crw-projects-refresh').addEventListener('click',()=>{refreshActivity(true);claudeOverall();});
   $('crw-delete-confirm').addEventListener('click',confirmDelete);
   for(const id of ['crw-delete-cancel','crw-delete-close'])$(id).addEventListener('click',()=>$('crw-delete').close());
   $('crw-delete').addEventListener('close',()=>{state.deleting=null;});
@@ -1387,8 +1451,9 @@
     }
     if (!ordered.length) list.append(el('p', 'crw-voices-note', 'No voices match that search.'));
   }
-  // ElevenLabs connected directly (cr_voice_library): the creator's own voices and ElevenLabs' shared library, each
-  // with its own free sample, kept per recipe. The media-hub picker above is unchanged.
+  // ElevenLabs or Fish Audio connected directly (cr_voice_library, cr_fish): the creator's own voices and the
+  // provider's shared library, each with its own free sample where it has one, kept per recipe. A fish.audio voice
+  // link pasted in the search box finds that voice. The media-hub picker above is unchanged.
   const library = {source: 'mine', rows: [], timer: null};
   async function loadLibrary() {
     const q = $('crw-voices-search').value.trim(), source = library.source;
@@ -1408,19 +1473,19 @@
       const play = el('button', 'crw-secondary-button crw-voice-play', '▶'); play.type = 'button'; play.setAttribute('aria-label', 'Preview ' + v.name); play.disabled = !v.preview;
       play.addEventListener('click', () => {if (voices.playing === v.id && !audio.paused) {audio.pause(); return;}
         voices.playing = v.id; audio.src = v.preview; audio.play().catch(() => text('crw-voices-status', 'Press ▶ again to play.'));});
-      const copy = el('div'); copy.append(el('strong', '', v.name), el('span', '', [v.gender, v.accent, v.age, v.description].filter(Boolean).join(' · ') || 'ElevenLabs voice'));
+      const copy = el('div'); copy.append(el('strong', '', v.name), el('span', '', [v.gender, v.accent, v.age, v.description].filter(Boolean).join(' · ') || `${data.provider_label || 'ElevenLabs'} voice`));
       row.append(play, copy);
       if (current) row.append(el('span', 'crw-voice-badge', 'Selected'));
       else {const use = el('button', 'crw-primary-button', 'Use'); use.type = 'button'; use.addEventListener('click', () => chooseLibraryVoice(v, use)); row.append(use);}
       list.append(row);
     }
     if (!library.rows.length) list.append(el('p', 'crw-voices-note', library.source === 'mine'
-      ? 'No voices on your ElevenLabs account match. Try the Voice library.' : 'No voices match that search.'));
+      ? `No voices on your ${data.provider_label || 'ElevenLabs'} account match. Try the Voice library.` : 'No voices match that search.'));
   }
   async function chooseLibraryVoice(v, button) {
     button.disabled = true;
     try {
-      const result = await api('/cr-voices/select', {method: 'POST', body: {voice_id: v.id, name: v.name, gender: v.gender, style: voices.data.style}});
+      const result = await api('/cr-voices/select', {method: 'POST', body: {voice_id: v.id, name: v.name, gender: v.gender, mine: !!v.mine, style: voices.data.style}});
       voices.data.voice = v.name; voices.data.voice_id = v.id; if (state.setup?.narration) state.setup.narration.voice = v.name;
       text('crw-narration-name', v.name); text('crw-voices-status', result.message); renderLibrary(); summary();
     } catch (e) {text('crw-voices-status', e.message); button.disabled = false;}
@@ -1433,8 +1498,8 @@
     $('crw-voices-sources').hidden = !voices.data.library; $('crw-voices-search').hidden = false;
     if (voices.data.library) {
       if (!voices.data.style) {error('Choose a recipe first, then its voice.'); return;}
-      text('crw-voices-sub', `ElevenLabs · for ${state.selected?.label || state.selected?.name || 'this recipe'}`);
-      text('crw-voices-note', 'Press ▶ to hear a voice (free). Your choice is kept for this recipe.');
+      text('crw-voices-sub', `${voices.data.provider_label || 'ElevenLabs'} · for ${state.selected?.label || state.selected?.name || 'this recipe'}`);
+      text('crw-voices-note', [voices.data.provider === 'fish' ? voices.data.note : '', 'Press ▶ to hear a voice (free). Your choice is kept for this recipe.'].filter(Boolean).join(' '));
       library.source = 'mine'; chooseGroup('[data-voice-source]', 'voiceSource', 'mine');
       $('crw-voices').showModal(); $('crw-voices-search').focus(); await loadLibrary(); return;
     }

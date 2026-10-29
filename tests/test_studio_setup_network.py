@@ -50,10 +50,11 @@ def test_a_network_that_reaches_everything_passes_and_never_asks_elevenlabs_with
     probe = probe_with({})
     result = cr_network.check(EVERYTHING, probe=probe)
     assert result["ready"] and result["message"] == "This computer reaches every service Studio uses."
-    assert sorted(probe.asked) == sorted(h[0] for h in cr_network.HOSTS if h[0] != "api.elevenlabs.io")
+    keyed = ("api.elevenlabs.io", "api.fish.audio")         # asked only with the creator's own key
+    assert sorted(probe.asked) == sorted(h[0] for h in cr_network.HOSTS if h[0] not in keyed)
     with_key = probe_with({})
-    cr_network.check({**EVERYTHING, "elevenlabs": True}, probe=with_key)
-    assert "api.elevenlabs.io" in with_key.asked
+    cr_network.check({**EVERYTHING, "elevenlabs": True, "fish": True}, probe=with_key)
+    assert "api.elevenlabs.io" in with_key.asked and "api.fish.audio" in with_key.asked
 
 
 def test_blocked_hosts_studio_goes_around_are_explained_and_dont_block():

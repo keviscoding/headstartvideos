@@ -232,6 +232,8 @@ def profile(task=None):
     if task == "images" and images.get("provider") == "kie":
         return {**images, "tasks": ["images"]}
     voice = settings.get("narration") or {}
+    if task == "narration" and voice.get("provider") == "fish":
+        return {}                                    # the creator's own Fish Audio key, read by cr_fish (not a hub)
     if task == "narration" and voice.get("provider") in ("kie", "atlas", "original"):
         return kie_narration({**voice, "tasks": ["narration"]}) if voice["provider"] != "original" else {}
     cfg = settings.get("media_hub") or {}
@@ -847,6 +849,56 @@ def image_model(model):
     raise AccountStop("Choose a supported Kie image model in Setup & accounts.")
 
 
+def picture_price(engine_usd=None) -> dict:
+    """What one AI picture (a still or a YouTube thumbnail) costs on the creator's image account, for quotes:
+    {"usd", "model", "label"}. The Kie model chosen in Setup when the provider catalog names its price (Nano Banana Pro,
+    Google's Gemini 3 Pro Image, is about $0.09 a picture against the default's $0.02), else the engine's own estimate.
+    An estimate for the cost lines, not a bill: Kie's dashboard has the real numbers."""
+    usd = float(engine_usd) if isinstance(engine_usd, (int, float)) and not isinstance(engine_usd, bool) \
+        and engine_usd > 0 else 0.02
+    try:
+        cfg = profile("images")
+    except Exception:                                         # noqa: BLE001 - an unreadable setup: the estimate
+        cfg = {}
+    if cfg.get("provider") != "kie":
+        return {"usd": round(usd, 4), "model": "", "label": ""}
+    try:
+        choice = image_model(cfg.get("model") or PROVIDERS["kie"]["models"]["images"])
+    except AccountStop:
+        return {"usd": round(usd, 4), "model": "", "label": ""}
+    price = choice.get("usd_per_image")
+    # Studio's default model keeps the engine's estimate, so a creator who never chose a model sees the quotes they saw
+    # before (the engine prices pictures by the services this computer has, which can differ from Kie's ~$0.02)
+    default = image_model(PROVIDERS["kie"]["models"]["images"])["id"]
+    if choice["id"] != default and isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0:
+        usd = float(price)
+    return {"usd": round(usd, 4), "model": choice["id"], "label": choice["label"]}
+
+
+def price_catalog(data: dict) -> dict:
+    """The recipe catalog's picture prices at the creator's own Kie model (Setup's first image model): a picture, each
+    YouTube thumbnail and the AI pictures switch's cost a minute. The engine estimates every Kie model at the
+    default's ~$0.02; Nano Banana Pro is ~$0.09, so its quotes would have read four times too low. Changes data in
+    place (data["picture_price"], data["prices"]) and returns it."""
+    prices = data.get("prices") if isinstance(data.get("prices"), dict) else None
+    engine = (prices or {}).get("picture")
+    pic = picture_price(engine)
+    data["picture_price"] = pic                       # {"usd", "model", "label"}: Create's thumbnail line, quotes
+    if not prices or not isinstance(engine, (int, float)) or isinstance(engine, bool) or engine <= 0 \
+            or abs(pic["usd"] - engine) < 1e-9:
+        return data
+    prices = dict(prices)
+    prices["picture"] = pic["usd"]
+    feats = dict(prices.get("features") or {})
+    row = feats.get("ai_images")
+    if isinstance(row, dict) and isinstance(row.get("per_min"), (int, float)):
+        feats["ai_images"] = {**row, "per_min": round(row["per_min"] * pic["usd"] / engine, 4),
+                              "note": f"about ${pic['usd']:.2f} a picture on {pic['label'] or 'your image model'}"}
+    prices["features"] = feats
+    data["prices"] = prices
+    return data
+
+
 def picture_range(style: dict):
     """(floor, default, ceiling) pictures a minute a story recipe allows, or None for other recipes. The floor
     keeps quality: never fewer than half the recipe's own pace, nor under four a minute."""
@@ -1038,12 +1090,22 @@ def _chunks(text, limit=2400):
 # A video whose voice failed can be voiced another way, for that video only: the choice sits in its job folder and
 # Resume reads it here (the saved project's own settings live on ChannelRecipe and stay as they are).
 VOICE_CHOICE = "cr-voice.json"           # {"provider": "kie", "model", "voice"} | {"provider": "original"} | {"provider": "own", "file"}
+#                                          | {"provider": "fish", "model", "voice", "voice_name"} (cr_fish)
 VOICE_FAILED = "cr-voice-failed.json"    # why the last voice attempt stopped (offered choices read it)
 
 
 def job_voice(job) -> dict:
-    """This video's own voice choice, or {} for the voice in Setup & accounts."""
-    return _voice_in(Path(job) / VOICE_CHOICE)
+    """This video's own voice choice, or {} for the voice in Setup & accounts: chosen after its voice stopped
+    (cr-voice.json), else asked for when it was made (run_spec.json cr_voice: make_videos options.voice, a Fish Audio
+    voice for these videos only)."""
+    own = _voice_in(Path(job) / VOICE_CHOICE)
+    if own:
+        return own
+    try:
+        asked = json.loads((Path(job) / "run_spec.json").read_text(encoding="utf-8")).get("cr_voice")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return _voice_from(asked) if isinstance(asked, dict) and asked.get("provider") == "fish" else {}
 
 
 def _voice_in(path: Path) -> dict:
@@ -1052,6 +1114,10 @@ def _voice_in(path: Path) -> dict:
         choice = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    return _voice_from(choice)
+
+
+def _voice_from(choice) -> dict:
     if not isinstance(choice, dict):
         return {}
     if choice.get("provider") == "kie":
@@ -1067,6 +1133,12 @@ def _voice_in(path: Path) -> dict:
                 **({"moved_from": moved["moved_from"]} if moved.get("moved_from") else {})}
     if choice.get("provider") == "original":
         return {"provider": "original"}
+    if choice.get("provider") == "fish":
+        import cr_fish                                # the creator's own Fish Audio account (its voice, or Setup's)
+        voice = str(choice.get("voice") or "").lower()
+        return {"provider": "fish", "model": cr_fish.model_info(choice.get("model"))["id"],
+                **({"voice": voice, "voice_name": str(choice.get("voice_name") or "")[:90]}
+                   if cr_fish.VOICE_ID.fullmatch(voice) else {})}
     if choice.get("provider") == "own" and str(choice.get("file") or "").strip():
         return {"provider": "own", "file": str(choice["file"])}
     return {}
@@ -1111,8 +1183,23 @@ def style_voice(style: str, info: dict = None) -> dict:
     return {"provider": "kie", "model": model["id"], "voice": voice, "tasks": ["narration"]}
 
 
+def fish_voice(job, style="") -> dict:
+    """This video's Fish Audio voice (cr_fish.voice_for_job): its own choice, the voice it started with, or Setup's
+    Fish Audio narration; {} when it reads with another voice (its own choice, or a Kie style narrator it started with)."""
+    import cr_fish
+    job = Path(job)
+    own = job_voice(job)
+    if not own and _voice_in(job / STYLE_VOICE_PIN):
+        return {}                                    # a video carried on keeps the Kie style narrator it started with
+    return cr_fish.voice_for_job(job, own, style)
+
+
 def narrate(engine, text, mp3, srt, voice_id="", style=""):
     job = Path(mp3).parent
+    fish = fish_voice(job, style)
+    if fish:
+        import cr_fish                               # read by Fish Audio on the creator's own key, part by part
+        return cr_fish.narrate(engine, text, mp3, srt, fish)
     chosen = job_voice(job) or _voice_in(job / STYLE_VOICE_PIN)
     started = any((job / (Path(mp3).stem + "-hub-voice")).glob("part-*.*"))
     if not chosen and not started:                   # a video carried on keeps the one voice it started with
@@ -1183,7 +1270,7 @@ def _time_narration(engine, mp3, srt, text):
             if not word.word.strip():
                 continue
             current.append((word.word.strip(), float(word.start), float(word.end)))
-            if len(current) >= 6 or re.search(r"[.!?]$", word.word.strip()):
+            if len(current) >= 6 or re.search(r"[.!?\u0964\u0965]$", word.word.strip()):   # Hindi ends on a danda too
                 cues.append(current)
                 current = []
     if current:
@@ -1203,7 +1290,8 @@ def make_voiceover(engine, original_voice):
         chosen = job_voice(job)
         if chosen.get("provider") == "own":
             return own_recording(engine, script, Path(job), chosen["file"], force)
-        if chosen.get("provider") == "original" or not (chosen or active("narration")):
+        fish = bool(fish_voice(job, style))           # the creator's own Fish Audio account (cr_fish)
+        if chosen.get("provider") == "original" or not (chosen or active("narration") or fish):
             out = original_voice(script, job, force, avatar_min, style)
             (Path(job) / VOICE_FAILED).unlink(missing_ok=True)
             import cr_captions
@@ -1491,7 +1579,8 @@ def install(engine):
     for module in (wavespeed, vox):
         original = module.voiceover
         def routed_voice(eng, script, job, *args, _original=original, **kwargs):
-            if active("narration") or job_voice(job):       # Setup's narration account, or this video's own choice
+            if active("narration") or job_voice(job) or fish_voice(job):   # Setup's account, this video's own choice
+                # or the creator's own Fish Audio key
                 force = kwargs.get("force", args[-1] if args and isinstance(args[-1], bool) else False)
                 style = args[0] if args and isinstance(args[0], str) else ""
                 return voiceover(script, job, force=force, style=style)

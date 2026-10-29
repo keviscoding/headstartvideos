@@ -255,6 +255,14 @@ def thumbnail(row: dict) -> str:
     return ""
 
 
+def clip_link(clip) -> str:
+    url = clip.get("url") if isinstance(clip, dict) and isinstance(clip.get("url"), str) else ""
+    if url.startswith("/f/video/"):
+        start, end = clip.get("start") or 0, clip.get("end") or 0
+        return link(url) + (f"#t={start:g},{end:g}" if end else "")
+    return url if url.startswith("https://") else ""
+
+
 def style_card(row: dict, thumb: str = "") -> dict:
     block = cloud_block(row)
     return {"id": row["name"], "name": row.get("label") or row["name"],
@@ -264,6 +272,8 @@ def style_card(row: dict, thumb: str = "") -> dict:
             "cloud_note": block, "media_cost": one_line(row.get("cost"), 220) if row.get("cost") else "",
             "short_seconds": row.get("short_seconds"), "needs_panels": bool(row.get("panels")),
             "thumbnail_path": thumb, "preview_url": link(row["preview_url"]) if row.get("preview_url") else "",
+            # a few moving seconds of the style (cr_recipe_clips): the gallery plays it on hover; a link to show them
+            "moving_preview_url": clip_link(row.get("preview_clip")),
             # burned-in captions by the style's own design (false: none, like its channel; captions=true adds them)
             "captions": row.get("captions", True) is not False,
             # its recurring character (options.character / character_picture change it for a video)
@@ -326,21 +336,59 @@ def coded_usd(row: dict, minutes: float) -> float:
     return float(coded.get("plates_usd") or 0) + pieces * float(coded.get("music_usd_per_piece") or 0)
 
 
-def media_estimate(cat: dict, row: dict, minutes: int, features: dict) -> dict:
+def picture_usd(cat: dict) -> float:
+    """One AI picture on the creator's image account at their Setup model (the catalog's picture_price), else the
+    engine's estimate."""
+    for value in ((cat.get("picture_price") or {}).get("usd"), (cat.get("prices") or {}).get("picture")):
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return float(value)
+    return 0.02
+
+
+def thumbnail_count(row: dict, options: dict) -> int:
+    """How many YouTube thumbnails a video makes: options.thumbnails=false makes none (Swapnil, 2026-10-29: "save some
+    Kie credits"); a Short makes none either way."""
+    if kind(row) == "short" or (options or {}).get("thumbnails", True) is False:
+        return 0
+    try:
+        return max(1, min(int((options or {}).get("thumbnail_count") or 2), 4))
+    except (TypeError, ValueError):
+        return 2
+
+
+def media_estimate(cat: dict, row: dict, minutes: int, features: dict, thumbnails: int = 0) -> dict:
     prices = cat.get("prices") or {}
     per = prices.get("features") or {}
     voice = float(((prices.get("voice") or {}).get("per_min")) or 0)
+    fish = cat.get("narration_voice") if isinstance(cat.get("narration_voice"), dict) else {}
+    fish_reads = bool(fish) and not row.get("ranking") and (row.get("shorts") or {}).get("pipeline") not in ("ranking",
+                                                                                                             "roblox")
+    if fish_reads:
+        voice = float(fish.get("usd_per_min") or 0)               # the creator's own Fish Audio key reads it
     total = voice + sum(float((per.get(k) or {}).get("per_min") or 0) for k, on in features.items() if on)
     each = total * minutes + coded_usd(row, minutes)
     if kind(row) == "short" and isinstance(row.get("short_cost_usd"), (int, float)):
         each = float(row["short_cost_usd"])                        # the recipe's own estimate for one Short
-    return {"per_video_usd": round(each, 2), "recipe_note": one_line(row.get("cost"), 260),
-            "note": "Media runs on your own accounts (pictures, voice, footage watching). Claude's writing and "
-                    "directing run on your Claude Code plan, not billed per video."}
+    # the YouTube thumbnails: one AI picture each on the image account, none when the creator turns them off
+    thumbs = {"count": thumbnails, "usd": round(thumbnails * picture_usd(cat), 2), "offered": kind(row) != "short",
+              "note": "Each YouTube thumbnail is one AI picture on your image account. options.thumbnails=false "
+                      "makes none and saves that." if thumbnails else "No YouTube thumbnails for these videos."}
+    each += thumbs["usd"]
+    out = {"per_video_usd": round(each, 2), "thumbnails": thumbs, "recipe_note": one_line(row.get("cost"), 260),
+           "note": "Media runs on your own accounts (pictures, voice, footage watching). Claude's writing and "
+                   "directing run on your Claude Code plan, not billed per video."}
+    if fish_reads:
+        out["voice"] = {"provider": "fish", "model": fish.get("model"), "usd_per_min": fish.get("usd_per_min"),
+                        "note": f"Narration: Fish Audio {fish.get('model')} on the creator's own Fish Audio API "
+                                f"balance, ${float(fish.get('usd_per_million_bytes') or 0):g} a million bytes of "
+                                f"script (about ${float(fish.get('usd_per_min') or 0) * minutes:.2f} for {minutes} "
+                                "min)."}
+    return out
 
 
-def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, features: dict) -> dict:
-    media = media_estimate(cat, row, minutes, features)
+def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, features: dict,
+              thumbnails: int = 0) -> dict:
+    media = media_estimate(cat, row, minutes, features, thumbnails)
     out = {"style": row["name"], "style_name": row.get("label"), "titles": titles, "minutes": minutes,
            "where": where, "media": media}
     if where == "studio_cloud":
@@ -412,7 +460,8 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
         out["footage"] = {"videos_watched_at_most": b["videos"], "adds_minutes": b["typical_minutes"],
                           "stops_watching_after_minutes": b["stop_minutes"], "note": cr_watch.estimate_text(minutes)
                           + " Turn off the youtube feature (options.features) for a faster video without real footage."}
-    key = json.dumps([row["name"], titles, minutes, where, sorted(k for k, v in features.items() if v)])
+    key = json.dumps([row["name"], titles, minutes, where, sorted(k for k, v in features.items() if v)]
+                     + ([thumbnails] if thumbnails != 2 else []))       # the usual 2 keeps quote ids as they were
     out["quote_id"] = "q_" + hashlib.sha256(key.encode()).hexdigest()[:16]
     quotes = _read(STATE / "quotes.json")
     quotes = {k: v for k, v in quotes.items() if time.time() - v < QUOTE_SECONDS}
@@ -426,6 +475,11 @@ def summary(q: dict) -> str:
     n, each = q["titles"], " each" if q["titles"] > 1 else ""
     usd = q["media"]["per_video_usd"]
     media = f"media about ${usd:.2f}{each}" if usd >= 0.01 else "media a few cents"
+    t = q["media"].get("thumbnails") or {}
+    if t.get("count"):
+        media += f" (including {t['count']} YouTube thumbnail{'' if t['count'] == 1 else 's'}, about ${t['usd']:.2f})"
+    elif t.get("offered"):
+        media += " (no YouTube thumbnails)"
     footage = q.get("footage")
     # the footage is watched on this computer wherever the video renders
     watching = (f" Research footage adds about {footage['adds_minutes'][0]} to {footage['adds_minutes'][1]} minutes a "
@@ -798,7 +852,8 @@ def tool_quote(args):
     if not isinstance(options, dict):
         raise Refused("options must be an object.")
     character_choice(row, options, where)
-    q = quote_for(cat, row, titles=titles, minutes=minutes, where=where, features=features_for(row, options.get("features")))
+    q = quote_for(cat, row, titles=titles, minutes=minutes, where=where, features=features_for(row, options.get("features")),
+                  thumbnails=thumbnail_count(row, options))
     if character_note(row, options):
         q["character"] = character_note(row, options)
     return q
@@ -839,6 +894,12 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
         p["frame_check"] = options["frame_check"]                   # a coded style's frame check, for this video only
     if language:
         p["language"] = language            # its script, voice, captions and words on screen (cr_language)
+    voice = str(options.get("voice") or "").strip()
+    if voice:
+        found = _FISH_ID.search(voice)
+        if not found:
+            raise Refused("options.voice takes a Fish Audio voice id or fish.audio voice link (from voices()).")
+        p["cr_voice"] = {"provider": "fish", "voice": found.group(1).lower()}   # these videos only (cr_fish)
     if p["script"] and len(titles) > 1:
         raise Refused("Your own script goes with one title.")
     if kind(row) == "short":
@@ -939,6 +1000,9 @@ def tool_make_videos(args):
     features = features_for(row, options.get("features"))
     words, picture = character_choice(row, options, where)
     language = language_of(cat, row, options)
+    if where == "studio_cloud" and str(options.get("voice") or "").strip():
+        raise Refused("A video's own Fish Audio voice (options.voice) works on this computer for now: use "
+                      "where='this_computer', or choose the voice for the style with choose_voice.")
     if where == "studio_cloud" and language != (row.get("language") or "en"):
         raise Refused(f"A video in {language_name(language)} renders on this computer for now: use "
                       "where='this_computer'.")
@@ -953,7 +1017,8 @@ def tool_make_videos(args):
         if found.get("matches"):
             return resume_first_answer(found["matches"], found.get("others") or [])
     issued = _read(STATE / "quotes.json").get(str(args.get("quote_id") or ""))
-    q = quote_for(cat, row, titles=len(titles), minutes=minutes, where=where, features=features)
+    q = quote_for(cat, row, titles=len(titles), minutes=minutes, where=where, features=features,
+                  thumbnails=thumbnail_count(row, options))
     if character_note(row, options):
         q["character"] = character_note(row, options)
     if args.get("quote_id") != q["quote_id"] or not issued or time.time() - issued > QUOTE_SECONDS:
@@ -1444,6 +1509,20 @@ def clone_progress(operation: str) -> dict:
     return out
 
 
+def tool_claude_usage(args):
+    """Studio's Claude use across every video (cr_claude_use.overall), or one video's with id."""
+    vid = str(args.get("id") or "").strip()
+    if vid:
+        slug = vid.split(":", 1)[1] if vid.startswith("video:") else vid
+        out = call("GET", "/cr-workspace/claude-use/" + _quote_path(slug), timeout=30)
+        return {**out, "note": "What Studio counted for this video. Claude Code doesn't say how much of the plan's "
+                               "allowance is left, so never give a percentage."}
+    out = call("GET", "/cr-workspace/claude-use", timeout=60)
+    limit = max(1, min(int(args.get("videos") or 10), 50))
+    return {**out, "videos": (out.get("videos") or [])[:limit],
+            "what_to_tell_them": (out.get("line") or "") + " " + (out.get("note") or "")}
+
+
 def tool_list_videos(args):
     limit = max(1, min(int(args.get("limit") or 20), 60))
     rows = call("GET", "/cr-claude-code/videos", timeout=30).get("videos") or []
@@ -1840,6 +1919,55 @@ def tool_save_ideas(args):
             "next": "Offer use_idea(id) for the one they like best: it fills Create in. It never starts a video."}
 
 
+# ── narration voices (Choose voice) ───────────────────────────────────────────────────────────────────────────
+
+_FISH_ID = re.compile(r"(?<![0-9a-fA-F])([0-9a-fA-F]{32})(?![0-9a-fA-F])")
+
+
+def tool_voices(args):
+    """The narration voice in use and, for a voice account with a library (Fish Audio, ElevenLabs on the creator's own
+    key), one page of its voices: the creator's own, or the provider's library (search; a pasted fish.audio voice link
+    finds that voice). Free: listing never reads anything aloud."""
+    style = str(args.get("style") or "").strip()
+    if style and not _STYLE.fullmatch(style):
+        raise Refused("Unknown style id. Use an id from list_styles.")
+    now = call("GET", "/cr-voices?" + urllib.parse.urlencode({"style": style}), timeout=30)
+    if not now.get("connected"):
+        return {"connected": False, "next": "No narration account is connected. The creator connects one in Setup & "
+                                            "accounts (open_in_studio(page='setup')); keys go there, never in chat."}
+    out = {"connected": True, "provider": now.get("provider"), "provider_label": now.get("provider_label"),
+           "model": now.get("model_label") or now.get("model"), "voice": now.get("voice"),
+           "voice_id": now.get("voice_id") or "", "style": now.get("style") or style}
+    if not now.get("library"):
+        out["voices"] = now.get("voices") or []
+        out["next"] = "Choose voice on the Studio page plays a free sample of each (open_in_studio(page='create'))."
+        return out
+    source = "shared" if args.get("source") == "library" else "mine"
+    query = urllib.parse.urlencode({"source": source, "search": str(args.get("search") or "")[:200],
+                                    "page": max(1, min(int(args.get("page") or 1), 200))})
+    got = call("GET", "/cr-voices/library?" + query, timeout=60)
+    out.update(source="library" if source == "shared" else "mine", more=bool(got.get("more")),
+               voices=[{k: v.get(k) for k in ("id", "name", "description", "accent", "preview", "mine") if v.get(k)}
+                       for v in got.get("voices") or []][:30])
+    if got.get("note"):
+        out["note"] = got["note"]
+    out["next"] = ("Each voice's preview is its own free sample (an audio link). To use one, choose_voice(voice_id, "
+                   "style); for these videos only, make_videos options.voice=<voice id>.")
+    return out
+
+
+def tool_choose_voice(args):
+    """Use this voice for the creator's next videos (for a style when one is given): the same as Choose voice."""
+    voice = str(args.get("voice_id") or "").strip()
+    found = _FISH_ID.search(voice)
+    voice = found.group(1).lower() if found else voice
+    if not voice:
+        raise Refused("Give a voice_id from voices().")
+    body = {"voice_id": voice, "style": str(args.get("style") or "").strip(), "name": str(args.get("name") or "")[:90]}
+    got = call("POST", "/cr-voices/select", body, timeout=60)
+    return {"saved": bool(got.get("saved")), "voice": got.get("voice"), "message": got.get("message")}
+
+
 def tool_list_ideas(args):
     rows = _niche().list_ideas(str(args.get("status") or ""), home=HOME)
     return {"ideas": rows[:60], "total": len(rows)}
@@ -1941,7 +2069,8 @@ def _schema(properties=None, required=()):
 
 _OPTIONS = {"type": "object", "description": (
     "Optional. captions (default: the style's own; a style whose captions is false has none, like its channel, and "
-    "captions=true burns them in anyway), thumbnails (default true), thumbnail_count 1-4, description (YouTube "
+    "captions=true burns them in anyway), thumbnails (default true; false makes no YouTube thumbnails and saves their image credits, about $0.02 "
+    "each at the default model: the quote drops by that), thumbnail_count 1-4, description (YouTube "
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
     "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
     "short_seconds 15-60 for Shorts, quicker_3d_review (true: one 3D review round instead of three, about a quarter "
@@ -1953,6 +2082,8 @@ _OPTIONS = {"type": "object", "description": (
     "and words on screen (a name like Spanish, its own name like Español, or a code like es; list_styles' languages "
     "has them all; default: the one the creator chose last in Create, else the style's own, its card's language). "
     "Voice samples in Choose voice are in English; the voice reads the video in its language. "
+    "voice: a Fish Audio voice id or fish.audio voice link (from voices()) that reads these videos only, when the "
+    "creator connected their own Fish Audio key in Setup & accounts. "
     "character: words for the main character who appears in every picture "
     "(age, hair, face, clothes, one recognisable detail); they replace the style's own character for these videos, and "
     "on a style with a character picture Studio draws the new one once in the style's look (one picture, about $0.02). "
@@ -2040,6 +2171,13 @@ TOOLS = {
                  "cloud, lk_… (a style look) or op_… (a style study); none for everything. Free. Check every few "
                  "minutes, not in a tight loop. A stopped video says what stopped it (stopped_on: voice, presenter, "
                  "claude_stage, media) and what carrying it on involves.", _schema({"id": {"type": "string"}}), _FREE),
+    "claude_usage": (tool_claude_usage, "How much Claude Studio has used for the creator's videos: today, the last 7 "
+                     "days and all time (calls, Claude minutes, tokens from Studio 115 on), and by video, the most "
+                     "used first; id='video:<slug>' for one video. Claude Code never says how much of the plan's "
+                     "allowance is left: say what was used, never a percentage of a limit. Their own chats and style "
+                     "studies aren't counted. Free.",
+                     _schema({"id": {"type": "string"}, "videos": {"type": "integer", "minimum": 1, "maximum": 50}}),
+                     _FREE),
     "list_videos": (tool_list_videos, "Finished videos: on this computer (file path, watch link, project link) and on "
                     "Studio Cloud (download link). Free.",
                     _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 60},
@@ -2084,7 +2222,8 @@ TOOLS = {
                      "stopped). Reuses everything already made, so only the rest is paid for. Tell the creator what "
                      "stopped it first (progress(id)). When progress(id) shows voice_choices (its voice service "
                      "failed), ask which they want and pass it as voice: the same voice again, Gemini through Kie, "
-                     "their own ElevenLabs account, or their own recording (pass its file path as recording). When it "
+                     "their own ElevenLabs account, their own Fish Audio account, or their own recording (pass its "
+                     "file path as recording). When it "
                      "shows presenter_choices (its AI presenter failed), ask and pass presenter: skip (finish without "
                      "the presenter) or again. Before again, read them the again choice's note: when "
                      "presenter_failed.uncertain is true, the last attempt got no clear answer and may have started, "
@@ -2095,7 +2234,7 @@ TOOLS = {
                                                            "without it (skip) or try it again (this video only; "
                                                            "can pay twice when presenter_failed.uncertain)."},
                               "voice": {"type": "string", "enum": ["again", "gemini-man", "gemini-woman", "elevenlabs",
-                                                                   "own"],
+                                                                   "fish", "own"],
                                         "description": "Only for a video that stopped on its voice: how to voice it now "
                                                        "(this video only)."},
                               "recording": {"type": "string", "description": "voice=own: the path of the creator's "
@@ -2218,6 +2357,20 @@ TOOLS = {
                    "ideas/ideas.json in this folder.",
                    _schema({"ideas": {"type": "array", "items": {"type": "object"}, "minItems": 1, "maxItems": 20}},
                            ["ideas"]), {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
+    "voices": (tool_voices, "The narration voice in use and, when the creator's own Fish Audio or ElevenLabs key "
+               "narrates, their voices: source='mine' (their own voices and the library voices they picked) or "
+               "'library' (the provider's public library; search by words, or paste a fish.audio voice link). Each "
+               "voice has a free preview link where the provider has one. Free.",
+               _schema({"style": {"type": "string", "description": "A style id from list_styles: its chosen voice."},
+                        "source": {"type": "string", "enum": ["mine", "library"]},
+                        "search": {"type": "string"}, "page": {"type": "integer", "minimum": 1}}), _FREE),
+    "choose_voice": (tool_choose_voice, "Use a voice from voices() for the creator's next videos (for that style when "
+                     "style is given), as Create → Choose voice does. Only when the creator picked it. Free; no "
+                     "video running.",
+                     _schema({"voice_id": {"type": "string", "description": "A voice id from voices(), or a "
+                                                                             "fish.audio voice link."},
+                              "style": {"type": "string"}, "name": {"type": "string"}}, ["voice_id"]),
+                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "list_ideas": (tool_list_ideas, "The creator's saved ideas (status saved, used or dismissed). Free.",
                    _schema({"status": {"type": "string", "enum": ["", "saved", "used", "dismissed"]}}), _FREE),
     "use_idea": (tool_use_idea, "Use a saved idea: Create opens with its title, style, length and angle filled in "
