@@ -34,4 +34,7 @@ Use ChannelRecipe Studio's tools (the `studio` server: `mcp__studio__…` in a S
    it waits in Studio's trash for 30 days (Recently deleted in Projects puts it back), then
    `delete_video(id, title)`. Claude Code asks them to approve. Their voice library, styles and other videos stay.
    A video still being made is refused.
-6. If Studio isn't running, `setup_check` says how to open it.
+6. How much Claude their videos used ("how many tokens", "how much of my plan"): `claude_usage()` gives today, the
+   last 7 days and all time, and the videos that used the most; `claude_usage(id)` one video. Say what was used. Claude
+   Code doesn't say how much of their plan is left, so never give a percentage; Studio's Projects page shows the same.
+7. If Studio isn't running, `setup_check` says how to open it.

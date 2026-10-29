@@ -475,7 +475,7 @@
     for (const button of all('.crw-nav [data-nav]')) {const active = button.dataset.nav === state.page; button.classList.toggle('is-active', active); active ? button.setAttribute('aria-current','page') : button.removeAttribute('aria-current');}
     text('crw-page-name', {create:'Create video',projects:'Your projects',styles:'Style library'}[state.page]);
     if (persist) history.replaceState(null,'',`${location.pathname}${location.search}#${state.page}`);
-    if (state.page === 'projects') {renderProjects(); cloudPanel();} if (state.page === 'styles') renderStyles();
+    if (state.page === 'projects') {renderProjects(); cloudPanel(); claudeOverall();} if (state.page === 'styles') renderStyles();
     if (state.page !== 'create') loadTrash();
     $('crw-main').focus({preventScroll:true});
   }
@@ -638,6 +638,18 @@
     hide('crw-projects-empty',!!projects.length);text('crw-project-count',combinedProjects().length);hide('crw-project-count',!combinedProjects().length);
     requestAnimationFrame(visiblePosters);
   }
+  // Claude used by Studio across every video (Swapnil, 2026-10-29: "per project & overall"): today, the last 7 days,
+  // all time and by video, from Studio's own counts. Claude Code never says what's left of a plan, so no percentage.
+  async function claudeOverall() {
+    let d; try {d = await api('/cr-workspace/claude-use');} catch (_) {hide('crw-claude-overall', true); return;}
+    if (!d || !d.all || !d.all.calls) {hide('crw-claude-overall', true); return;}
+    const words = t => !t.calls ? 'No Claude calls' : `${t.calls} call${t.calls === 1 ? '' : 's'}` + (t.timed ? ` · about ${Math.max(1, t.minutes)} min` : '') + (t.tokens_counted ? ` · ${shortCount(t.tokens_in + t.tokens_out)} tokens` : '');
+    text('crw-claude-overall-line', `Today ${words(d.today).toLowerCase()} · all time ${words(d.all).toLowerCase()}`);
+    $('crw-claude-overall-stats').replaceChildren(...[['Today', d.today], ['Last 7 days', d.week], ['All time', d.all]].map(([name, t]) => {const box = el('div'); box.append(el('strong', '', name), el('span', '', words(t))); return box;}));
+    $('crw-claude-overall-videos').replaceChildren(...(d.videos || []).slice(0, 10).map(v => {const li = el('li', '', v.title || 'A video'); li.append(' ', el('small', '', words(v))); return li;}));
+    text('crw-claude-overall-note', d.note || ''); hide('crw-claude-overall', false);
+  }
+  function shortCount(n) {return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n);}
   async function openProgress(job) {
     state.openJob = job.slug; showPage('projects'); hide('crw-progress',false); text('crw-progress-title',job.title || 'Your project');
     $('crw-progress-actions').replaceChildren(); await refreshProgress(); $('crw-progress').scrollIntoView({behavior:'smooth',block:'start'});
@@ -1316,7 +1328,7 @@
   $('crw-output-close').addEventListener('click',()=>{$('crw-output-video').pause();$('crw-output').close();});
   $('crw-output').addEventListener('close',()=>{$('crw-output-video').pause();$('crw-output-video').removeAttribute('src');$('crw-output-video').load();});
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
-  $('crw-projects-refresh').addEventListener('click',()=>refreshActivity(true));
+  $('crw-projects-refresh').addEventListener('click',()=>{refreshActivity(true);claudeOverall();});
   $('crw-delete-confirm').addEventListener('click',confirmDelete);
   for(const id of ['crw-delete-cancel','crw-delete-close'])$(id).addEventListener('click',()=>$('crw-delete').close());
   $('crw-delete').addEventListener('close',()=>{state.deleting=null;});

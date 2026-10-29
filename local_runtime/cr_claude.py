@@ -822,7 +822,12 @@ class Runtime:
             receipt.update(status="complete", result_fingerprint=output_digest, usage=safe_usage, error_code="")
             # seconds: what this call took, for "Claude so far for this video" (cr_claude_use); after the state, which
             # cr_recover reads from each file's first bytes
-            timed = {**named, "seconds": round(safe_usage["duration_seconds"], 1)}
+            # at and tokens: when it finished and what Claude Code reported it used, for Projects' Claude use across
+            # every video (cr_claude_use.overall); a call without a report has no tokens, never a guess
+            tokens = {name: safe_usage[name] for name in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                                          "cache_creation_input_tokens") if name in safe_usage}
+            timed = {**named, "seconds": round(safe_usage["duration_seconds"], 1), "at": round(time.time()),
+                     **({"tokens": tokens} if tokens else {})}
             _private_write(cache, {"state": "complete_local", **timed, "stdout": output, "result_fingerprint": output_digest,
                                    "input_fingerprint": fingerprint, "receipt": receipt, "origin": origin,
                                    "execution_binding": execution_binding})
@@ -843,7 +848,7 @@ class Runtime:
                 failure_message = cr_allowance.stopped_message((allowance or {}).get("reset_label"),
                                                                threed=label.startswith("3D picture review"))
             receipt["usage"] = {"duration_seconds": time.monotonic() - started, "reported": False}
-            failed={"state":"failed_local",**named,"seconds":round(receipt["usage"]["duration_seconds"],1),
+            failed={"state":"failed_local",**named,"seconds":round(receipt["usage"]["duration_seconds"],1),"at":round(time.time()),
                 "input_fingerprint":fingerprint,"error_code":receipt["error_code"],"receipt":receipt,
                 "diagnostic":private_diagnostic(completed,cfg) if completed is not None else {"exception_type":type(error).__name__}}
             _private_write(cache,failed)

@@ -25,7 +25,7 @@ from pathlib import Path
 HOME = Path(__file__).resolve().parent
 SERVER = "studio"
 FREE_TOOLS = ("setup_check", "fix_graphics_browser", "fix_speech_model", "fix_ffmpeg", "fix_node", "fix_claude_cli",
-              "list_styles", "get_style_pick", "quote", "progress", "list_videos", "open_in_studio",
+              "list_styles", "get_style_pick", "quote", "progress", "list_videos", "open_in_studio", "claude_usage",
               "cloud_balance", "clone_style_look", "product_ideas", "products", "edit_style", "style_lab", "queue",
               # the niche agent (/niche-agent): public YouTube pages, the niche database, saved ideas; never spends
               "niche_teaching", "niche_breakouts", "yt_search", "yt_channel_stats", "yt_look", "save_ideas",

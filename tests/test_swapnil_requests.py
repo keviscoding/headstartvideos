@@ -136,3 +136,86 @@ def test_setup_lists_prices_and_never_ticks_every_model_as_a_backup():
     assert "function imageChoiceText" in page and "usd_per_image" in page
     assert "image_models?.map(m=>m.id))" not in page   # six models were five backups: over Setup's limit of four
     assert "image_fallbacks||[]).filter(id=>id!==$('image-model').value).slice(0,4)" in page
+
+
+# ── 2. Claude used across every video ──────────────────────────────────────────────────────────────────────────────
+
+import cr_claude  # noqa: E402
+import cr_claude_use  # noqa: E402
+
+A, B = "crv_" + "a" * 24, "crv_" + "b" * 24
+
+
+def _cache(home, project, n, **data):
+    folder = home / "output" / "cr-claude-cache" / project
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"cc_{n:04d}.json"
+    path.write_text(json.dumps({"state": "complete", **data}), encoding="utf-8")
+    return path
+
+
+def test_overall_counts_today_the_week_and_all_time_by_video(tmp_path):
+    now = time.time()
+    tokens = {"input_tokens": 1000, "cache_read_input_tokens": 9000, "output_tokens": 2000}
+    _cache(tmp_path, A, 1, seconds=120, at=now - 60, tokens=tokens)              # today
+    _cache(tmp_path, A, 2, seconds=60, at=now - 3 * 86400, tokens=tokens)        # this week
+    old = _cache(tmp_path, B, 1, seconds=30)                                     # before Studio 115: no at, no tokens
+    os.utime(old, (now - 30 * 86400, now - 30 * 86400))
+    _cache(tmp_path, B, 2, state="failed", seconds=5, at=now - 40 * 86400)
+    out = cr_claude_use.overall(tmp_path, {A: {"slug": "rome--a", "title": "Why Rome fell"}}, now=now)
+    assert (out["today"]["calls"], out["week"]["calls"], out["all"]["calls"]) == (1, 2, 4)
+    assert out["today"]["tokens_in"] == 10000 and out["today"]["tokens_out"] == 2000
+    assert out["all"]["tokens_counted"] == 2 and out["all"]["minutes"] == 4
+    first, second = out["videos"]
+    assert first["title"] == "Why Rome fell" and first["slug"] == "rome--a" and first["calls"] == 2
+    assert second["title"] == "A deleted video" and second["tokens_counted"] == 0
+    assert out["line"].startswith("Claude used by Studio: today 1 call, about 2 min of Claude time, 12K tokens;")
+    assert "not a percentage" in out["note"] and "%" not in out["line"]
+
+
+def test_overall_with_no_calls_yet(tmp_path):
+    out = cr_claude_use.overall(tmp_path, {})
+    assert out["all"]["calls"] == 0 and out["videos"] == [] and "no Claude calls" in out["line"]
+
+
+def test_one_videos_line_says_its_tokens(tmp_path):
+    _cache(tmp_path, A, 1, seconds=90, at=time.time(), tokens={"input_tokens": 1500, "output_tokens": 500})
+    use = cr_claude_use.summary(tmp_path, tmp_path / "no-job", A)
+    assert use["line"] == "Claude so far for this video: 1 call, about 2 min of Claude time, 2K tokens."
+
+
+def test_each_finished_call_keeps_when_and_its_tokens(tmp_path, monkeypatch):
+    import subprocess
+    import types
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **k: {"ready": True, "account_fingerprint": "a"})
+    monkeypatch.setattr(cr_claude, "_source_context", lambda: (None, "test"))
+    bridge = types.SimpleNamespace(HOME=tmp_path, load_settings=lambda: {"brain_mode": "claudecode", "costs_accepted": True},
+                                   current_project=lambda: {"id": A},
+                                   authorize_stage=lambda s: {"execute": True, "authorization_token": "t" * 32,
+                                                              "selected_model": cr_claude.GENERAL_MODEL},
+                                   finish_stage=lambda r: None)
+    answer = json.dumps({"type": "result", "subtype": "success", "result": "ok",
+                         "usage": {"input_tokens": 9, "output_tokens": 11, "cache_read_input_tokens": 100}})
+    run = lambda args, **k: subprocess.CompletedProcess(args, 0, answer, "")
+    runtime = cr_claude.Runtime(types.SimpleNamespace(), bridge, "/fake/claude", run)
+    before = time.time() - 1
+    runtime.run(["/fake/claude", "--print", "--output-format", "json"], input="prompt")
+    [cache] = list((tmp_path / "output" / "cr-claude-cache").rglob("*.json"))
+    saved = json.loads(cache.read_text(encoding="utf-8"))
+    assert saved["state"] == "complete" and saved["at"] >= before
+    assert saved["tokens"] == {"input_tokens": 9, "output_tokens": 11, "cache_read_input_tokens": 100}
+
+
+def test_projects_and_claude_code_show_the_overall_use(studio, monkeypatch):
+    assert 'id="crw-claude-overall"' in HTML and "api('/cr-workspace/claude-use')" in JS
+    recover = (ROOT / "local_runtime/cr_recover.py").read_text(encoding="utf-8")
+    assert '@app.get("/cr-workspace/claude-use")' in recover
+    import cr_claude_code as ccc
+    assert "claude_usage" in ccc.FREE_TOOLS
+    answer = {"today": {"calls": 1}, "week": {"calls": 2}, "all": {"calls": 3}, "line": "Claude used by Studio: …",
+              "note": "not a percentage", "videos": [{"title": str(i)} for i in range(20)]}
+    original = studio.__call__
+    monkeypatch.setattr(tools, "call", lambda m, p, b=None, **k: answer if p == "/cr-workspace/claude-use"
+                        else original(m, p, b, **k))
+    out = ok("claude_usage", {"videos": 3})
+    assert len(out["videos"]) == 3 and "not a percentage" in out["what_to_tell_them"]

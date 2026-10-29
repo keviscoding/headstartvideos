@@ -1454,6 +1454,20 @@ def clone_progress(operation: str) -> dict:
     return out
 
 
+def tool_claude_usage(args):
+    """Studio's Claude use across every video (cr_claude_use.overall), or one video's with id."""
+    vid = str(args.get("id") or "").strip()
+    if vid:
+        slug = vid.split(":", 1)[1] if vid.startswith("video:") else vid
+        out = call("GET", "/cr-workspace/claude-use/" + _quote_path(slug), timeout=30)
+        return {**out, "note": "What Studio counted for this video. Claude Code doesn't say how much of the plan's "
+                               "allowance is left, so never give a percentage."}
+    out = call("GET", "/cr-workspace/claude-use", timeout=60)
+    limit = max(1, min(int(args.get("videos") or 10), 50))
+    return {**out, "videos": (out.get("videos") or [])[:limit],
+            "what_to_tell_them": (out.get("line") or "") + " " + (out.get("note") or "")}
+
+
 def tool_list_videos(args):
     limit = max(1, min(int(args.get("limit") or 20), 60))
     rows = call("GET", "/cr-claude-code/videos", timeout=30).get("videos") or []
@@ -2045,6 +2059,13 @@ TOOLS = {
                  "cloud, lk_… (a style look) or op_… (a style study); none for everything. Free. Check every few "
                  "minutes, not in a tight loop. A stopped video says what stopped it (stopped_on: voice, presenter, "
                  "claude_stage, media) and what carrying it on involves.", _schema({"id": {"type": "string"}}), _FREE),
+    "claude_usage": (tool_claude_usage, "How much Claude Studio has used for the creator's videos: today, the last 7 "
+                     "days and all time (calls, Claude minutes, tokens from Studio 115 on), and by video, the most "
+                     "used first; id='video:<slug>' for one video. Claude Code never says how much of the plan's "
+                     "allowance is left: say what was used, never a percentage of a limit. Their own chats and style "
+                     "studies aren't counted. Free.",
+                     _schema({"id": {"type": "string"}, "videos": {"type": "integer", "minimum": 1, "maximum": 50}}),
+                     _FREE),
     "list_videos": (tool_list_videos, "Finished videos: on this computer (file path, watch link, project link) and on "
                     "Studio Cloud (download link). Free.",
                     _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 60},
