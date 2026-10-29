@@ -1453,6 +1453,8 @@ def install(engine):
         import cr_sound_qc
         cr_sound_qc.install(engine)                 # the sound check on every finished video (measured)
         cr_cta.install(engine)                      # your call to action: in the script, on screen, in the description
+        import cr_length
+        cr_length.install(engine)                   # the length chosen: scripts planned at the narrator's real pace
         import cr_presenters
         cr_presenters.install()                     # your own presenters, listed first
         import cr_drawon
