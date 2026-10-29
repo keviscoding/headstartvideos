@@ -2038,6 +2038,8 @@ def create_app():
     cr_cloud.install_routes(studio, token, HOME)                 # the workspace's "Studio Cloud" choice
     import cr_claude_code
     cr_claude_code.install(studio, token, HOME)                  # Claude Code's style gallery and the studio tools' routes
+    import cr_niche_agent
+    cr_niche_agent.install(studio, token, HOME)                  # the niche agent: saved ideas in Create, its teaching
     # a stopped video: one honest yes, or on by itself (its watcher is started by main, never in tests)
     cr_recover.install(studio, activity, token=token, home=HOME, start_watcher=False)
 

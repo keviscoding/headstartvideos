@@ -1730,6 +1730,114 @@ def tool_products(args):
             "next": "Your videos can sell a finished product: pick it under Your product on the Studio page."}
 
 
+# ── the niche agent (/niche-agent): free YouTube reads, the niche database, the owner's teaching, saved ideas ──
+
+def _niche():
+    import cr_niche_agent
+    return cr_niche_agent
+
+
+def _youtube(fn):
+    """A niche-agent YouTube read; its plain-words error for the creator."""
+    agent = _niche()
+    try:
+        return fn(agent)
+    except agent.YouTubeError as error:
+        raise Refused(str(error)) from None
+
+
+def tool_niche_teaching(args):
+    agent = _niche()
+    try:
+        data = call("GET", "/cr-niche-agent/teaching", timeout=30)
+    except (Closed, Refused):
+        data = agent.local_teaching(HOME)                   # Studio closed: the saved or shipped copy
+    examples = [e for e in data.get("examples") or [] if isinstance(e, dict)]
+    kind = str(args.get("kind") or "")
+    if kind in ("niche", "idea", "channel"):
+        examples = [e for e in examples if e.get("kind") == kind]
+    return {"rules": data.get("rules") or "", "examples": examples, "source": data.get("source") or "",
+            "updated": data.get("updated"), "thresholds": agent.thresholds(data.get("rules") or ""),
+            "next": "Follow these rules over your own judgement. Use the good examples as references and search "
+                    "seeds; never propose a 'bad' one again without saying what changed."}
+
+
+def tool_niche_breakouts(args):
+    query = {k: args.get(k) for k in ("q", "max_age_days", "max_subs", "min_recent_avg", "min_ratio", "limit", "sort")
+             if args.get(k) not in (None, "")}
+    try:
+        data = call("GET", "/cr-niche-agent/breakouts?" + _niche().breakout_query(query), timeout=60)
+    except Closed:
+        raise Refused("The niche database is read through Studio: start Studio with its launcher and try again. "
+                      "The live YouTube tools (yt_search, yt_channel_stats) work without it.") from None
+    data.setdefault("next", "These are seeds from ChannelRecipe's database, not proof (its numbers can be weeks old "
+                            "and it keeps 4 recent videos a channel). Check the promising ones live with "
+                            "yt_channel_stats before you use them.")
+    return data
+
+
+def tool_yt_search(args):
+    queries = args.get("queries") or ([args["query"]] if args.get("query") else [])
+    if isinstance(queries, str):
+        queries = [queries]
+    return _youtube(lambda agent: agent.search(
+        list(queries), window=str(args.get("window") or "month"), sort=str(args.get("sort") or "views"),
+        fmt="shorts" if str(args.get("format") or "") == "shorts" else "long", min_views=args.get("min_views"),
+        per_query=int(args.get("per_query") or 30), home=HOME))
+
+
+def tool_yt_channel_stats(args):
+    channels = args.get("channels") or ([args["channel"]] if args.get("channel") else [])
+    if isinstance(channels, str):
+        channels = [channels]
+    return _youtube(lambda agent: agent.channel_stats(
+        list(channels), tab="shorts" if str(args.get("tab") or "") == "shorts" else "videos", home=HOME))
+
+
+def tool_yt_look(args):
+    return _youtube(lambda agent: agent.look_sheet(
+        str(args.get("channel") or ""), args.get("video_ids") or [],
+        tab="shorts" if str(args.get("tab") or "") == "shorts" else "videos", home=HOME))
+
+
+def tool_save_ideas(args):
+    ideas = args.get("ideas")
+    try:
+        result = _niche().save_ideas(ideas if isinstance(ideas, list) else [], home=HOME)
+    except RuntimeError as error:                                 # another window is saving, or the file is stuck
+        raise Refused(str(error)) from None
+    return {**result, "where": "Create → Saved ideas in Studio, and ideas/ideas.json in this folder",
+            "next": "Offer use_idea(id) for the one they like best: it fills Create in. It never starts a video."}
+
+
+def tool_list_ideas(args):
+    rows = _niche().list_ideas(str(args.get("status") or ""), home=HOME)
+    return {"ideas": rows[:60], "total": len(rows)}
+
+
+def tool_use_idea(args):
+    agent = _niche()
+    ident = str(args.get("id") or "").strip()
+    try:
+        idea = agent.set_idea_status(ident, "used", home=HOME)
+    except (LookupError, RuntimeError) as error:
+        raise Refused(str(error)) from None
+    url = link("/?idea=" + ident)
+    try:
+        same_studio()
+        running = True
+    except Closed:
+        running = False
+    opened = open_url(url) if running and args.get("open_browser") else False
+    return {"idea": {k: idea.get(k) for k in ("id", "title", "style", "minutes", "format", "niche")},
+            "create_url": url, "opened_in_browser": opened, "extra_instructions": agent.extra_instructions(idea),
+            "next": ("Create opens with this title" + (", the style" if idea.get("style") else "")
+                     + " and the idea's angle in Extra instructions. Nothing starts until the creator presses Create, "
+                       "or until you quote it and they agree (make_videos)." if running else
+                     "Studio isn't running: start it with its launcher, then open this link (Create → Saved ideas "
+                     "has it too).")}
+
+
 # ── deleting (into Studio's trash) ──────────────────────────────────────────────────────────────────────────────
 
 def _same_name(given, actual) -> bool:
@@ -2035,7 +2143,60 @@ TOOLS = {
                            "seconds": {"type": "number", "description": "preview: video length, 1-8 s (default 5)."}},
                           ["action", "style"]),
                   {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
-    "delete_video": (tool_delete_video, "Delete a finished or stopped video, only when the creator asks: it moves to "
+    "niche_teaching": (tool_niche_teaching, "The niche agent's rules and the owner's good/bad examples (niches, "
+                       "channels, ideas), newest from ChannelRecipe, with the numbers every check uses. Read it first "
+                       "in every /niche-agent run. kind filters the examples. Free.",
+                       _schema({"kind": {"type": "string", "enum": ["", "niche", "idea", "channel"]}}), _FREE),
+    "niche_breakouts": (tool_niche_breakouts, "ChannelRecipe's niche database (81K faceless long-form channels): "
+                        "young channels with strong recent views, found by words in their titles. q: topic words "
+                        "matched in channel names and video titles (the database has no topic labels yet). "
+                        "max_age_days (default 90), max_subs (50000), min_recent_avg (10000), min_ratio (views ÷ subs), "
+                        "sort (recent_avg|ratio|newest), limit (25, at most 50). Seeds, not proof: check them live "
+                        "with yt_channel_stats. Free; needs Studio running.",
+                        _schema({"q": {"type": "string"}, "max_age_days": {"type": "integer"},
+                                 "max_subs": {"type": "integer"}, "min_recent_avg": {"type": "integer"},
+                                 "min_ratio": {"type": "number"}, "sort": {"type": "string"},
+                                 "limit": {"type": "integer", "minimum": 1, "maximum": 50}}), _FREE),
+    "yt_search": (tool_yt_search, "YouTube's own filtered search, free (public pages, no key): up to 8 queries at "
+                  "once, e.g. uploaded this month sorted by views. Keeps videos with min_views or more (default 30K "
+                  "long-form, 300K Shorts) and groups them by channel. Dates are YouTube's 'x weeks ago' "
+                  "(approximate). Cached 6 hours.",
+                  _schema({"queries": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+                           "window": {"type": "string", "enum": ["today", "week", "month", "year", "any"]},
+                           "sort": {"type": "string", "enum": ["views", "relevance"]},
+                           "format": {"type": "string", "enum": ["long", "shorts"]},
+                           "min_views": {"type": "integer"},
+                           "per_query": {"type": "integer", "minimum": 5, "maximum": 60}}, ["queries"]), _FREE),
+    "yt_channel_stats": (tool_yt_channel_stats, "The outlier checks for up to 6 channels (a link, @handle, UC id, a "
+                         "video link, or a name), free: subscribers, the exact first upload, uploads in 30 days, "
+                         "median and recent average views, banger:flop, the best video's views ÷ subscribers, the "
+                         "one-hit test, and pass/fail against the teaching's numbers, with the newest 12 videos. "
+                         "tab=shorts reads Shorts (thresholds not yet confirmed by the owner). Cached 12 hours.",
+                         _schema({"channels": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+                                  "tab": {"type": "string", "enum": ["videos", "shorts"]}}, ["channels"]), _FREE),
+    "yt_look": (tool_yt_look, "A channel's newest thumbnails (up to 6) in one picture on this computer: Read its "
+                "path to look at it before you count a channel (AI slop? what is it made of? which style makes it?). "
+                "Give channel, or video_ids. Free.",
+                _schema({"channel": {"type": "string"},
+                         "video_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+                         "tab": {"type": "string", "enum": ["videos", "shorts"]}}), _FREE),
+    "save_ideas": (tool_save_ideas, "Save video ideas for the creator (up to 20): they appear in Studio's Create "
+                   "under Saved ideas. Each: title, niche, format (long|shorts), minutes, style (a list_styles id when "
+                   "one fits), recipe (which style or clone makes it, in words), twist, thumbnail, risk, notes, and "
+                   "proof {video_url, video_title, views, channel, channel_url, subs, views_per_sub, "
+                   "channel_age_days, first_upload, recent_avg_views, median_views, banger_flop}. Free; writes "
+                   "ideas/ideas.json in this folder.",
+                   _schema({"ideas": {"type": "array", "items": {"type": "object"}, "minItems": 1, "maxItems": 20}},
+                           ["ideas"]), {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
+    "list_ideas": (tool_list_ideas, "The creator's saved ideas (status saved, used or dismissed). Free.",
+                   _schema({"status": {"type": "string", "enum": ["", "saved", "used", "dismissed"]}}), _FREE),
+    "use_idea": (tool_use_idea, "Use a saved idea: Create opens with its title, style, length and angle filled in "
+                 "(create_url; open_browser=true opens it in a terminal session). Never starts a video or spends: "
+                 "making it still goes through quote and the creator's yes. Free.",
+                 _schema({"id": {"type": "string", "description": "id_… from save_ideas or list_ideas."},
+                          "open_browser": {"type": "boolean"}}, ["id"]),
+                 {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
+    "delete_video": (tool_delete_video,"Delete a finished or stopped video, only when the creator asks: it moves to "
                      "Studio's trash (the finished file, its description and thumbnails, its working files) and "
                      "Recently deleted on the Studio page restores it for 30 days. Their voice library, styles and "
                      "other videos stay. Refused while the video is being made. Tell the creator which video goes "

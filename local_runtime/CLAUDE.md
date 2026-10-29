@@ -91,8 +91,11 @@ settings. Update in place instead:
 
 When the customer wants to make videos, pick or clone a style, render on Studio Cloud or watch their videos, use
 the `studio` tools (mcp__studio__*) and the skills /make-videos, /clone-style, /cloud-batch, /my-videos,
-/niche-strategy (cross-niche arbitrage from the live niche database) and /digital-product. They drive the running
-Studio through its own checks, so nothing needs the Studio web page.
+/niche-agent (finds niches and video ideas with real outlier proof: small new channels checked live on YouTube, judged
+by ChannelRecipe's rules; free), /niche-strategy (cross-niche arbitrage from the live niche database) and
+/digital-product. They drive the running Studio through its own checks, so nothing needs the Studio web page.
+A customer looking for a niche, a channel to copy or video ideas: use /niche-agent. Its saved ideas show in Create
+under Saved ideas.
 
 - Start with `setup_check`. If Studio isn't running, ask them to open its launcher (step 4 above).
 - If `setup_check` says the graphics browser isn't ready, call `fix_graphics_browser` (Studio installs it itself) and
