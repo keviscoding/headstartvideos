@@ -15,7 +15,6 @@
   <link rel="stylesheet" href="landing.css">
   <script defer src="reel-link.js"></script>
   <script defer src="plans.js"></script>
-  <script defer src="cutline.js"></script>
   <script defer src="landing.js"></script>
 </head>
 <body>
@@ -159,49 +158,29 @@
         <h2 class="h2" id="every-h">What your editor would do. Every time.</h2>
         <p class="lead">The creators you watch don't pile on effects. They score the moment, cut on the word and keep the type beautiful. Every edit here does the same, the free ones included.</p>
       </div>
-      <div class="bento">
-        <article class="card wide">
-          <div class="viz">
-            <div class="soundviz" id="soundviz" role="img" aria-label="The real mix of the cinematic story Reel: the voice, the music bed under it, and each sound effect"></div>
-          </div>
-          <div class="txt"><h3 class="h3">Music scored to your video</h3><p>Every edit gets its own instrumental bed. It dips under your voice, lifts in your pauses and builds to your last line. Effects hit only on something you see. Above: the real mix of the story Reel at the top of this page.</p></div>
-        </article>
-        <article class="card">
-          <div class="viz viz-media" aria-hidden="true"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/s_broll.jpg" alt="" loading="lazy"></div>
-          <div class="txt"><h3 class="h3">B-roll on your words</h3><p>Your own clips first. Missing a shot? We make one for that exact line, so "my family gets sick" cuts to a hand being held.</p></div>
-        </article>
-        <article class="card">
-          <div class="viz viz-media" aria-hidden="true"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/s_flash.jpg" alt="" loading="lazy"></div>
-          <div class="txt"><h3 class="h3">Type that looks designed</h3><p>Editorial serifs, heavy grotesks and clean captions, set like a designer would. No neon, no emoji confetti.</p></div>
-        </article>
-        <article class="card">
-          <div class="viz viz-media" aria-hidden="true"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_ticket.jpg" alt="" loading="lazy"></div>
-          <div class="txt"><h3 class="h3">Motion made for this video</h3><p>An order ticket stamped "NO.", a calendar that books the week. Built in code for what you said, not pulled from a template pack.</p></div>
-        </article>
-        <article class="card">
-          <div class="viz" aria-hidden="true"><div class="audio"><div class="row"><span>Your take</span><div class="wave" data-wave="raw"></div></div><div class="row"><span>Voice</span><div class="wave after" data-wave="edit"></div></div><div class="lufs"><span>Music under your voice?</span><b>Lifted out</b></div></div></div>
-          <div class="txt"><h3 class="h3">A clean voice, even over music</h3><p>Filmed with a song playing? We lift your voice out of it first, then mix it to the loudness Reels and TikTok play at.</p></div>
-        </article>
-        <article class="card wide">
-          <div class="viz">
-            <p class="transcript" aria-label="A transcript with retakes cut">
-              <span class="x">Do not scroll past this. Do not scroll past this.</span><span class="tag-cut"><svg><use href="icons.svg#i-scissors"/></svg>retake</span>
-              <span class="k">Do not scroll past this.</span> <span class="x">Okay pause, nobody has time for this.</span><span class="tag-cut"><svg><use href="icons.svg#i-scissors"/></svg>fumble</span>
-              <span class="k">Literally just do this instead.</span> Go to YouTube and find the faceless history or mystery channel…
-            </p>
-            <div class="cutline" data-cutline aria-label="Timeline: a 3 minute 13 second raw take cut down to a 1 minute 3 second Reel"></div>
-          </div>
-          <div class="txt"><h3 class="h3">Retakes gone. Your pauses kept.</h3><p>We read every word, keep your cleanest take and cut false starts and dead air, but never a word, and never the pause that lands the joke. Above: a real 3-minute take with two false starts and a whole second take, made into a 1-minute Reel.</p></div>
-        </article>
-        <article class="card">
-          <div class="viz" aria-hidden="true"><div class="checks">
-            <div class="check"><span class="ok"><svg><use href="icons.svg#i-check"/></svg></span>Loudness on target<b>−14.3</b></div>
-            <div class="check"><span class="ok"><svg><use href="icons.svg#i-check"/></svg></span>Peaks under −1 dB<b>−1.5</b></div>
-            <div class="check"><span class="ok"><svg><use href="icons.svg#i-check"/></svg></span>Watched next to your take<b>2 passes</b></div>
-          </div></div>
-          <div class="txt"><h3 class="h3">Watched back before you see it</h3><p>An AI editor watches and listens to the finished Reel next to your raw take, and we fix what it flags.</p></div>
-        </article>
+      <div class="moments">
+        <figure class="moment">
+          <div class="mclip"><video data-auto muted playsinline loop preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/clips/broll.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/clips/broll.mp4"></video><button class="msound" type="button" aria-label="Hear this moment" aria-pressed="false"><svg><use href="icons.svg#i-sound-off"/></svg></button></div>
+          <figcaption><b>B-roll on your words</b><span>&ldquo;Someone in my family gets sick&rdquo; cuts to a hand being held.</span></figcaption>
+        </figure>
+        <figure class="moment">
+          <div class="mclip"><video data-auto muted playsinline loop preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/clips/title.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/clips/title.mp4"></video><button class="msound" type="button" aria-label="Hear this moment" aria-pressed="false"><svg><use href="icons.svg#i-sound-off"/></svg></button></div>
+          <figcaption><b>Type that looks designed</b><span>The turning point, set like a magazine cover.</span></figcaption>
+        </figure>
+        <figure class="moment">
+          <div class="mclip"><video data-auto muted playsinline loop preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/clips/ticket.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/clips/ticket.mp4"></video><button class="msound" type="button" aria-label="Hear this moment" aria-pressed="false"><svg><use href="icons.svg#i-sound-off"/></svg></button></div>
+          <figcaption><b>Motion made for what you said</b><span>&ldquo;Does a number three come with anything?&rdquo; Stamped: NO.</span></figcaption>
+        </figure>
+        <figure class="moment">
+          <div class="mclip"><video data-auto muted playsinline loop preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/clips/music.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/clips/music.mp4"></video><button class="msound" type="button" aria-label="Hear this moment" aria-pressed="false"><svg><use href="icons.svg#i-sound-off"/></svg></button></div>
+          <figcaption><b>Music made for this take</b><span>It swells into the last line. Tap to hear it.</span></figcaption>
+        </figure>
       </div>
+      <ul class="promises">
+        <li><b>Retakes gone. Pauses kept.</b>We cut false starts by what you said: never a word, never the pause that lands the joke.</li>
+        <li><b>A clean voice, even over a song.</b>Filmed with music playing? We lift your voice out first, then mix it to the loudness Reels play at.</li>
+        <li><b>Watched back before you see it.</b>An AI editor watches the finished Reel next to your take, and we fix what it flags.</li>
+      </ul>
     </div>
   </section>
 

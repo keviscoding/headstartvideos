@@ -397,3 +397,19 @@
 .film-play small { font-size: 14px; font-weight: 550; color: rgba(255, 255, 255, .62); }
 .film.sound .film-play { display: none; }
 @media (max-width: 560px) { .film { margin-top: 26px; border-radius: 16px; } .film-play { min-height: 44px; font-size: 15px; padding: 0 16px 0 14px; } .film-play small { font-size: 13px; } }
+
+/* What's in an edit: four real moments from the demo edits (tap one to hear it), then three plain promises */
+.moments { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(14px, 2vw, 24px); max-width: 1060px; margin: clamp(40px, 5vw, 56px) auto 0; }
+.moment { margin: 0; }
+.mclip { position: relative; aspect-ratio: 9 / 16; border-radius: 20px; overflow: hidden; background: #111; box-shadow: var(--sh-3); cursor: pointer; }
+.mclip video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.msound { position: absolute; right: 10px; bottom: 10px; z-index: 2; transform: translate3d(0, 0, 0); display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 999px; background: rgba(11, 11, 15, .6); color: #fff; cursor: pointer; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.msound svg { width: 18px; height: 18px; }
+.msound[aria-pressed="true"] { background: var(--accent); }
+.moment figcaption { margin-top: 14px; font-size: 15px; line-height: 1.45; color: var(--ink-2); }
+.moment figcaption b { display: block; margin-bottom: 3px; font-size: 16.5px; font-weight: 650; letter-spacing: -0.02em; color: var(--ink); }
+.promises { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px clamp(24px, 3vw, 40px); max-width: 1060px; margin: clamp(48px, 6vw, 72px) auto 0; padding: 0; }
+.promises li { padding-top: 18px; border-top: 1px solid var(--line-2); font-size: 15.5px; line-height: 1.5; color: var(--ink-2); }
+.promises b { display: block; margin-bottom: 6px; font-size: 17px; font-weight: 650; letter-spacing: -0.02em; color: var(--ink); }
+@media (max-width: 900px) { .moments { grid-template-columns: repeat(2, minmax(0, 1fr)); } .promises { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .mclip { border-radius: 16px; } .moment figcaption { font-size: 14px; } .moment figcaption b { font-size: 15px; } }
