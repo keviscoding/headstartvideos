@@ -82,3 +82,34 @@ def test_the_niche_finder_shows_the_agent_card():
     html = (na.TEACHING.parents[1] / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
     card = html.split('id="nf-agent-card"', 1)[1].split("</section>", 1)[0]
     assert "/niche-agent" in card and "Claude Code" in card and "costs nothing" in card
+
+
+def test_a_slow_database_read_is_stopped_and_says_so(env, monkeypatch):
+    class QueryCanceled(Exception):
+        pass
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def cursor(self):
+            return self
+
+        def execute(self, sql, params=()):
+            self.seen = getattr(self, "seen", []) + [sql]
+            if sql.startswith("SELECT"):
+                raise QueryCanceled("canceling statement due to statement timeout")
+    conn = Conn()
+    monkeypatch.setattr(db, "IS_PG", True)
+    monkeypatch.setattr(db, "_conn", lambda: conn)
+    r = env.get("/api/studio/niche-agent/breakouts", params={"q": "timelapse"})
+    assert r.status_code == 503 and "took too long" in r.json()["detail"]
+    assert conn.seen[0] == f"SET LOCAL statement_timeout = {na.STATEMENT_TIMEOUT_MS}"
+
+
+def test_like_wildcards_and_escapes_in_words_are_plain_text(env):
+    data = env.get("/api/studio/niche-agent/breakouts", params={"q": "3d\\ time%lapse_"}).json()
+    assert [c["channel"] for c in data["channels"]] == ["CityEons"]

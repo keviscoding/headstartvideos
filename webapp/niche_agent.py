@@ -26,6 +26,9 @@ TEACHING = Path(__file__).resolve().parents[1] / "niche_agent" / "teaching"
 SORTS = {"recent_avg": "recent_avg_views DESC", "ratio": "view_to_sub_ratio DESC, recent_avg_views DESC",
          "newest": "first_seen_at DESC", "views_per_sub": "view_to_sub_ratio DESC"}
 MAX_WORDS = 6
+# the word match reads every candidate's video titles (a full scan when the filters are wide): a read that takes longer
+# than this is stopped, so it never holds one of the web instance's few database connections for long
+STATEMENT_TIMEOUT_MS = 8000
 # a soft per-instance guard (two web instances: each keeps its own count); an agent run makes 2-5 of these calls
 RATE_WINDOW, RATE_MAX = 600, 40
 _rate: dict = defaultdict(list)
@@ -90,17 +93,24 @@ def breakouts(q: str = "", *, max_age_days: int = 90, max_subs: int = 50_000, mi
             "COALESCE(popular_videos_json, ''))")
     for word in words:
         clauses.append(f"{text} LIKE ?")
-        params.append("%" + word.replace("%", "").replace("_", "") + "%")
+        params.append("%" + word.replace("%", "").replace("_", "").replace("\\", "") + "%")
     order = SORTS.get(sort) or SORTS["recent_avg"]
     params.append(max(1, min(int(limit or 25), 50)))
     sql = ("SELECT channel_id, channel_name, channel_url, subscriber_count, video_count, days_since_start, "
            "recent_avg_views, avg_views_per_video, view_to_sub_ratio, uploads_per_month, outlier_score, "
            "videos_last_14d, recent_videos_json, popular_videos_json, last_scored_at, first_seen_at "
            f"FROM niche_channels WHERE {' AND '.join(clauses)} ORDER BY {order} LIMIT ?")
-    with db._conn() as conn:
-        cur = conn.cursor()
-        cur.execute(db._q(sql), tuple(params))
-        rows = [dict(r) for r in cur.fetchall()]
+    try:
+        with db._conn() as conn:
+            cur = conn.cursor()
+            if db.IS_PG:                                      # this transaction only (fine behind PgBouncer)
+                cur.execute(f"SET LOCAL statement_timeout = {int(STATEMENT_TIMEOUT_MS)}")
+            cur.execute(db._q(sql), tuple(params))
+            rows = [dict(r) for r in cur.fetchall()]
+    except Exception as error:                                # noqa: BLE001 - psycopg isn't imported on SQLite
+        if type(error).__name__ == "QueryCanceled":
+            raise TimeoutError("The niche database took too long for that search.") from None
+        raise
     out = []
     for r in rows:
         scored = float(r.get("last_scored_at") or now)
@@ -144,10 +154,14 @@ def make_router(access) -> APIRouter:
                       min_ratio: float = 0, sort: str = "recent_avg", limit: int = 25, user=Depends(access)):
         if not _rate_ok(user.get("id")):
             raise HTTPException(429, "Too many niche database reads in a few minutes. Try again shortly.")
-        data = breakouts(q[:200], max_age_days=max(1, min(int(max_age_days), 3650)),
-                         max_subs=max(0, min(int(max_subs), 100_000_000)),
-                         min_recent_avg=max(0, int(min_recent_avg)), min_ratio=max(0.0, float(min_ratio)),
-                         sort=sort, limit=limit)
+        try:
+            data = breakouts(q[:200], max_age_days=max(1, min(int(max_age_days), 3650)),
+                             max_subs=max(0, min(int(max_subs), 100_000_000)),
+                             min_recent_avg=max(0, int(min_recent_avg)), min_ratio=max(0.0, float(min_ratio)),
+                             sort=sort, limit=limit)
+        except TimeoutError:
+            raise HTTPException(503, "The niche database took too long for that search. Narrow it (fewer years, "
+                                     "a subscriber cap) or carry on with live YouTube search.") from None
         return JSONResponse(data, headers=private)
 
     return router
