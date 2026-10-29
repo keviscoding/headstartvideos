@@ -118,6 +118,12 @@ def test_the_quote_prices_pictures_at_the_creators_model(settings):
     settings.save_settings({"images": {"provider": "kie", "model": "google/nano-banana", "fallbacks": []}})
     same = media.price_catalog({"prices": {"picture": 0.02, "features": {"ai_images": {"per_min": 0.05}}}})
     assert same["prices"]["features"]["ai_images"]["per_min"] == 0.05 and same["picture_price"]["usd"] == 0.02
+    # ...even when the engine's estimate isn't Kie's $0.02 (another image service's key on this computer): a creator
+    # who never chose a model keeps the quote they had
+    kept = media.price_catalog({"prices": {"picture": 0.027, "features": {"ai_images": {"per_min": 0.0675}}}})
+    assert kept["prices"]["picture"] == 0.027 and kept["prices"]["features"]["ai_images"]["per_min"] == 0.0675
+    settings.save_settings({"images": {"provider": "kie", "fallbacks": []}})
+    assert media.price_catalog({"prices": {"picture": 0.027, "features": {}}})["prices"]["picture"] == 0.027
     # another image service: the engine's estimate, untouched
     settings.save_settings({})
     other = media.price_catalog({"prices": {"picture": 0.027, "features": {}}})
@@ -135,7 +141,8 @@ def test_setup_lists_prices_and_never_ticks_every_model_as_a_backup():
     page = (ROOT / "local_runtime/cr_setup.html").read_text(encoding="utf-8")
     assert "function imageChoiceText" in page and "usd_per_image" in page
     assert "image_models?.map(m=>m.id))" not in page   # six models were five backups: over Setup's limit of four
-    assert "image_fallbacks||[]).filter(id=>id!==$('image-model').value).slice(0,4)" in page
+    # the backups ticked now stay ticked (a creator's own saved choice is never replaced by Studio's usual list)
+    assert "querySelectorAll('input:checked')].map(el=>el.value).filter(id=>id!==$('image-model').value).slice(0,4)" in page
 
 
 # ── 2. Claude used across every video ──────────────────────────────────────────────────────────────────────────────
@@ -206,6 +213,41 @@ def test_each_finished_call_keeps_when_and_its_tokens(tmp_path, monkeypatch):
     assert saved["tokens"] == {"input_tokens": 9, "output_tokens": 11, "cache_read_input_tokens": 100}
 
 
+def test_a_long_plain_text_call_keeps_its_tokens_and_its_receipt(tmp_path, monkeypatch):
+    """A long text answer is read from Claude Code's stream (cr_claude long_text): its usage was in the stream but the
+    plain answer has none, so these calls counted without tokens. Kept locally; the receipt is unchanged."""
+    import subprocess
+    import types
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **k: {"ready": True, "account_fingerprint": "a"})
+    monkeypatch.setattr(cr_claude, "_source_context", lambda: (cr_claude.LONG_ANSWER_TOKENS, "test"))
+    receipts = []
+    bridge = types.SimpleNamespace(HOME=tmp_path, load_settings=lambda: {"brain_mode": "claudecode", "costs_accepted": True},
+                                   current_project=lambda: {"id": A},
+                                   authorize_stage=lambda s: {"execute": True, "authorization_token": "t" * 32,
+                                                              "selected_model": cr_claude.GENERAL_MODEL},
+                                   finish_stage=receipts.append)
+    stream = json.dumps({"type": "result", "subtype": "success", "result": "the whole kit",
+                         "usage": {"input_tokens": 7, "output_tokens": 30000, "cache_read_input_tokens": 50}}) + "\n"
+    seen = []
+    run = lambda args, **k: (seen.append(list(args)), subprocess.CompletedProcess(args, 0, stream, ""))[1]
+    runtime = cr_claude.Runtime(types.SimpleNamespace(), bridge, "/fake/claude", run)
+    out = runtime.run(["/fake/claude", "--print", "--output-format", "text"], input="prompt")
+    assert "stream-json" in seen[0] and out.stdout == "the whole kit"
+    [cache] = list((tmp_path / "output" / "cr-claude-cache").rglob("*.json"))
+    saved = json.loads(cache.read_text(encoding="utf-8"))
+    assert saved["tokens"] == {"input_tokens": 7, "output_tokens": 30000, "cache_read_input_tokens": 50}
+    assert not any(k.endswith("_tokens") for k in receipts[0]["usage"])        # what the server gets: as before
+
+
+def test_a_partial_token_sum_says_how_many_calls_it_covers(tmp_path):
+    _cache(tmp_path, A, 1, seconds=60, at=time.time(), tokens={"input_tokens": 1500, "output_tokens": 500})
+    _cache(tmp_path, A, 2, seconds=60, at=time.time())                     # a plain-text answer: no usage reported
+    use = cr_claude_use.summary(tmp_path, tmp_path / "no-job", A)
+    assert use["line"].endswith("2K tokens (reported for 1 of the 2 calls).")
+    assert "(reported for 1 of the 2 calls)" in cr_claude_use.overall(tmp_path, {})["line"]
+    assert "t.tokens_counted < t.calls" in JS
+
+
 def test_projects_and_claude_code_show_the_overall_use(studio, monkeypatch):
     assert 'id="crw-claude-overall"' in HTML and "api('/cr-workspace/claude-use')" in JS
     recover = (ROOT / "local_runtime/cr_recover.py").read_text(encoding="utf-8")
@@ -256,6 +298,8 @@ def test_create_and_the_gallery_play_the_clip_only_when_asked():
     assert "prefers-reduced-motion: reduce" in JS
     gallery = (ROOT / "local_runtime/cr_gallery.html").read_text(encoding="utf-8")
     assert "r.preview_clip && r.preview_clip.url" in gallery and "v.preload = 'none'" in gallery
+    # hover is a mouse's only: a phone's tap sends a mouseenter just before its click, so the tap played and stopped it
+    assert "addEventListener('mouseenter'" not in gallery and "e.pointerType === 'mouse'" in gallery
     import cr_claude_code as ccc
     row = {"name": "cr-stick-stories", "label": "Stick", "preview_clip": clips.clip_for("cr-stick-stories")}
     assert ccc.card(row)["preview_clip"]["url"].endswith("gladiator-sold.mp4")

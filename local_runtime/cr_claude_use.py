@@ -10,7 +10,8 @@ counted itself.
   answered, plus each later round at most this round's shots; rounds end early when every shot passes).
 - overall (Swapnil, the same day: "Show the Claude credit/token consumption in the app per project & overall"): the
   same counts across every video, for today, the last 7 days and all time, and by video. Tokens are what Claude Code
-  reported for each call (cache files from Studio 115 on: "tokens"); older calls count without them. Claude Code
+  reported for each call (cache files from Studio 115 on: "tokens"); older calls, and plain-text answers (Claude Code
+  reports no usage for those), count without them, and the words then say for how many calls tokens were reported. Claude Code
   never says how much of a plan's allowance is left, so this is use, never a percentage of a limit. Studio's own
   Claude steps only: a creator's own chats in Claude Code and style studies aren't in these files.
 """
@@ -106,8 +107,7 @@ def summary(home, job, project_id) -> dict:
             said += f", about {max(1, use['minutes'])} min of Claude time"
         elif use["timed"]:
             said += f", about {max(1, use['minutes'])} min of Claude time for the {use['timed']} Studio timed"
-        if use["tokens_counted"]:
-            said += f", {_short(use['tokens_in'] + use['tokens_out'])} tokens"
+        said += _tokens_words(use)
         parts.append(said + ".")
     if three and not three.get("finished") and three.get("rounds"):
         left = three["left"]
@@ -179,7 +179,9 @@ def overall(home, names=None, now=None, limit=50) -> dict:
     out["line"] = line(out)
     out["note"] = ("Counted by Studio from its own Claude steps for your videos. Claude Code doesn't say how much of "
                    "your plan's allowance is left, so this shows what Studio used, not a percentage. Your own chats "
-                   "in Claude Code and style studies aren't included. Tokens are counted from Studio 115 on.")
+                   "in Claude Code and style studies aren't included. Tokens are what Claude Code reported, from "
+                   "Studio 115 on; some steps answer in plain text, which reports none, so the token sum covers the "
+                   "calls it names.")
     return out
 
 
@@ -190,9 +192,17 @@ def words_for(total: dict) -> str:
     text = f"{n} call{'' if n == 1 else 's'}"
     if total["timed"]:
         text += f", about {max(1, total['minutes'])} min of Claude time"
-    if total["tokens_counted"]:
-        text += f", {_short(total['tokens_in'] + total['tokens_out'])} tokens"
-    return text
+    return text + _tokens_words(total)
+
+
+def _tokens_words(total: dict) -> str:
+    """The tokens Claude Code reported, saying when only some calls reported them (calls before Studio 115, and
+    plain-text answers, for which Claude Code reports none): a partial sum never reads as the whole."""
+    counted, calls = total.get("tokens_counted") or 0, total.get("calls") or 0
+    if not counted:
+        return ""
+    text = f", {_short(total['tokens_in'] + total['tokens_out'])} tokens"
+    return text + (f" (reported for {counted} of the {calls} calls)" if counted < calls else "")
 
 
 def _short(n: int) -> str:

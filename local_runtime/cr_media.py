@@ -865,7 +865,10 @@ def picture_price(engine_usd=None) -> dict:
     except AccountStop:
         return {"usd": round(usd, 4), "model": "", "label": ""}
     price = choice.get("usd_per_image")
-    if isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0:
+    # Studio's default model keeps the engine's estimate, so a creator who never chose a model sees the quotes they saw
+    # before (the engine prices pictures by the services this computer has, which can differ from Kie's ~$0.02)
+    default = image_model(PROVIDERS["kie"]["models"]["images"])["id"]
+    if choice["id"] != default and isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0:
         usd = float(price)
     return {"usd": round(usd, 4), "model": choice["id"], "label": choice["label"]}
 

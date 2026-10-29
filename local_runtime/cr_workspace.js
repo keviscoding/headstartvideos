@@ -528,7 +528,9 @@
     };
     return v;
   }
-  const calmMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // no clip plays by itself when the computer asks for less motion or the connection for less data (Save-Data); a
+  // hover or focus still plays one
+  const calmMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches || navigator.connection?.saveData === true;
   function recipeCard(recipe, action) {
     const b = el('button','crw-recipe-card'); b.type = 'button'; b.dataset.recipe = identity(recipe); b.setAttribute('aria-label', `Explore ${recipe.label}`);
     const art = el('div','crw-card-art'); const img = el('img'); img.loading='lazy';art.append(img);recipePreview(img,recipe);
@@ -674,7 +676,7 @@
   async function claudeOverall() {
     let d; try {d = await api('/cr-workspace/claude-use');} catch (_) {hide('crw-claude-overall', true); return;}
     if (!d || !d.all || !d.all.calls) {hide('crw-claude-overall', true); return;}
-    const words = t => !t.calls ? 'No Claude calls' : `${t.calls} call${t.calls === 1 ? '' : 's'}` + (t.timed ? ` · about ${Math.max(1, t.minutes)} min` : '') + (t.tokens_counted ? ` · ${shortCount(t.tokens_in + t.tokens_out)} tokens` : '');
+    const words = t => !t.calls ? 'No Claude calls' : `${t.calls} call${t.calls === 1 ? '' : 's'}` + (t.timed ? ` · about ${Math.max(1, t.minutes)} min` : '') + (t.tokens_counted ? ` · ${shortCount(t.tokens_in + t.tokens_out)} tokens` + (t.tokens_counted < t.calls ? ` (reported for ${t.tokens_counted} of ${t.calls} calls)` : '') : '');
     text('crw-claude-overall-line', `Today ${words(d.today).toLowerCase()} · all time ${words(d.all).toLowerCase()}`);
     $('crw-claude-overall-stats').replaceChildren(...[['Today', d.today], ['Last 7 days', d.week], ['All time', d.all]].map(([name, t]) => {const box = el('div'); box.append(el('strong', '', name), el('span', '', words(t))); return box;}));
     $('crw-claude-overall-videos').replaceChildren(...(d.videos || []).slice(0, 10).map(v => {const li = el('li', '', v.title || 'A video'); li.append(' ', el('small', '', words(v))); return li;}));

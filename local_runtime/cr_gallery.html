@@ -119,8 +119,11 @@ function card(r) {
     v.addEventListener('error', () => v.remove());
     const play = () => {if (!v.getAttribute('src')) v.src = clip.url; v.play().then(() => v.classList.add('ready')).catch(() => {});};
     const stop = () => {v.pause(); v.classList.remove('ready');};
-    c.addEventListener('mouseenter', play); c.addEventListener('mouseleave', stop);
-    t.addEventListener('click', () => v.paused ? play() : stop());      // a tap on a phone
+    // a mouse plays it on hover; a tap toggles it (a phone's tap also sends a mouseenter just before its click, which
+    // started the clip and had the click stop it at once)
+    c.addEventListener('pointerenter', e => {if (e.pointerType === 'mouse') play();});
+    c.addEventListener('pointerleave', e => {if (e.pointerType === 'mouse') stop();});
+    t.addEventListener('click', () => v.paused ? play() : stop());
     t.append(v);}
   if (r.preview_label) t.append(el('span', 'label', r.preview_label));
   const b = el('div', 'body');
