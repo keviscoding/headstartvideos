@@ -255,6 +255,14 @@ def thumbnail(row: dict) -> str:
     return ""
 
 
+def clip_link(clip) -> str:
+    url = clip.get("url") if isinstance(clip, dict) and isinstance(clip.get("url"), str) else ""
+    if url.startswith("/f/video/"):
+        start, end = clip.get("start") or 0, clip.get("end") or 0
+        return link(url) + (f"#t={start:g},{end:g}" if end else "")
+    return url if url.startswith("https://") else ""
+
+
 def style_card(row: dict, thumb: str = "") -> dict:
     block = cloud_block(row)
     return {"id": row["name"], "name": row.get("label") or row["name"],
@@ -264,6 +272,8 @@ def style_card(row: dict, thumb: str = "") -> dict:
             "cloud_note": block, "media_cost": one_line(row.get("cost"), 220) if row.get("cost") else "",
             "short_seconds": row.get("short_seconds"), "needs_panels": bool(row.get("panels")),
             "thumbnail_path": thumb, "preview_url": link(row["preview_url"]) if row.get("preview_url") else "",
+            # a few moving seconds of the style (cr_recipe_clips): the gallery plays it on hover; a link to show them
+            "moving_preview_url": clip_link(row.get("preview_clip")),
             # burned-in captions by the style's own design (false: none, like its channel; captions=true adds them)
             "captions": row.get("captions", True) is not False,
             # its recurring character (options.character / character_picture change it for a video)

@@ -536,6 +536,8 @@ def card(row: dict) -> dict:
             "preview_label": str(row.get("preview_label") or ""),
             "preview_url": row.get("preview_url") if isinstance(row.get("preview_url"), str) else "",
             "preview_video_url": row.get("preview_video_url") if isinstance(row.get("preview_video_url"), str) else "",
+            # a few moving seconds for the gallery card (cr_recipe_clips), or None
+            "preview_clip": row.get("preview_clip") if isinstance(row.get("preview_clip"), dict) else None,
             "art_url": row.get("art_url") if isinstance(row.get("art_url"), str) else ""}
 
 

@@ -219,3 +219,45 @@ def test_projects_and_claude_code_show_the_overall_use(studio, monkeypatch):
                         else original(m, p, b, **k))
     out = ok("claude_usage", {"videos": 3})
     assert len(out["videos"]) == 3 and "not a percentage" in out["what_to_tell_them"]
+
+
+# ── 3. recipes move on hover ───────────────────────────────────────────────────────────────────────────────────────
+
+import cr_recipe_clips as clips  # noqa: E402
+
+
+def test_every_recipe_loop_is_a_small_public_moodboard_clip():
+    folder = ROOT / "webapp/static/moodboard"
+    for recipe, name in clips.CLIPS.items():
+        path = folder / (name + ".mp4")
+        assert path.is_file(), f"{recipe}: {path} is gone; Studio's recipe cards play it from channelrecipe.com"
+        assert path.stat().st_size < 300 * 1024, "keep the hover download light"
+    assert "cr-manga-recaps" not in clips.CLIPS          # those panels may belong to a real webtoon
+    import cr_presentation
+    assert set(clips.CLIPS) <= set(cr_presentation.RECIPES)
+
+
+def test_a_ready_made_recipe_plays_our_loop_and_a_creators_style_its_own_video():
+    ours = clips.clip_for("cr-stick-stories", "/f/video/mine--a")
+    assert ours == {"url": "https://channelrecipe.com/static/moodboard/gladiator-sold.mp4", "start": 0.0, "end": 0.0,
+                    "kind": "recipe", "vertical": False}
+    assert clips.clip_for("cr-shorts-3d")["vertical"] is True
+    mine = clips.clip_for("cr_clone_abc", "/f/video/my-video--abc")
+    assert mine == {"url": "/f/video/my-video--abc", "start": 8.0, "end": 14.0, "kind": "yours", "vertical": False}
+    assert clips.clip_for("cr_clone_abc") is None and clips.clip_for("documentary", "https://elsewhere/x.mp4") is None
+    assert "documentary" in clips.missing(["documentary", "cr-stick-stories"])
+
+
+def test_create_and_the_gallery_play_the_clip_only_when_asked():
+    workspace = (ROOT / "local_runtime/cr_workspace.py").read_text(encoding="utf-8")
+    assert 'row["preview_clip"] = cr_recipe_clips.clip_for(' in workspace
+    assert "function recipeClip(" in JS and "v.preload = 'none'" in JS and "v.muted = true" in JS
+    assert "['mouseenter', true], ['focus', true], ['mouseleave', false], ['blur', false]" in JS
+    assert "prefers-reduced-motion: reduce" in JS
+    gallery = (ROOT / "local_runtime/cr_gallery.html").read_text(encoding="utf-8")
+    assert "r.preview_clip && r.preview_clip.url" in gallery and "v.preload = 'none'" in gallery
+    import cr_claude_code as ccc
+    row = {"name": "cr-stick-stories", "label": "Stick", "preview_clip": clips.clip_for("cr-stick-stories")}
+    assert ccc.card(row)["preview_clip"]["url"].endswith("gladiator-sold.mp4")
+    assert tools.clip_link(clips.clip_for("x", "/f/video/a--b")).endswith("/f/video/a--b#t=8,14")
+    assert tools.clip_link({"url": "javascript:alert(1)"}) == ""

@@ -265,7 +265,7 @@
     const r = state.selected, on = checked('crw-thumbnails'), n = number('crw-thumbnail-count', 2, 1, 4);
     hide('crw-summary-thumbs-row', !r || isShort(r));
     const usd = n * pictureUsd();
-    text('crw-summary-thumbs', on ? `${n} YouTube thumbnail${n === 1 ? '' : 's'} (about $${usd.toFixed(2)} in pictures)` : 'Off: none made, no picture credits');
+    text('crw-summary-thumbs', on ? `${n} YouTube thumbnail${n === 1 ? '' : 's'} (about $${usd.toFixed(2)} in pictures)` : 'Off · saves their picture credits');
     text('crw-summary-thumbs-toggle', on ? 'Turn off' : 'Turn on');
     text('crw-thumbnails-help', `Each thumbnail is one AI picture on your image account (about $${pictureUsd().toFixed(2)}). Turn this off to skip them and save those credits: Projects and your library show a frame of the video instead.`);
   }
@@ -482,6 +482,8 @@
   function inspect(recipe, reveal = false) {
     state.inspected = recipe; text('crw-detail-name', recipe.label); text('crw-detail-description',recipe.description || recipe.tagline);
     recipePreview($('crw-detail-art'),recipe);
+    // the opened recipe plays its clip by itself (a tap on a phone), unless the computer asks for less motion
+    {const clip = recipeClip($('crw-detail-art').parentElement, recipe); if (clip && !calmMotion() && $('crw-gallery').open) clip.cr(true);}
     text('crw-detail-family', recipe.family || 'Visual recipe'); tags('crw-detail-tags', recipe.capabilities);
     text('crw-detail-policy',recipe.visual_policy_label || ''); hide('crw-detail-policy',!recipe.visual_policy_label);
     $('crw-detail-points').replaceChildren(...(recipe.capabilities || []).map(v => el('li','',v)));
@@ -501,9 +503,37 @@
       img.src=recipe.preview_url;
     } else {img.removeAttribute('src');img.onload=null;img.onerror=null;}
   }
+  // A few moving seconds of a recipe (cr_recipe_clips; Swapnil, 2026-10-29: judge a style by how it moves, not by a
+  // picture): our loop of a ready-made recipe, or seconds start..end of the creator's own video in it. Nothing loads
+  // until it plays (preload none); a clip that can't load leaves the picture. play(true) starts it, play(false) stops.
+  function recipeClip(parent, recipe) {
+    const clip = recipe?.preview_clip, old = parent.querySelector('.crw-recipe-clip');
+    if (old && clip?.url && old.dataset.clip === clip.url) return old;     // the same recipe again: keep what loaded
+    old?.remove(); if (!clip?.url) return null;
+    const v = el('video', 'crw-recipe-clip'); v.muted = true; v.defaultMuted = true; v.playsInline = true; v.preload = 'none';
+    v.dataset.clip = clip.url; v.setAttribute('muted', ''); v.setAttribute('aria-hidden', 'true'); v.tabIndex = -1; v.disablePictureInPicture = true;
+    let start = Number(clip.start) || 0, end = Number(clip.end) || 0;
+    v.loop = !end;
+    v.addEventListener('loadedmetadata', () => {if (end && v.duration && v.duration < end + 1) {start = 0; end = 0; v.loop = true;} if (start) v.currentTime = start;});
+    v.addEventListener('timeupdate', () => {if (end && v.currentTime >= end) v.currentTime = start;});
+    v.addEventListener('ended', () => {if (end) {v.currentTime = start; v.play().catch(() => {});}});
+    v.addEventListener('playing', () => v.classList.add('is-playing'));
+    v.addEventListener('error', () => v.remove());
+    parent.append(v);
+    v.cr = (on) => {
+      if (!v.isConnected) return;
+      if (!on) {v.pause(); v.classList.remove('is-playing'); return;}
+      if (!v.getAttribute('src')) v.src = clip.url;
+      v.play().catch(() => {});
+    };
+    return v;
+  }
+  const calmMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   function recipeCard(recipe, action) {
     const b = el('button','crw-recipe-card'); b.type = 'button'; b.dataset.recipe = identity(recipe); b.setAttribute('aria-label', `Explore ${recipe.label}`);
     const art = el('div','crw-card-art'); const img = el('img'); img.loading='lazy';art.append(img);recipePreview(img,recipe);
+    const clip = recipeClip(art, recipe);
+    if (clip) {for (const [type, on] of [['mouseenter', true], ['focus', true], ['mouseleave', false], ['blur', false]]) b.addEventListener(type, () => clip.cr(on));}
     const body = el('div','crw-card-body'); body.append(el('small','crw-card-meta',recipe.family || 'Your style'),el('h3','',recipe.label),el('p','crw-card-description',recipe.description || recipe.tagline || ''));
     b.append(art,body); b.addEventListener('click',()=>action(recipe)); return b;
   }
@@ -516,7 +546,8 @@
     $('crw-gallery-grid').replaceChildren(...recipes.map(r => recipeCard(r, selected=>inspect(selected,true))), ...studies.map(studyCard)); text('crw-gallery-count', `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}${studies.length ? ` · ${studies.length} style ${studies.length === 1 ? 'study' : 'studies'} not finished` : ''}`); hide('crw-gallery-empty',!!(recipes.length || studies.length)); hide('crw-gallery-detail',!recipes.length);
     if (state.inspected && recipes.includes(state.inspected)) inspect(state.inspected); else if (recipes[0]) inspect(recipes[0]);
   }
-  function openGallery() {gallery(); $('crw-gallery').showModal(); $('crw-gallery-search').focus();}
+  function detailClip() {return $('crw-detail-art').parentElement.querySelector('.crw-recipe-clip');}
+  function openGallery() {gallery(); $('crw-gallery').showModal(); $('crw-gallery-search').focus(); if (!calmMotion()) detailClip()?.cr(true);}
   function renderAllowance() {
     const box = $('crw-clone-allowance'); if (!box) return;
     const clones = state.setup?.account?.style_clones; box.replaceChildren();
@@ -1310,6 +1341,7 @@
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
   $('crw-form').addEventListener('input',()=>{error('');updateOptional();summary();save();cloudChoice();});
+  $('crw-gallery').addEventListener('close',()=>{for(const v of all('#crw-gallery .crw-recipe-clip'))v.cr?.(false);});
   $('crw-summary-thumbs-toggle').addEventListener('click',()=>{$('crw-thumbnails').checked=!checked('crw-thumbnails');updateOptional();summary();save();});
   $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
   // the language chosen is kept as Studio's default for the next videos (any recipe); taken on its first event, before
