@@ -125,7 +125,7 @@ def _gpu_chromium() -> str:
     if not found:
         return ""
     wrapper = Path("/tmp/cr-chromium-gpu")
-    wrapper.write_text(f"#!/bin/sh\nexec {found[-1]} {GPU_CHROMIUM} \"$@\"\n")
+    wrapper.write_text(f"#!/bin/sh\nexec {found[-1]} {GPU_CHROMIUM} \"$@\"\n", encoding="utf-8")
     wrapper.chmod(0o755)
     return str(wrapper)
 
