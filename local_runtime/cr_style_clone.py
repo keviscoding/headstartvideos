@@ -1576,44 +1576,52 @@ def vertical_upgrade(home) -> list:
     came out wide (Mac7834's Roblox story clone, 2026-10-29). Once at start, each learned style without a format whose
     look measured vertical frames gets look.aspect 9:16, exactly as a study today gives it; a style drawn by its own
     renderer only when that renderer draws tall (a wide one is left as it is). The old file is kept in
-    output/cr-style-edits/, and the study that saved the style keeps owning it. Returns the styles changed."""
+    output/cr-style-edits/, and the study that saved the style keeps owning it. A style whose study is still finishing
+    it, or that can't be read or written, is left as it is (the next start tries again): one style never stops the
+    others or Studio. Returns the styles changed."""
+    changed = []
+    for path in sorted((Path(home) / "styles").glob("*.json")):
+        try:
+            if _vertical_upgrade(home, path):
+                changed.append(path.stem)
+        except Exception:                                       # noqa: BLE001 - left as it was, tried next start
+            continue
+    return changed
+
+
+def _vertical_upgrade(home, path) -> bool:
     import cr_animated2d
     import cr_style_edit
     import cr_style_look
     import cr_style_map
-    changed = []
-    for path in sorted((Path(home) / "styles").glob("*.json")):
-        if path.stem.startswith("_") or path.is_symlink():
-            continue
-        style = _read(path)
-        learned = (style.get("cr_style_clone") or {}).get("learned_v2")
-        look = style.get("look") if isinstance(style.get("look"), dict) else {}
-        if (not isinstance(learned, dict) or not learned.get("look_id") or look.get("aspect")
-                or str(style.get("family") or "") == "Shorts" or style.get("name") != path.stem):
-            continue
-        try:
-            folder = cr_style_look.folder(home, learned["look_id"])
-        except ValueError:
-            continue
-        looked = _read(folder / "look.json")
-        profile = looked.get("profile") if isinstance(looked.get("profile"), dict) else None
-        if looked.get("state") != "done" or profile is None:
-            continue
-        if "vertical" in (profile.get("format") or {}):
-            tall = cr_style_map.vertical(profile)
-        else:
-            share = cr_style_look.measured_vertical(folder, looked.get("references") or [])[0]
-            tall = share is not None and share >= 0.5
-        if not tall:
-            continue
-        if look.get("visuals") in cr_animated2d.PLUGINS:
-            drawn = look.get("animated2d") if isinstance(look.get("animated2d"), dict) else {}
-            try:
-                if not int(drawn.get("height") or 0) > int(drawn.get("width") or 0):
-                    continue                                    # its renderer draws wide frames: left as it is
-            except (TypeError, ValueError):
-                continue
+    if path.stem.startswith("_") or path.is_symlink():
+        return False
+    style = _read(path)
+    learned = (style.get("cr_style_clone") or {}).get("learned_v2")
+    look = style.get("look") if isinstance(style.get("look"), dict) else {}
+    if (not isinstance(learned, dict) or not learned.get("look_id") or look.get("aspect")
+            or str(style.get("family") or "") == "Shorts" or style.get("name") != path.stem):
+        return False
+    folder = cr_style_look.folder(home, learned["look_id"])
+    looked = _read(folder / "look.json")
+    profile = looked.get("profile") if isinstance(looked.get("profile"), dict) else None
+    if looked.get("state") != "done" or profile is None:
+        return False
+    # a look saved before the measure gets it from its own frames or listing once (as a study reusing it does), so
+    # the next start doesn't open every still again
+    cr_style_look.fill_vertical(folder, looked)
+    if not cr_style_map.vertical(profile):
+        return False
+    if look.get("visuals") in cr_animated2d.PLUGINS:
+        drawn = look.get("animated2d") if isinstance(look.get("animated2d"), dict) else {}
+        if not int(drawn.get("height") or 0) > int(drawn.get("width") or 0):
+            return False                                        # its renderer draws wide frames: left as it is
+    # the same lock an edit takes: a study still checking its likeness writes its record from the style it read, and
+    # a change in between would leave the style no longer its study's
+    with cr_style_edit._study_done(home, style):
         before = _file_hash(path)
+        if _read(path) != style:
+            return False                                        # changed since it was read: the next start looks again
         out = json.loads(json.dumps(style))
         out.setdefault("look", {})["aspect"] = "9:16"
         rows = out["cr_style_clone"]["learned_v2"].setdefault("settings", [])
@@ -1623,8 +1631,7 @@ def vertical_upgrade(home) -> list:
                                                                        + f"-{before[:8]}-before-9x16.json"), style)
         _write(path, out)
         cr_style_edit._owned(home, out, path, before)
-        changed.append(path.stem)
-    return changed
+    return True
 
 
 def republish(folder, saved, style):

@@ -151,6 +151,38 @@ def test_a_coded_style_whose_renderer_draws_tall_says_9_16_too(tmp_path):
     assert _style(path)["look"]["aspect"] == "9:16"
 
 
+def test_a_style_its_study_is_still_finishing_waits_for_the_next_start(tmp_path):
+    """The study holds its lock while it checks the likeness and then records the style's hash from what it read: a
+    change in between would leave the style no longer its study's."""
+    home, path = _home(tmp_path)
+    before = path.read_bytes()
+    with clone._lock(clone._operation(home, OPERATION)):
+        assert clone.vertical_upgrade(home) == []
+    assert path.read_bytes() == before and not (home / "output" / "cr-style-edits").exists()
+    assert clone.vertical_upgrade(home) == ["cr_style_roblox_mac"], "the next start"
+
+
+def test_one_broken_style_never_stops_the_others(tmp_path, monkeypatch):
+    home, path = _home(tmp_path)
+    clone._write(home / "styles" / "cr_style_aaa.json", {
+        "name": "cr_style_aaa", "look": {}, "cr_style_clone": {"learned_v2": {"look_id": "lk_" + "c" * 24}}})
+    real = look.folder
+
+    def folder(home_, look_id):
+        if look_id != LOOK:
+            raise RuntimeError("Keep reference looks in this studio's output folder.")
+        return real(home_, look_id)
+    monkeypatch.setattr(look, "folder", folder)
+    assert clone.vertical_upgrade(home) == ["cr_style_roblox_mac"]
+
+
+def test_a_look_measured_at_start_keeps_its_measure(tmp_path):
+    home, path = _home(tmp_path, vertical=None, frames=True)
+    assert clone.vertical_upgrade(home) == ["cr_style_roblox_mac"]
+    saved = json.loads((look.folder(home, LOOK) / "look.json").read_text())
+    assert saved["profile"]["format"]["vertical"]["value"] == 1.0, "the next start doesn't open every still again"
+
+
 def test_studio_upgrades_old_shorts_clones_before_the_engine_reads_its_styles():
     source = (RUNTIME / "cr_studio.py").read_text()
     upgrade, engine = source.index("cr_style_clone.vertical_upgrade(HOME)"), source.index("import app as studio")
