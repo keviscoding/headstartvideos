@@ -1385,6 +1385,27 @@
                 avg views, cadence, and outlier hits. Browse what’s already working; new niches are added after each refresh.
             </p>
 
+            <section id="nf-agent-card" class="cr-surface" aria-labelledby="nf-agent-title" style="padding: 22px 24px; margin-bottom: 24px;">
+                <p class="cr-eyebrow" style="margin-bottom: 6px;">New · Niche agent</p>
+                <h3 id="nf-agent-title" class="cr-display" style="font-size: 22px; margin-bottom: 8px;">Find a niche with proof, not guesses</h3>
+                <p style="color: var(--app-ink-2); max-width: 46rem; margin-bottom: 14px;">
+                    The niche agent looks for small, new channels whose videos get many times more views than they have subscribers.
+                    It checks that the format repeats (not a one-hit), that look-alikes aren’t failing and that it isn’t AI slop,
+                    then gives you video ideas with the proof video behind each one and the recipe that makes it.
+                    It runs in Studio with your own Claude Code and reads public YouTube pages, so it costs nothing.
+                </p>
+                <div class="flex flex-wrap items-center gap-3" style="margin-bottom: 10px;">
+                    <span style="font-size: 13px; color: var(--app-ink-3);">In Claude Code, in your Studio folder, type</span>
+                    <code id="nf-agent-command" class="cr-mono" style="font-size: 13px; padding: 6px 10px; border: 1px solid var(--app-line, rgba(127,127,127,.35)); border-radius: 6px;">/niche-agent 3D history</code>
+                    <button type="button" class="btn-secondary" style="font-size: 13px; padding: 6px 12px;" onclick="navigator.clipboard &amp;&amp; navigator.clipboard.writeText(document.getElementById('nf-agent-command').textContent).then(() =&gt; { this.textContent = 'Copied'; })">Copy</button>
+                </div>
+                <p style="font-size: 13px; color: var(--app-ink-3); max-width: 46rem; margin-bottom: 14px;">
+                    Put your own topic or a channel link after it. Ideas you save appear in Studio’s Create page under Saved ideas.
+                    It also works with the ChannelRecipe plugin for Claude Code. Needs Studio 114 or newer.
+                </p>
+                <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 16px;" onclick="navigateTo('local-studio')">Open Studio</button>
+            </section>
+
             <div id="nf-gate" class="hidden cr-surface" style="padding: 28px; margin-bottom: 24px; max-width: 36rem;">
                 <h3 class="cr-display" style="font-size: 22px; margin-bottom: 8px;" id="nf-gate-title">Locked</h3>
                 <p style="color: var(--app-ink-2); margin-bottom: 16px;" id="nf-gate-body"></p>
