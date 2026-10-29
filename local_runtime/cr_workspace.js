@@ -374,6 +374,7 @@
   // video spent 84 of its 116 minutes in Claude Opus, 2026-10-25). Said before Create, with Quicker 3D review. Sections
   // of about 50 s, three at a time; one Claude round took 8-22 minutes on customers' runs (a 2-minute video's calls
   // alone were ~69 min); Quicker 3D review measured 22-32% less, not half.
+  const LONG_3D_MINUTES = 8;
   function threedEstimate(minutes, quick) {
     const groups = Math.max(1, Math.ceil(minutes * 60 * 0.85 / 50 / 3)), rounds = quick ? 1 : 3;
     const calls = (1 + rounds) * groups, nearest = v => Math.max(5, Math.round(v / 5) * 5);
@@ -384,7 +385,10 @@
     hide('crw-threed-note', !on);
     if (!on) return;
     const minutes = number('crw-minutes',10,1,60), [lo, hi] = threedEstimate(minutes, checked('crw-threed-quick'));
-    text('crw-threed-note', `3D adds about ${lo} to ${hi} minutes of Claude work to a ${minutes}-minute video, plus rendering: Claude directs every shot and reviews them, on your Claude plan. Quicker 3D review (Creative direction, 3D look) does one review round: about a quarter to a third less.`);
+    // a long 3D video can outlast one Claude Pro usage window (Swapnil's 18 minutes, 2026-10-29): said plainly, with
+    // what Studio does when the limit stops it
+    const long = minutes > LONG_3D_MINUTES ? ` On a Claude Pro plan a ${minutes}-minute 3D video can take more than one 5-hour usage window. When the limit stops it, Studio keeps everything made so far, finished 3D review rounds too, and carries on where it stopped once your limit resets.${checked('crw-threed-quick') ? '' : ' Quicker 3D review uses less.'}` : '';
+    text('crw-threed-note', `3D adds about ${lo} to ${hi} minutes of Claude work to a ${minutes}-minute video, plus rendering: Claude directs every shot and reviews them, on your Claude plan. Quicker 3D review (Creative direction, 3D look) does one review round: about a quarter to a third less.${long}`);
   }
   // Research footage watches YouTube videos on the creator's video-model account before the video is made: what that
   // adds, said before Create (a customer's 10-minute video watched clips for 22 hours, 2026-10-25). The numbers are
@@ -626,6 +630,10 @@
       }
       text('crw-progress-log',lines.join('\n')); text('crw-progress-label', data.state === 'done' ? 'READY' : data.done ? 'STOPPED' : 'IN PRODUCTION');
       text('crw-progress-note',data.error || (data.state === 'done' ? 'Your video is ready. Open it to watch, download or change it.' : data.done ? 'Saved work remains with this project. Starting another video creates a fresh attempt.' : 'Your studio is working. Completed steps and elapsed time come from the live job.'));
+      // What this video has used of Claude so far, from Studio's own records (never a plan's quota: Claude Code
+      // doesn't say what is left), and a 3D review's round and calls left (Swapnil, 2026-10-29)
+      try {const use = await api(`/cr-workspace/claude-use/${encoded(state.openJob)}`); text('crw-claude-use', use.line || ''); hide('crw-claude-use', !use.line);}
+      catch (_) {hide('crw-claude-use', true);}
       const cancel = data.cr_cancel || {}; $('crw-progress-cancel').disabled = cancel.can_cancel !== true; hide('crw-progress-cancel',cancel.can_cancel !== true); $('crw-progress-cancel').dataset.run = cancel.run_id || '';
       if (data.done && !$('crw-progress-actions').childElementCount) {
         const another = el('button','crw-secondary-button','Create another video'); another.type='button'; another.addEventListener('click',()=>showPage('create')); $('crw-progress-actions').append(another);
@@ -684,9 +692,13 @@
     const plain = $('crw-progress-actions').querySelector('.crw-resume-saved');
     box.append(el('p', 'crw-voice-title', rec.needs_approval ? 'Try the stopped steps again?' : 'Why this video stopped'));
     const list = el('ul', 'crw-recovery-list');
-    for (const s of rec.claude_stages || []) list.append(el('li', '', `${s.step.charAt(0).toUpperCase()}${s.step.slice(1)}: ${s.reason} ${s.spent_note}${s.reset_label ? ` Claude said your usage resets at ${s.reset_label}.` : ''}`));
+    // one bullet per kind of stopped step with its count ("3D picture review, round 1: 3 calls stopped at your Claude
+    // plan's limit."), its cost note once; never the same sentence once per call
+    if (rec.groups) for (const g of rec.groups) list.append(el('li', '', `${g.line}${g.spent_note ? ' ' + g.spent_note : ''}`));
+    else for (const s of rec.claude_stages || []) list.append(el('li', '', `${s.step.charAt(0).toUpperCase()}${s.step.slice(1)}: ${s.reason} ${s.spent_note}${s.reset_label ? ` Claude said your usage resets at ${s.reset_label}.` : ''}`));
     for (const m of rec.media || []) list.append(el('li', '', m.reason));
     if (list.childElementCount) box.append(list);
+    if (rec.usage_line && !/press Try again and carry on/.test($('crw-progress-note').textContent)) box.append(el('p', 'crw-field-help crw-recovery-usage', rec.usage_line.replace(/^[^.]*\.\s*/, '')));
     for (const f of [...new Set([...(rec.fix_first || []), ...(rec.do_first || [])])]) box.append(el('p', 'crw-field-help crw-recovery-fix', f));
     if (rec.auto?.safe) box.append(el('p', 'crw-field-help', `Studio carries this on by itself in a minute or so (${rec.auto.why}). Everything already made is reused.`));
     if (rec.carry_on_after_reset && rec.reset_label && !rec.reset_passed) box.append(el('p', 'crw-field-help', `Studio carries it on by itself after ${rec.reset_label}, as you chose.`));

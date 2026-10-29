@@ -52,6 +52,25 @@ def expect_stage(project_id, stage_id):
         _expected_stage.reset(token)
 
 
+# What a Claude step is, in plain words ("3D picture review, round 1"), saved with its local cache so a stopped video's
+# card names its steps (cr_recover) instead of repeating "a Claude step that looks at pictures" once per call.
+_stage_label = ContextVar("cr_stage_label", default="")
+
+
+@contextmanager
+def labelled(label):
+    """Every Claude step started inside is saved with this plain name (the innermost name wins)."""
+    token = _stage_label.set(str(label or "")[:80])
+    try:
+        yield
+    finally:
+        _stage_label.reset(token)
+
+
+def stage_label() -> str:
+    return _stage_label.get()
+
+
 class ClaudeStageStopped(BaseException):
     """Stop outside the source's retry/fallback handlers after uncertain work."""
 
@@ -750,7 +769,9 @@ class Runtime:
         # Original native helpers do not apply their API max_tokens argument
         # to Claude Code. Keep its native reasoning/output behavior intact.
         options = {**kwargs, "env": env}
-        _private_write(cache, {"state": "running", "input_fingerprint": fingerprint})
+        label = stage_label()                              # "3D picture review, round 1": named on a stopped card
+        named = {"label": label} if label else {}
+        _private_write(cache, {"state": "running", **named, "input_fingerprint": fingerprint})
         started = time.monotonic()
         receipt = {"project_id": project_id, "stage_id": stage_id, "authorization_token": token,
                    "status": "failed", "error_code": "cli_failed", "usage": {}}
@@ -799,25 +820,31 @@ class Runtime:
             except (OSError, ValueError, TypeError, RuntimeError):
                 execution_binding = None
             receipt.update(status="complete", result_fingerprint=output_digest, usage=safe_usage, error_code="")
-            _private_write(cache, {"state": "complete_local", "stdout": output, "result_fingerprint": output_digest,
+            # seconds: what this call took, for "Claude so far for this video" (cr_claude_use); after the state, which
+            # cr_recover reads from each file's first bytes
+            timed = {**named, "seconds": round(safe_usage["duration_seconds"], 1)}
+            _private_write(cache, {"state": "complete_local", **timed, "stdout": output, "result_fingerprint": output_digest,
                                    "input_fingerprint": fingerprint, "receipt": receipt, "origin": origin,
                                    "execution_binding": execution_binding})
             self.bridge.finish_stage(receipt)
-            _private_write(cache, {"state": "complete", "stdout": output, "result_fingerprint": output_digest,
+            _private_write(cache, {"state": "complete", **timed, "stdout": output, "result_fingerprint": output_digest,
                                    "input_fingerprint": fingerprint, "origin": origin, "execution_binding": execution_binding})
             return subprocess.CompletedProcess(args, 0, output, "")
         except BaseException as error:
             if receipt["status"] == "complete":
                 raise ClaudeStageStopped("Claude finished this stage, but ChannelRecipe could not save its receipt. Reconnect and resume to recover the cached result.") from None
             receipt["error_code"] = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "cancelled" if isinstance(error, (KeyboardInterrupt, SystemExit)) else failure_code
-            if receipt["error_code"] == "usage_limit" and completed is not None:
+            if receipt["error_code"] == "usage_limit":
                 import cr_allowance
                 allowance = cr_allowance.record(self.bridge.HOME, local.get("account_fingerprint"),
-                    str(getattr(completed, "stdout", "")) + " " + str(getattr(completed, "stderr", "")))
-                if allowance:
-                    failure_message = allowance["message"]
+                    str(getattr(completed, "stdout", "")) + " " + str(getattr(completed, "stderr", ""))) \
+                    if completed is not None else None
+                # Carrying on is the way forward, not a new video (Swapnil, 2026-10-29): the stop says when and how
+                failure_message = cr_allowance.stopped_message((allowance or {}).get("reset_label"),
+                                                               threed=label.startswith("3D"))
             receipt["usage"] = {"duration_seconds": time.monotonic() - started, "reported": False}
-            failed={"state":"failed_local","input_fingerprint":fingerprint,"error_code":receipt["error_code"],"receipt":receipt,
+            failed={"state":"failed_local",**named,"seconds":round(receipt["usage"]["duration_seconds"],1),
+                "input_fingerprint":fingerprint,"error_code":receipt["error_code"],"receipt":receipt,
                 "diagnostic":private_diagnostic(completed,cfg) if completed is not None else {"exception_type":type(error).__name__}}
             _private_write(cache,failed)
             try:
