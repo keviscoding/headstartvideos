@@ -72,6 +72,7 @@ def workspace(browser):
         "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)],
         "footage_watcher": {"note": "On your last video, Kie's video watcher wasn't answering, so ChannelRecipe's "
                                     "watcher watched 12 of its videos."}}
+    env.catalog = catalog                                  # a test may add recipes before it opens the page
     app = Flask(__name__)
 
     @app.before_request
@@ -1312,3 +1313,40 @@ def test_studio_cloud_asks_for_a_top_up_before_anything_starts(workspace):
     page.locator("[data-render-on=local]").click()
     assert page.locator("#crw-cloud-topup").is_hidden() and page.locator("#crw-create").inner_text() != \
         "Top up to render in the cloud"
+
+
+def test_roblox_story_shorts_take_my_recording_and_the_other_shorts_say_they_voice_their_own(workspace):
+    """Primo (Discord, 2026-10-29) pitches the Adam voice 1.3x in CapCut and uploads that take as a Roblox Story
+    Short's narration, but Create refused My recording for every Short ("Shorts write and voice their own narration").
+    Roblox Story Shorts now take it, at the recording's length; the Shorts that can't hide the choice."""
+    env, page = workspace, workspace.page
+    env.catalog["channels"] += cr_presentation.presentation_catalog([
+        {"name": "cr-shorts-roblox", "short_seconds": 55, "own_recording": True},
+        {"name": "cr-shorts-3d", "short_seconds": 25, "own_recording": False}])
+    env.open("?cr-preset=cr-shorts-roblox")
+    assert page.locator("#crw-selected-name").inner_text() == "Roblox Story Shorts"
+    own = page.locator("[data-narration-mode=own]")
+    assert own.is_visible() and page.locator("#crw-short-duration").is_visible()
+    own.click()
+    assert page.locator("#crw-narration-own").is_visible()
+    assert page.locator("#crw-short-duration").is_hidden(), "the recording sets the Short's length"
+    assert page.inner_text("#crw-summary-duration") == "Length of your recording"
+    assert page.locator("#crw-create").is_disabled() and "Choose a narration recording" in page.inner_text("#crw-readiness")
+    page.evaluate("""() => {const s = document.getElementById('crw-audio-recent'), o = document.createElement('option');
+        o.value = 'adam-pitched-1a2b.mp3'; o.textContent = 'adam-pitched · 32s'; s.append(o); s.value = o.value;
+        s.dispatchEvent(new Event('change'));}""")
+    page.locator("#crw-title").fill("Everyone has a number")
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    body = env.creates[0]["body"]
+    assert body["style"] == "cr-shorts-roblox" and body["byo_audio"] == "adam-pitched-1a2b.mp3"
+    assert body["title"] == "Everyone has a number"
+    # 3D Explainer Shorts write and voice their own narration: no My recording there, and AI narration again
+    page.locator(".crw-nav [data-nav=create]").click()
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === 'cr-shorts-3d'))")
+    assert own.is_hidden() and page.evaluate("window.CR_WORKSPACE_CLIENT.state.narration") == "ai"
+    assert page.locator("#crw-narration-own").is_hidden() and page.locator("#crw-short-duration").is_visible()
+    # a long video offers it again
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === 'documentary'))")
+    assert own.is_visible()
+    assert not env.errors
