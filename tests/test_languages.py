@@ -435,14 +435,18 @@ def test_a_short_is_told_its_language(tmp_path):
 
 
 def test_a_ready_made_shorts_recipe_says_it_speaks_its_own_language_before_anything_starts():
-    """Ranking, 3D, photo and Roblox Shorts write, voice and caption in their own pipelines, which don't take a
-    language yet: a Spanish one is refused plainly instead of made in English."""
+    """Ranking, 3D and photo Shorts write, voice and caption in their own pipelines, which don't take a language yet:
+    a Spanish one is refused plainly instead of made in English. Roblox Story Shorts take one (2026-10-29)."""
     import cr_studio_tools as tools
     studio, client = submission_studio()
     studio.styles = SimpleNamespace(STYLES={
         "cr-shorts-ranking": {"format": "short", "label": "Ranking Shorts", "language": "English",
                               "shorts": {"pipeline": "ranking"}},
-        "cr-shorts-3d": {"format": "short", "label": "3D Shorts", "language": "English", "shorts": {"pipeline": "zack3d"}}})
+        "cr-shorts-3d": {"format": "short", "label": "3D Shorts", "language": "English", "shorts": {"pipeline": "zack3d"}},
+        "cr-shorts-roblox": {"format": "short", "label": "Roblox Story Shorts", "language": "English",
+                             "shorts": {"pipeline": "roblox"}}})
+    ok = client.post("/api/run", json={"title": "En este mundo", "style": "cr-shorts-roblox", "language": "es"})
+    assert ok.status_code == 200 and studio.QUEUE[-1]["cr_language"] == "es"
     refused = client.post("/api/run", json={"title": "Perros", "style": "cr-shorts-ranking", "language": "es"})
     assert refused.status_code == 400
     assert refused.get_json()["error"].startswith("Ranking Shorts speak the language you type the topic in")
@@ -453,8 +457,62 @@ def test_a_ready_made_shorts_recipe_says_it_speaks_its_own_language_before_anyth
     with pytest.raises(tools.Refused, match="Ranking Shorts speak the language you type the topic in"):
         tools.language_of(CATALOG, short, {"language": "es"})
     assert tools.language_of({**CATALOG, "default_language": "es"}, short, {}) == "en", "the default is for videos"
+    roblox = {"name": "cr-shorts-roblox", "label": "Roblox Story Shorts", "short_seconds": 55, "language": "en",
+              "any_language": True}
+    assert tools.language_of(CATALOG, roblox, {"language": "Español"}) == "es"
+    assert tools.language_of({**CATALOG, "default_language": "es"}, roblox, {}) == "es", "Studio's default applies"
     script = (ROOT / "local_runtime" / "cr_workspace.js").read_text(encoding="utf-8")
-    assert "isShort(state.selected) && state.selected?.short_seconds != null" in script and "box.disabled = pipelineShort" in script
+    assert "isShort(state.selected) && state.selected?.short_seconds != null && !state.selected?.any_language" in script
+    assert "box.disabled = pipelineShort" in script
+    assert 'row["any_language"] = cr_language.short_speaks_any(info)' in \
+        (ROOT / "local_runtime" / "cr_workspace.py").read_text(encoding="utf-8")
+    assert cr_language.short_speaks_any({"format": "short", "shorts": {"pipeline": "roblox"}})
+    assert not cr_language.short_speaks_any({"format": "short", "shorts": {"pipeline": "photo2d"}})
+    assert not cr_language.short_speaks_any({"format": "short"}), "no pipeline named: the 3D one, which doesn't yet"
+    assert not cr_language.short_speaks_any({"language": "English"}), "a video recipe isn't a ready-made Short"
+
+
+def test_a_roblox_short_is_told_its_language_and_pace(tmp_path, monkeypatch):
+    """Studio hands the pipeline its language: the name for its prompts, the code for Whisper, and its pace (Spanish
+    says fewer, longer words a second than English)."""
+    import cr_shorts
+    root = tmp_path / "shorts"
+    (root / "roblox").mkdir(parents=True)
+    (root / "roblox" / "make_roblox.py").write_text(
+        "import json, os, sys, pathlib\n"
+        "work = pathlib.Path(sys.argv[2])\n"
+        "(work / 'seen.json').write_text(json.dumps({k: os.environ.get(k) for k in "
+        "('CR_LANGUAGE', 'CR_LANGUAGE_CODE', 'CR_LANGUAGE_PACE')}))\n"
+        "(work / 'short.mp4').write_bytes(b'mp4')\n"
+        "(work / 'plan.json').write_text(json.dumps({'title': 'Cicatrices', 'narration': 'En este mundo.'}))\n"
+        "(work / 'voice.json').write_text(json.dumps({'words': [[0.1, 0.4, 'En'], [0.4, 0.8, 'este']]}))\n",
+        encoding="utf-8")
+    monkeypatch.setenv("CR_SHORTS_ROOT", str(root))
+    monkeypatch.setattr(cr_shorts, "ensure_pack", lambda *a, **k: None)
+    monkeypatch.setattr(cr_shorts, "ready", lambda home=None: [])
+    monkeypatch.setattr(cr_shorts, "ranking_voice", lambda style: "")
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "run_spec.json").write_text(json.dumps({"cr_language": "es"}), encoding="utf-8")
+
+    class Engine:
+        def job_dir(self, title, style):
+            return str(job)
+    info = {"format": "short", "label": "Roblox Story Shorts", "shorts": {"pipeline": "roblox", "seconds": 55}}
+    cr_shorts.run_short(Engine(), "Cada promesa rota deja una cicatriz", "cr-shorts-roblox", info)
+    seen = json.loads((job / "short" / "seen.json").read_text(encoding="utf-8"))
+    assert seen == {"CR_LANGUAGE": "Spanish", "CR_LANGUAGE_CODE": "es", "CR_LANGUAGE_PACE": "0.85"}
+    (job / "run_spec.json").write_text(json.dumps({"burn_subs": True}), encoding="utf-8")       # a Resume: kept
+    cr_shorts.run_short(Engine(), "Cada promesa rota deja una cicatriz", "cr-shorts-roblox", info)
+    assert json.loads((job / "short" / "seen.json").read_text(encoding="utf-8"))["CR_LANGUAGE_CODE"] == "es"
+    other = tmp_path / "english"
+    other.mkdir()
+    Engine.job_dir = lambda self, title, style: str(other)
+    cr_shorts.run_short(Engine(), "Every broken promise leaves a scar", "cr-shorts-roblox", info)
+    assert json.loads((other / "short" / "seen.json").read_text(encoding="utf-8")) == \
+        {"CR_LANGUAGE": None, "CR_LANGUAGE_CODE": None, "CR_LANGUAGE_PACE": None}, "English: as before"
+    assert cr_language.pace("es") == 0.85 and cr_language.pace("en") == 1.0 and cr_language.pace("xx") == 1.0
+    assert all(0.5 <= r["pace"] <= 1.2 for r in cr_language.LANGUAGES)
 
 
 def test_every_prompt_that_shapes_what_the_viewer_sees_says_the_language(job):

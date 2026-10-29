@@ -282,8 +282,8 @@
       box.replaceChildren(...list.map(l => {const o = el('option', '', l.native && l.native !== l.name ? `${l.name} · ${l.native}` : l.name); o.value = l.id; return o;}));
       box.dataset.recipe = own;
     }
-    // a ready-made Shorts recipe (its own pipeline writes, voices and captions it) speaks its own language for now
-    const pipelineShort = isShort(state.selected) && state.selected?.short_seconds != null;
+    // a ready-made Shorts recipe whose own pipeline doesn't take a language yet (any_language false) speaks its own
+    const pipelineShort = isShort(state.selected) && state.selected?.short_seconds != null && !state.selected?.any_language;
     const want = pipelineShort ? own : [state.language, state.catalog?.default_language, own, 'en'].find(id => id && [...box.options].some(o => o.value === id));
     if (want && box.value !== want) box.value = want;
     box.disabled = pipelineShort;
