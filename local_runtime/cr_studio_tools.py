@@ -549,6 +549,10 @@ def tool_setup_check(args):
             "setup_page": link("/cr-setup"),
             "graphics_browser": {"ready": bool(status.get("browser")), "why": status.get("browser_reason") or "",
                                  "fix": "" if status.get("browser") else
+                                 # a full disk, too many open files or a busy computer: a reinstall won't help
+                                 "Don't call fix_graphics_browser: reinstalling won't help. Tell the creator what "
+                                 "'why' says (never delete their files for them), then call setup_check again."
+                                 if (status.get("can_fix") or {}).get("browser") is False else
                                  "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
                                  "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
             "video_tools": tool_summary(status, "ffmpeg", "fix_ffmpeg"),

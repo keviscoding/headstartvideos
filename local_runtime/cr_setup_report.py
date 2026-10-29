@@ -3,7 +3,8 @@
 When a customer was stuck in setup (no FFmpeg, Claude Code signed out, a blocked network), the server never heard of
 it: it only saw that Studio called in. A connected Studio now sends, in the background, the keys of the setup checks
 that don't pass yet (cr_readiness: ffmpeg, node, claude, models, network…), whether setup is ready, the computer's
-family and the Studio's version. Nothing else leaves: no names, paths, keys or messages. It sends when that changes,
+family, the Studio's version and, for a check that knows it, a short reason code (the graphics browser's
+"disk_full", say). Nothing else leaves: no names, paths, keys or messages. It sends when that changes,
 or every few hours, and never holds up the setup page; an older server that doesn't know the report is ignored.
 """
 from __future__ import annotations
@@ -27,10 +28,17 @@ def os_family(system=None) -> str:
 
 
 def snapshot(readiness: dict, version: str) -> dict:
-    failing = sorted({str(row.get("key")) for row in (readiness or {}).get("checks", [])
-                      if not row.get("ready") and _KEY.match(str(row.get("key") or ""))})[:24]
-    return {"ready": bool((readiness or {}).get("ready")), "failing": failing, "os": os_family(),
+    rows = [row for row in (readiness or {}).get("checks", [])
+            if not row.get("ready") and _KEY.match(str(row.get("key") or ""))]
+    failing = sorted({str(row["key"]) for row in rows})[:24]
+    snap = {"ready": bool((readiness or {}).get("ready")), "failing": failing, "os": os_family(),
             "version": str(version or "")[:40]}
+    # a failing check's short reason code (the graphics browser's: disk_full, missing…), never its message
+    why = {str(row["key"]): str(row["code"]) for row in rows
+           if str(row["key"]) in failing and _KEY.match(str(row.get("code") or ""))}
+    if why:
+        snap["why"] = dict(sorted(why.items()))
+    return snap
 
 
 def maybe_send(readiness: dict, version: str, *, connected: bool, send=None, now=None, background=True) -> bool:

@@ -96,8 +96,10 @@ Studio through its own checks, so nothing needs the Studio web page.
 
 - Start with `setup_check`. If Studio isn't running, ask them to open its launcher (step 4 above).
 - If `setup_check` says the graphics browser isn't ready, call `fix_graphics_browser` (Studio installs it itself) and
-  check again after a couple of minutes. Never install it with pip/playwright from your own shell: Claude Code's shell
-  can be sandboxed, so the install lands where Studio can't see it. Setup's page has the same Fix it button.
+  check again after a couple of minutes. When its `fix` says reinstalling won't help (a full disk, say), help them
+  with what `why` says instead, such as freeing space, never by deleting their files. Never install it with
+  pip/playwright from your own shell: Claude Code's shell can be sandboxed, so the install lands where Studio can't
+  see it. Setup's page has the same Fix it button.
 - `setup_check`'s `video_tools` or `node` not ready (FFmpeg missing or unable to burn captions; Node.js missing, or
   older than 22, which the YouTube downloader needs: an older Node stops only videos that download from YouTube,
   such as Research footage and Ranking Shorts, never the others): call `fix_ffmpeg` or `fix_node`. Studio downloads a pinned,

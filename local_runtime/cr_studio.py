@@ -399,34 +399,86 @@ def output_artifacts(engine, job):
     return artifacts
 
 
+# What stops the graphics browser, as a short code. Setup says what fits it, and the setup report carries the code so
+# the team sees which it is (2026-10-27: the only stuck Studio failed this check with no reason the server could see).
+# A reinstall can't help these three, so setup offers Check again instead of Fix it.
+BROWSER_NOT_A_REINSTALL = ("disk_full", "too_many_files", "timeout")
+
+
+def browser_trouble(error) -> str:
+    """disk_full, too_many_files, missing, timeout or wont_start, from Playwright's (or the system's) words. A full disk
+    first: an install's log that ran out of room can also name "playwright install"."""
+    text, number = str(error).lower(), getattr(error, "errno", None)
+    if number == 28 or "enospc" in text or "no space left" in text or "not enough space on the disk" in text:
+        return "disk_full"
+    if number == 24 or "emfile" in text or "too many open files" in text:
+        return "too_many_files"
+    if "executable doesn't exist" in text or "playwright install" in text:
+        return "missing"
+    if "timeout" in text and "exceeded" in text:
+        return "timeout"
+    return "wont_start"
+
+
+def browser_trouble_reason(why, first="") -> str:
+    """What setup (and the creator's Claude Code) says for a browser_trouble code."""
+    if why == "missing":
+        return "The graphics browser isn't installed yet. Press Fix it to install it (a few minutes)."
+    if why == "disk_full":
+        # tested on a full disk (2026-10-27): the launch stops at "ENOSPC ... mkdtemp", and "Press Fix it to reinstall
+        # it" sent the customer to download ~115 MB onto that full disk
+        return ("This computer's disk is full, so the graphics browser can't start (it needs room for its temporary "
+                f"files). Free a few GB ({cr_machine._empty_the_bin()}, delete old downloads), then press Check again. "
+                "Reinstalling it won't help.")
+    if why == "too_many_files":
+        return ("The graphics browser can't start: Studio has too many files open. Close Studio's launcher window, "
+                "open Studio again, then press Check again.")
+    if why == "timeout":
+        return ("The graphics browser took too long to start, twice: this computer may be busy. Close other apps or "
+                "wait for the current video to finish, then press Check again.")
+    return f"The graphics browser won't start ({first}). Press Fix it to reinstall it."
+
+
+def _draw_check(sync_playwright) -> dict:
+    # Studio draws in Playwright's headless shell (what a headless launch starts), so that is what's checked:
+    # chromium.executable_path names the full Chrome for Testing, which Studio no longer downloads (B5)
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True,args=["--enable-unsafe-swiftshader"])
+        page=browser.new_page()
+        drawn=page.evaluate("""() => ({browser:!!document.createElement('canvas').getContext('2d'),webgl:!!document.createElement('canvas').getContext('webgl2')})""")
+        browser.close()
+    return drawn
+
+
 def graphics_ready():
-    """Can the graphics browser draw? With the reason when it can't, so setup (and the creator's Claude Code) can say
-    what to do instead of a bare "needs attention". A working browser is checked again in five minutes; a broken one
-    every time, so a fix shows at once (a cached failure used to look like the fix hadn't worked)."""
+    """Can the graphics browser draw? With the reason when it can't (browser_reason) and its code (browser_why), so
+    setup (and the creator's Claude Code) can say what to do instead of a bare "needs attention". A working browser is
+    checked again in five minutes; a broken one every time, so a fix shows at once (a cached failure used to look like
+    the fix hadn't worked). A launch that times out is tried once more before it counts: a busy computer isn't a
+    broken browser."""
     if _graphics_check.get("expires",0)>time.monotonic():
         return _graphics_check["result"]
-    result={"browser":False,"webgl":False,"browser_reason":""}
+    result={"browser":False,"webgl":False,"browser_reason":"","browser_why":""}
     try:
         from playwright.sync_api import sync_playwright
     except Exception:
-        result["browser_reason"]="The graphics browser's library isn't installed. Press Fix it next to Graphics browser."
+        result.update(browser_why="no_library",
+                      browser_reason="The graphics browser's library isn't installed. Press Fix it next to Graphics browser.")
     else:
-        try:
-            # Studio draws in Playwright's headless shell (what a headless launch starts), so that is what's checked:
-            # chromium.executable_path names the full Chrome for Testing, which Studio no longer downloads (B5)
-            with sync_playwright() as p:
-                browser=p.chromium.launch(headless=True,args=["--enable-unsafe-swiftshader"])
-                page=browser.new_page()
-                result.update(page.evaluate("""() => ({browser:!!document.createElement('canvas').getContext('2d'),webgl:!!document.createElement('canvas').getContext('webgl2')})"""))
-                browser.close()
+        for attempt in (1, 2):
+            try:
+                result.update(_draw_check(sync_playwright))
                 if not result.get("browser"):
-                    result["browser_reason"]="The graphics browser started but couldn't draw. Press Fix it to reinstall it."
-        except Exception as error:
-            first=(str(error).strip().splitlines() or [type(error).__name__])[0][:160]
-            if "Executable doesn't exist" in first or "playwright install" in str(error):
-                result["browser_reason"]="The graphics browser isn't installed yet. Press Fix it to install it (a few minutes)."
-            else:
-                result["browser_reason"]=f"The graphics browser won't start ({first}). Press Fix it to reinstall it."
+                    result.update(browser_why="cant_draw",
+                                  browser_reason="The graphics browser started but couldn't draw. Press Fix it to reinstall it.")
+                break
+            except Exception as error:
+                why=browser_trouble(error)
+                if why=="timeout" and attempt==1:
+                    continue
+                first=(str(error).strip().splitlines() or [type(error).__name__])[0][:160]
+                result.update(browser_why=why,browser_reason=browser_trouble_reason(why,first))
+                break
     _graphics_check.update(result=result,expires=time.monotonic()+(300 if result.get("browser") else 0))
     return result
 
@@ -458,12 +510,22 @@ def fix_graphics_browser():
         BROWSER_FIX.update(state="installing", tail="")
 
     def work():
+        # checked afresh first: a browser that draws now needs no download, and a full disk or too many open files
+        # isn't mended by one (it would only fill the disk further)
+        _graphics_check.clear()
+        now = graphics_ready()
+        if now.get("browser") or now.get("browser_why") in ("disk_full", "too_many_files"):
+            BROWSER_FIX.update(state="done" if now.get("browser") else "failed",
+                               tail="" if now.get("browser") else now.get("browser_reason") or "")
+            return
         try:
             run = install_graphics_browser(capture_output=True, text=True, encoding="utf-8", errors="replace",
                                            timeout=1800)
             ok, tail = run.returncode == 0, ((run.stdout or "") + (run.stderr or ""))[-1500:]
         except Exception as error:
             ok, tail = False, f"{type(error).__name__}: {error}"[:500]
+        if not ok and browser_trouble(tail) == "disk_full":
+            tail = browser_trouble_reason("disk_full")
         _graphics_check.clear()
         ready = bool(ok and graphics_ready().get("browser"))
         BROWSER_FIX.update(state="done" if ready else "failed",
@@ -745,6 +807,8 @@ def create_app():
                            for name in ("ffmpeg", "node")}
         checks["system"] = "windows" if os.name == "nt" else "mac" if sys.platform == "darwin" else "linux"
         checks.update(graphics_ready())
+        # a full disk, too many open files or a busy computer: setup offers Check again, Claude Code no reinstall
+        checks.setdefault("can_fix", {})["browser"] = checks.get("browser_why") not in BROWSER_NOT_A_REINSTALL
         checks["speech_model"] = cr_whisper.status()
         paths = cr_paths.status(HOME)                  # Windows' 260-character limit: room for a video's files
         if paths:

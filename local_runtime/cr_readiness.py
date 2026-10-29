@@ -27,8 +27,13 @@ SWITCH_TO_CLAUDE_CODE = ("Studio now makes every video with Claude Code on your 
                          "Code (recommended) in Setup, step 2.")
 
 
-def item(key, label, ready, why=""):
-    return {"key": key, "label": label, "ready": bool(ready), "message": "" if ready else why}
+def item(key, label, ready, why="", code=""):
+    """One setup row. code: a short reason code for a failing row (the browser's browser_why), which the setup report
+    sends instead of the message (cr_setup_report)."""
+    row = {"key": key, "label": label, "ready": bool(ready), "message": "" if ready else why}
+    if code and not ready:
+        row["code"] = code
+    return row
 
 
 def basic(checks, *, verify_mcp=True):
@@ -46,7 +51,8 @@ def basic(checks, *, verify_mcp=True):
              "A new Studio is out. Press Update now at the top of the studio page: it keeps your projects."),
         item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), checks.get("ffmpeg_reason") or
              "Open Setup and press Fix it next to Video tools: Studio installs a full FFmpeg in its own folder."),
-        item("browser", "Graphics browser", checks.get("browser"), checks.get("browser_reason") or "Open Setup and press Fix it next to Graphics browser."),
+        item("browser", "Graphics browser", checks.get("browser"), checks.get("browser_reason") or "Open Setup and press Fix it next to Graphics browser.",
+             checks.get("browser_why") or ""),
         item("node", "JavaScript runtime", checks.get("node"), checks.get("node_reason") or
              "Open Setup and press Fix it next to YouTube helper: Studio installs Node.js in its own folder.")]
     if checks.get("node") and checks.get("node_youtube") is False:
