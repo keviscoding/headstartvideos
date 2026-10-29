@@ -228,10 +228,10 @@ class Explorer:
                 "scope":"Public disclosure and sampled visual evidence; a realistic face alone does not prove a synthetic host."}
 
 
-def run_cloud_hunt(job_id):
+def run_cloud_hunt(job_id, runner="fly"):
     """Production discovery collects performance leads without content classification."""
     from core.niche_light import run_light_hunt
-    return run_light_hunt(job_id)
+    return run_light_hunt(job_id, runner=runner)
 
 
 def run_evidence_hunt(job_id):

@@ -337,16 +337,25 @@ def spawn_niche_scrape(job_id: str) -> bool:
 
 def spawn_niche_scrape_machine(job_id: str) -> str:
     """Create + start niche scrape Machine; return machine id or ''."""
+    return spawn_niche_scrape_machine_with_reason(job_id)[0]
+
+
+def spawn_niche_scrape_machine_with_reason(job_id: str) -> tuple[str, str]:
+    """Like spawn_niche_scrape_machine, plus why no Machine started ('' on success).
+
+    The reason is Fly's own message (e.g. an unpaid-billing 422), so the run's
+    progress says why discovery fell back instead of only "could not start".
+    """
     if not getattr(config, "COOK_ON_FLY", False):
-        return ""
+        return "", "COOK_ON_FLY is off"
     app = (getattr(config, "FLY_COOK_APP", "") or "").strip()
     if not app:
         print("[fly-niche] FLY_COOK_APP missing")
-        return ""
+        return "", "FLY_COOK_APP missing"
     image = (getattr(config, "FLY_NICHE_IMAGE", "") or "").strip()
     if not image:
         print("[fly-niche] FLY_NICHE_IMAGE missing — deploy the dedicated discovery worker")
-        return ""
+        return "", "FLY_NICHE_IMAGE missing"
     try:
         region = (getattr(config, "FLY_COOK_REGION", "") or "sjc").strip() or "sjc"
         # Discovery is HTTP + metadata, independent of cook CPU/RAM settings.
@@ -365,10 +374,10 @@ def spawn_niche_scrape_machine(job_id: str) -> str:
             env["YOUTUBE_API_KEY"] = yt.strip().strip('"').strip("'")
         if not env.get("DATABASE_URL"):
             print("[fly-niche] DATABASE_URL missing — cannot spawn")
-            return ""
+            return "", "DATABASE_URL missing"
         if not env.get("YOUTUBE_API_KEY"):
             print("[fly-niche] YOUTUBE_API_KEY missing — cannot spawn")
-            return ""
+            return "", "YOUTUBE_API_KEY missing"
         print(f"[fly-niche] using image {image}")
         body = {
             "region": region,
@@ -391,13 +400,13 @@ def spawn_niche_scrape_machine(job_id: str) -> str:
         mid = (created or {}).get("id") or ""
         if not mid:
             print(f"[fly-niche] spawn returned no machine id for {job_id}: {created}")
-            return ""
+            return "", "Fly returned no machine id"
         try:
             _request("POST", f"/v1/apps/{app}/machines/{mid}/start", {})
         except Exception as start_err:
             print(f"[fly-niche] start after create ({mid}): {start_err}")
         print(f"[fly-niche] spawned machine {mid} for niche job {job_id}")
-        return str(mid)
+        return str(mid), ""
     except Exception as e:
         print(f"[fly-niche] spawn failed for {job_id}: {e}")
-        return ""
+        return "", str(e)[:300]

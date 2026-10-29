@@ -122,7 +122,7 @@ def metadata_checks(hit):
     return {"passes": not repeated, "repeated_titles": repeated, "content_assessed": False}
 
 
-def run_light_hunt(job_id):
+def run_light_hunt(job_id, runner="fly"):
     import config
     from webapp import database as db
     from webapp.niche_store import NicheStore
@@ -146,7 +146,7 @@ def run_light_hunt(job_id):
     cached = store.cached_ids(signature)
     previous = run.get("meta") or {}
     results = [r for r in store.completed_results() if r.get("status") == "added"]
-    stats = {"runner": "fly", "rubric": LIGHT_RUBRIC, "mode": "performance_leads", "profile": "balanced",
+    stats = {"runner": runner, "rubric": LIGHT_RUBRIC, "mode": "performance_leads", "profile": "balanced",
         "added": len(results), "results": results, "enriched": 0, "searches": 0, "related_pages": 0,
         "existing_skipped": 0, "cached_skipped": 0, "errors": 0, "reviewed": 0, "full_reviews": 0,
         "model_requests": 0, "transcript_requests": 0, "image_requests": 0, "existing_enriched": 0,

@@ -4577,11 +4577,16 @@ def _niche_job_response(run: dict) -> dict:
     }
 
 
-def _run_niche_hunt_locally(*, job_id: str) -> None:
-    """Development only; production discovery always uses isolated Fly Machines."""
+def _run_niche_hunt_locally(*, job_id: str, runner: str = "local") -> None:
+    """Run the light discovery in this process: in development, or on the web
+    server when the Fly worker cannot start (NICHE_WEB_FALLBACK). The light hunt
+    is HTTP + metadata only (2 threads, bounded time and API budget), and the
+    catalog lease in Postgres keeps two web instances from running it at once."""
     from core.niche_cloud import run_cloud_hunt
     try:
-        run_cloud_hunt(job_id)
+        run_cloud_hunt(job_id, runner=runner)
+    except Exception as e:
+        print(f"[niche_finder] {runner} discovery {job_id} failed: {type(e).__name__}: {e}")
     finally:
         _niche_scrape_lock.release()
 
@@ -4643,13 +4648,15 @@ def _start_niche_hunt(
 
     spawned = False
     machine_id = ""
+    fly_reason = ""
     if COOK_ON_FLY:
         try:
-            from webapp.fly_bridge import spawn_niche_scrape_machine
-            machine_id = spawn_niche_scrape_machine(job_id) or ""
+            from webapp.fly_bridge import spawn_niche_scrape_machine_with_reason
+            machine_id, fly_reason = spawn_niche_scrape_machine_with_reason(job_id)
             spawned = bool(machine_id)
         except Exception as e:
             print(f"[niche_finder] Fly spawn error: {e}")
+            fly_reason = str(e)[:300]
             spawned = False
 
     if spawned:
@@ -4657,13 +4664,22 @@ def _start_niche_hunt(
         append_niche_hunt_progress(job_id, f"Started lightweight Fly discovery…{mid_note}")
         return job_id
 
-    if COOK_ON_FLY:
-        finish_niche_hunt_run(run_id,status="error",error="Cloud discovery worker could not start.")
+    web_fallback = bool(getattr(config, "NICHE_WEB_FALLBACK", True))
+    if COOK_ON_FLY and not web_fallback:
+        note = f" Fly said: {fly_reason}" if fly_reason else ""
+        finish_niche_hunt_run(run_id,status="error",error=f"Cloud discovery worker could not start.{note}"[:500])
         raise HTTPException(503,"Cloud discovery worker could not start. Check the Fly worker image and credentials.")
     if not _niche_scrape_lock.acquire(blocking=False):
-        finish_niche_hunt_run(run_id,status="error",error="Development worker is busy.")
-        raise HTTPException(409,"A development discovery worker is already running.")
-    threading.Thread(target=_run_niche_hunt_locally,kwargs={"job_id":job_id},
+        finish_niche_hunt_run(run_id,status="error",error="Discovery worker on this server is busy.")
+        raise HTTPException(409,"A discovery worker is already running on this server.")
+    runner = "local"
+    if COOK_ON_FLY:
+        # The light hunt needs no Chromium or models, so the web server can run it
+        # when Fly refuses a Machine (for example while Fly billing is unpaid).
+        runner = "web"
+        reason = f" ({fly_reason[:200]})" if fly_reason else ""
+        append_niche_hunt_progress(job_id, f"Fly worker unavailable{reason}; running light discovery on the web server.")
+    threading.Thread(target=_run_niche_hunt_locally,kwargs={"job_id":job_id,"runner":runner},
                      daemon=True,name="niche-discovery").start()
 
     return job_id
