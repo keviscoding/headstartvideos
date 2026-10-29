@@ -119,6 +119,31 @@ def _code(vol, key: str, release: Path | None) -> None:
     blob.unlink(missing_ok=True)
 
 
+def _first_start(vol, job_id: str, now: float) -> float:
+    """When this job's machine first started. Modal starts a job again from the beginning when it takes the machine
+    back (preemption); the job's time limit counts from its first start, so a restarted job never runs (and bills
+    the creator) past the most Studio showed."""
+    if not re.fullmatch(r"byo_[0-9a-f]{16}", job_id or ""):
+        return now
+    key, mark = f"runs/{job_id}.txt", Path(f"/tmp/cr-run-{job_id}.txt")
+    if _read(vol, key, mark):
+        try:
+            return min(now, float(mark.read_text(encoding="utf-8").strip()))
+        except ValueError:
+            return now
+        finally:
+            mark.unlink(missing_ok=True)
+    try:
+        mark.write_text(str(now), encoding="utf-8")
+        with vol.batch_upload(force=True) as batch:
+            batch.put_file(str(mark), "/" + key)
+    except Exception:                                   # noqa: BLE001 - the limit then counts from this start
+        pass
+    finally:
+        mark.unlink(missing_ok=True)
+    return now
+
+
 def _gpu_chromium() -> str:
     """Chromium as the 3D engine should launch it here: on the NVIDIA L4 through ANGLE's Vulkan backend."""
     found = sorted(Path("/opt/pw").glob("chromium-*/chrome-linux*/chrome"))
@@ -132,8 +157,12 @@ def _gpu_chromium() -> str:
 
 def _run(job_id: str, env: dict, max_seconds: int, gpu: bool) -> dict:
     t0 = time.time()
+    first = t0
     try:
         vol = _volume()
+        first = _first_start(vol, job_id, t0)
+        if max_seconds - (t0 - first) < 120:
+            return {"ok": False, "seconds": 0.0, "error": "stopped at its time limit (Modal restarted the machine)"}
         release = None
         if env.get("CR_CODE_KIND") == "overlay":
             release = _release(vol, env.get("CR_STUDIO_VERSION", ""), env.pop("FARM_RELEASE_URL", ""))
@@ -154,7 +183,7 @@ def _run(job_id: str, env: dict, max_seconds: int, gpu: bool) -> dict:
         chromium = _gpu_chromium()
         if chromium:
             run_env["F3D_CHROMIUM"] = chromium      # the 3D engine's render.py launches this Chromium
-    left = max(60, int(max_seconds - (time.time() - t0)))
+    left = max(60, int(max_seconds - (time.time() - first)))
     _say(f"job {job_id}: rendering, limit {left // 60} min")
     try:
         p = subprocess.run(["python", "-u", "-m", "cr_cloud_byo", "pod"], cwd=ROOT, env=run_env, timeout=left)

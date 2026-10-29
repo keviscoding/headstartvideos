@@ -1752,9 +1752,18 @@ def create_app():
 
     # Studio Cloud on the creator's own Modal account (owner, 2026-10-29: creators who want cloud rendering add their
     # own cloud keys). The token is checked with Modal (which also makes Studio's storage there) before it's saved.
+    def cloud_render_running():
+        # a machine started with one Modal token is stopped, and its questions answered, with that token only
+        return cr_cloud._farm_running() or cr_cloud.TASK.get("state") in ("preparing", "starting")
+
+    CLOUD_BUSY = ("A cloud video is being made on your Modal account. Change the Modal account when it has finished "
+                  "(or stop it in Projects first).")
+
     @studio.app.post("/cr-cloud/modal")
     def save_modal_account():
         import cr_cloud_byo
+        if cloud_render_running():
+            return jsonify(error=CLOUD_BUSY), 409
         data = request.get_json(silent=True) or {}
         tid, secret = str(data.get("token_id", "")).strip(), str(data.get("token_secret", "")).strip()
         if not cr_cloud_byo.valid_token(tid, secret):
@@ -1776,6 +1785,8 @@ def create_app():
     @studio.app.post("/cr-cloud/modal/remove")
     def remove_modal_account():
         from dotenv import unset_key
+        if cloud_render_running():
+            return jsonify(error=CLOUD_BUSY), 409
         env = HOME / ".env"
         for name in ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"):
             if env.is_file():

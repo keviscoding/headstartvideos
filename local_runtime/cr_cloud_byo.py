@@ -284,7 +284,8 @@ def tidy(b: VolumeBucket, keep_code: str = "", keep_version: str = "") -> int:
         except ValueError:
             return 0.0
     for prefix, older, keep in (("code/", 86400, keep_code), ("releases/", 0, keep_version),
-                                ("jobs/", 3 * 86400, ""), ("relay/", 86400, "")):
+                                ("jobs/", 3 * 86400, ""), ("relay/", 86400, ""),
+                                ("runs/", 86400, "")):
         for row in b.list(prefix):
             if (keep and keep in row["key"]) or age(row) < older:
                 continue
@@ -368,9 +369,20 @@ def ensure_deployed(home: Path = HOME, sink=None) -> None:
         raise RuntimeError("Setting up Studio's machines on your Modal account took too long. Try again.")
     if p.returncode != 0:
         lines = [x for x in (p.stderr or p.stdout or "").strip().splitlines() if x.strip()]
-        raise RuntimeError("Modal couldn't set up Studio's machines on your account: "
-                           + (lines[-1][:240] if lines else f"exit {p.returncode}"))
+        last = _scrub(lines[-1][:240] if lines else f"exit {p.returncode}", tid, secret)
+        if re.search(r"(?i)unauthenticated|invalid token|token .*(invalid|revoked|not found)|authentication", last):
+            raise RuntimeError("Modal didn't accept your token (it may have been deleted in Modal). Make a new one "
+                               "in Modal (Settings, API Tokens) and paste both parts in Setup, Render in the cloud.")
+        raise RuntimeError("Modal couldn't set up Studio's machines on your account: " + last)
     _save_state(home, deployed=want, account=account, deployed_at=time.time())
+
+
+def _scrub(text: str, *secrets_: str) -> str:
+    """A message from Modal, without the creator's token in it."""
+    for s in secrets_:
+        if s:
+            text = text.replace(s, "…")
+    return re.sub(r"\ba[ks]-[A-Za-z0-9]{8,}", "…", text)
 
 
 def _connection(home: Path) -> tuple[str, str]:
@@ -429,6 +441,17 @@ def machine_env(env: dict, spec: dict, home: Path = HOME, release_url: str = "")
     return out
 
 
+WATCH_EVERY_S = 20
+STUCK_GRACE_S = 30 * 60      # past its own limit (a graphics-card machine can wait unbilled in Modal's queue first)
+_KEEP = ("id", "call_id", "slug", "title", "machine", "status", "price_per_hr", "started_at", "max_minutes")
+
+
+def running_job(job_id: str) -> bool:
+    """Is this one of this Studio's cloud jobs, still running? (The relay answers only those.)"""
+    job = ModalPods.JOBS.get(str(job_id or ""))
+    return bool(job and job.get("status") == "running")
+
+
 class ModalPods:
     """RunPod's API (farm/runpod.py) as far as the farm uses it, answered by the creator's own Modal account."""
     JOBS: dict = {}
@@ -436,6 +459,38 @@ class ModalPods:
 
     def __init__(self, api_key: str = "", session=None, home: Path = HOME):
         self.home = home
+        self._restore()
+
+    def _restore(self) -> None:
+        """Machines started before Studio was restarted: still listed, so the farm's stop button reaches them."""
+        saved = _state(self.home).get("jobs")
+        if not isinstance(saved, dict):
+            return
+        with self._lock:
+            for job_id, row in saved.items():
+                if (isinstance(row, dict) and job_id not in self.JOBS and row.get("status") == "running"
+                        and row.get("call_id") and time.time() - float(row.get("started_at") or 0)
+                        < float(row.get("max_minutes") or 0) * 60 + STUCK_GRACE_S):
+                    self.JOBS[job_id] = {**row, "seconds": None, "error": ""}
+
+    def _remember(self) -> None:
+        with self._lock:
+            live = {k: {f: j.get(f) for f in _KEEP} for k, j in self.JOBS.items() if j.get("status") == "running"}
+        _save_state(self.home, jobs=live)
+
+    def _watch(self, job_id: str) -> None:
+        """The farm only reads the job's status file, which a machine that never booted (no card for a graphics
+        card, Modal credits used up, a revoked token, a boot error) never writes: the Studio would wait hours on
+        "rendering". Asking Modal how the call went writes the farm's last status for it, with Modal's reason."""
+        while True:
+            time.sleep(WATCH_EVERY_S)
+            job = self.JOBS.get(job_id)
+            if job is None or job["status"] != "running":
+                return
+            try:
+                self._refresh(job)
+            except Exception:                               # noqa: BLE001 - Modal unreachable for a moment
+                pass
 
     @staticmethod
     def _pod(job: dict) -> dict:
@@ -466,7 +521,9 @@ class ModalPods:
         with self._lock:
             self.JOBS[job_id] = job
         _save_state(self.home, last_job={k: job[k] for k in ("id", "call_id", "slug", "machine", "started_at")})
+        self._remember()
         Relay.ensure(self.home)
+        threading.Thread(target=self._watch, args=(job_id,), daemon=True, name="cr-cloud-byo-watch").start()
         return self._pod(job)
 
     def _refresh(self, job: dict) -> dict:
@@ -480,15 +537,21 @@ class ModalPods:
         except modal.exception.OutputExpiredError:
             job.update(status="failed", error="its result expired")
         except (TimeoutError, modal.exception.TimeoutError):
-            if time.time() - job["started_at"] > job["max_minutes"] * 60 + 600:
+            if time.time() - job["started_at"] > job["max_minutes"] * 60 + STUCK_GRACE_S:
+                job["error"] = job.get("error") or "it didn't finish within its time limit on Modal"
                 self.terminate(job["id"])
             return job
         except modal.exception.InputCancellation:
             job.update(status="cancelled")
         except Exception as e:                              # noqa: BLE001 - a crashed machine is a failed job
             text = f"{type(e).__name__}: {str(e)[:300]}"
-            if "gpu" in text.lower() and ("payment" in text.lower() or "billing" in text.lower()):
-                text = "Modal needs a card on your account for machines with a graphics card (Settings, Usage and billing)."
+            low = text.lower()
+            if any(w in low for w in ("payment", "billing", "credit", "card on file", "spend limit", "insufficient funds")):
+                text = ("Modal didn't start the machine: your Modal account needs a card on file (machines with a "
+                        "graphics card always do) or has used its credits or spending limit. See Modal, Settings, "
+                        "Usage and billing. (" + _scrub(text[:160]) + ")")
+            elif any(w in low for w in ("unauthenticated", "invalid token", "permission denied")):
+                text = "Modal didn't accept your token any more. Make a new one and paste it in Setup, Render in the cloud."
             job.update(status="failed", error=text)
         else:
             job.update(status="done" if (result or {}).get("ok") else "failed",
@@ -497,6 +560,7 @@ class ModalPods:
             job["ended_at"] = time.time()
             if job["status"] in ("failed", "cancelled") and job.get("slug"):
                 _final_status(self.home, job)
+            self._remember()
         return job
 
     def get(self, pod_id: str) -> dict:
@@ -529,6 +593,7 @@ class ModalPods:
             job.update(status="cancelled", ended_at=time.time(), error=job.get("error") or "stopped")
             if job.get("slug"):
                 _final_status(self.home, job)
+            self._remember()
             return True
         return False
 
@@ -609,7 +674,12 @@ class Relay:
             except Exception:                               # noqa: BLE001 - Modal unreachable for a moment
                 q = None
                 time.sleep(5)
-            if not item or not isinstance(item, dict) or float(item.get("deadline") or 0) < time.time():
+            try:
+                fresh = (isinstance(item, dict) and isinstance(item.get("id"), str)
+                         and float(item.get("deadline") or 0) >= time.time())
+            except (TypeError, ValueError):
+                fresh = False
+            if not fresh:
                 busy.release()
                 continue
             idle_since = time.time()
@@ -619,8 +689,15 @@ class Relay:
                     request = answers.pop("q:" + item["id"], None)
                     if request is None:
                         return
+                    if not running_job(item.get("job")):
+                        # only this Studio's own running jobs get its Claude Code and connection: never a question
+                        # someone else with access to the Modal workspace put in the queue, nor a finished job's
+                        text, error = "", "not a cloud video this Studio is running"
+                    else:
+                        text, error = None, ""
                     try:
-                        text, error = cr_cloud.answer(request), ""
+                        if text is None:
+                            text, error = cr_cloud.answer(request), ""
                     except BaseException as e:              # noqa: BLE001 - the engine exits on Claude errors
                         text, error = "", f"{type(e).__name__}: {str(e)[:200]}"
                         print(f"Studio Cloud: a question from your Modal machine failed here: {error}", flush=True)

@@ -535,6 +535,24 @@ def overlay_bundle(bucket, home: Path = HOME, skip=None, sink=None) -> str:
     return key
 
 
+def private_file(rel: str) -> bool:
+    """This Studio's own account and settings files at its top (.cr-connection.json holds the ChannelRecipe account
+    key, .mcp.json its MCP key, .env every provider key and the Modal token): never in a code bundle. The farm's
+    own rule leaves out only .env."""
+    return rel.split("/")[0].startswith(".")
+
+
+def whole_bundle(ff, original_bundle, bucket, learned, quiet: bool = False, sink=None) -> str:
+    """The farm's whole-code bundle for the creator's own Modal storage (a Studio that isn't on the published
+    version), without this Studio's account files and with learned styles' own files (ship_learned)."""
+    original_skip = ff._skip
+    ff._skip = lambda rel: private_file(rel) or learned(rel)
+    try:
+        return original_bundle(bucket, quiet=quiet, sink=sink)
+    finally:
+        ff._skip = original_skip
+
+
 def checklist(original, home: Path = HOME) -> list:
     st = status(home=home)
     voice = next((c for c in original if c.get("key") == "render"), None)
@@ -611,7 +629,7 @@ def install(home: Path = HOME) -> bool:
                     cr_cloud_byo.release_cached(bucket, version) or cr_cloud_byo.release_link(home)):
                 key = overlay_bundle(bucket, home, learned, None if quiet else sink)
             else:
-                key = original_bundle(bucket, quiet=quiet, sink=sink)
+                key = whole_bundle(ff, original_bundle, bucket, learned, quiet=quiet, sink=sink)
             threading.Thread(target=cr_cloud_byo.tidy, args=(bucket, key, version), daemon=True).start()
             return key
         return original_bundle(bucket, quiet=quiet, sink=sink)
@@ -1167,7 +1185,7 @@ def _safe_ytdlp_args(argv: list) -> list:
         elif a in _VALUE_FLAGS and i + 1 < len(argv):
             v = str(argv[i + 1])
             if a in ("-o", "--load-info-json"):
-                if not v.startswith(ROOT_MARK + "/") or ".." in v.split("/"):
+                if not v.startswith(ROOT_MARK + "/") or ".." in re.split(r"[\\/]", v):
                     raise ValueError(f"{a} must stay in the job folder")
             elif a == "--js-runtimes" and v not in ("node", "bun", "deno"):
                 raise ValueError("unknown JavaScript runtime")
@@ -1181,6 +1199,17 @@ def _safe_ytdlp_args(argv: list) -> list:
             raise ValueError(f"not an option the engine uses: {a[:40]}")
         i += 1
     return out
+
+
+def _inside(folder: Path, rel: str) -> bool:
+    """Is this relative path (from the machine) inside the folder on this computer? Never an absolute path, a drive
+    or a way out with .. (either slash: Windows takes both)."""
+    if not rel or rel.startswith(("/", "\\")) or ":" in rel or ".." in re.split(r"[\\/]", rel):
+        return False
+    try:
+        return (folder / rel).resolve().is_relative_to(folder.resolve())
+    except (OSError, ValueError):
+        return False
 
 
 def run_ytdlp(request: dict, home: Path = HOME) -> dict:
@@ -1197,7 +1226,7 @@ def run_ytdlp(request: dict, home: Path = HOME) -> dict:
     with tempfile.TemporaryDirectory(prefix="cr-cloud-yt-") as tmp:
         work = Path(tmp)
         for rel in request.get("inputs") or []:
-            if ".." not in str(rel).split("/"):
+            if _inside(work, str(rel)):
                 bucket.get_file(f"{prefix}/in/{rel}", work / rel)
         before = {p: p.stat().st_mtime for p in work.rglob("*") if p.is_file()}
         args = [a.replace(ROOT_MARK, str(work)) for a in args]
