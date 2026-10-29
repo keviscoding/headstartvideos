@@ -99,6 +99,8 @@ def start(home, preview_id, reference_ids, *, spawn=None) -> dict:
     fresh = saved.get("state") == "done" and time.time() - saved.get("finished_at", 0) < 30 * 86400 \
         and not _unjudged_3d(saved.get("profile") or {})
     running = saved.get("state") == "running" and time.time() - saved.get("updated_at", 0) < 900
+    if fresh:
+        fill_vertical(path, saved)
     if not (fresh or running):
         _write(path / "look.json", {"schema": SCHEMA, "look_id": look_id, "state": "running", "phase": "queued",
                                     "references": refs, "titles": titles, "started_at": time.time(),
@@ -379,6 +381,32 @@ def _vertical(folder: Path):
     return round(sum(1 for w, h in sizes if h > w * 1.1) / len(sizes), 2) if sizes else None
 
 
+def measured_vertical(path: Path, refs) -> tuple:
+    """(share of portrait frames, where it came from) for a look's folder. Without a single still (no shot long enough
+    to keep one, or nothing could be downloaded), a look whose references are all YouTube Shorts is vertical by its
+    listing: such a look once fell back to 16:9 and its clone made landscape videos of a Shorts channel."""
+    tall = _vertical(Path(path) / "frames")
+    if tall is not None:
+        return tall, "measured"
+    if refs and all(isinstance(r, dict) and r.get("short") for r in refs):
+        return 1.0, "listed"
+    return None, ""
+
+
+def fill_vertical(path: Path, saved: dict) -> bool:
+    """A finished look saved without the vertical measure (before Studio 106) gets it from its own frames or listing,
+    so a study reusing it plans a Shorts channel vertical. True when it changed."""
+    profile = saved.get("profile")
+    if saved.get("state") != "done" or not isinstance(profile, dict) or "vertical" in (profile.get("format") or {}):
+        return False
+    tall, source = measured_vertical(path, saved.get("references") or [])
+    if tall is None:
+        return False
+    profile.setdefault("format", {})["vertical"] = {"value": tall, "confidence": 0.95, "from": [source]}
+    _write(Path(path) / "look.json", saved)
+    return True
+
+
 def _transcript(video_id, work):
     try:
         import youtube
@@ -506,9 +534,9 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
             ref["watch"] = watched.get(ref["id"]) or {"windows": [], "missing": ["not watched"]}
         progress("profile")
         profile = cr_style_profile.build(built)
-        tall = _vertical(path / "frames")
+        tall, source = measured_vertical(path, refs)
         if tall is not None:                                   # a Shorts channel's videos are made vertical too
-            profile.setdefault("format", {})["vertical"] = {"value": tall, "confidence": 0.95, "from": ["measured"]}
+            profile.setdefault("format", {})["vertical"] = {"value": tall, "confidence": 0.95, "from": [source]}
         mapping = cr_style_map.plan_style(profile, _styles(home))
         _write(path / "references.json", {"references": built})
         saved.update(state="done", phase="done", profile=profile, mapping=mapping, finished_at=now(),

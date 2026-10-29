@@ -269,6 +269,11 @@ def workspace(browser):
         return jsonify(busy=env.busy or env.mode in ("active", "queue"), operations=getattr(env, "studies", []),
                        other_account=getattr(env, "other_studies", 0))
 
+    @app.get("/f/video/<slug>")
+    def finished_video(slug):                              # a test that sets env.video_file plays a real film
+        film = getattr(env, "video_file", None)
+        return send_file(film, mimetype="video/webm", conditional=True) if film else Response(status=404)
+
     @app.get("/api/jobs")
     def jobs():
         return jsonify(jobs=env.finished_jobs, platform="darwin")
@@ -609,6 +614,32 @@ def test_projects_draw_native_progress_cancel_exact_run_and_preserve_exports(wor
     assert page.locator("#crw-output-editor").get_attribute("href") == "/editor/finished-film"
     assert page.locator("#crw-output-exports a").count() == 5
     assert page.locator("#crw-output-exports a").all_text_contents() == ["Narration", "Script", "Subtitles", "Description", "Thumbnail"]
+
+
+def test_a_vertical_short_plays_whole_in_its_card_and_gets_a_tall_player(workspace, tmp_path):
+    """Altt and Mac7834 (2026-10-29): Studio showed a vertical Short with the wrong aspect ratio (a 16:9 card cropped
+    it to a wide band of its middle); downloaded, the file was right. The card now shows it whole, and the video
+    dialog's player is tall for a tall video."""
+    import shutil
+    import subprocess
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg makes the test film")
+    film = tmp_path / "tall.webm"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x415573:s=180x320:d=1:r=10",
+                    "-c:v", "libvpx-vp9", "-b:v", "50k", str(film)], check=True, timeout=60)
+    env, page = workspace, workspace.page
+    env.video_file = str(film)
+    env.open("#projects")
+    player = page.locator("#crw-projects-list video.crw-video-preview")
+    assert player.evaluate("v=>getComputedStyle(v).objectFit") == "contain", "never cropped to the card's 16:9"
+    page.get_by_role("button", name="Video & exports", exact=True).click()
+    page.locator("#crw-output").wait_for(state="visible")
+    page.wait_for_function("document.querySelector('#crw-output-video').classList.contains('is-tall')")
+    box = page.locator("#crw-output-video").bounding_box()
+    assert box["height"] > box["width"] * 1.5, box
+    page.locator("#crw-output-close").click()
+    page.wait_for_function("!document.querySelector('#crw-output-video').classList.contains('is-tall')")
+    assert not env.errors
 
 
 def test_research_footage_says_what_its_watching_adds_and_progress_counts_the_videos(workspace):

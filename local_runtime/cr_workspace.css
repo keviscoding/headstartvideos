@@ -92,3 +92,6 @@ button.crw-inline-link{background:none;border:0;padding:0;color:var(--crw-violet
 .crw-readiness-action{width:100%;margin-top:10px;font-size:13px}.crw-readiness-action.is-busy{opacity:.7;pointer-events:none}
 .crw-language-field{margin-top:0;margin-bottom:15px}
 .crw-ideas-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}.crw-idea{border:1px solid var(--crw-line);border-radius:9px;background:#1B2033;padding:11px 12px}.crw-idea strong{display:block;font-size:13px;font-weight:650;line-height:1.45}.crw-idea p{font-size:11px;color:var(--crw-muted);line-height:1.55;margin-top:4px}.crw-idea .crw-idea-risk{color:#F0C586}.crw-idea a{color:var(--crw-violet-ink)}.crw-idea-actions{display:flex;gap:6px;margin-top:9px}.crw-idea-actions button{font-size:12px;min-height:30px;padding:5px 10px}.crw-idea.is-used{opacity:.72}
+/* A video plays whole, never cropped: a vertical Short in a project card or the video dialog showed only a wide band of
+   its middle ("the website displays it wrong; downloaded, the aspect ratio is fine", Altt and Mac7834, 2026-10-29). */
+.crw-project-card .crw-card-art>video.crw-video-preview{object-fit:contain;background:#05060C}.crw-output>video.is-tall{aspect-ratio:9/16;width:auto;height:min(64dvh,760px);max-width:calc(100% - 28px);margin-left:auto;margin-right:auto}

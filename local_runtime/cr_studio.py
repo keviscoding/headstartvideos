@@ -659,6 +659,14 @@ def create_app():
     os.environ["CLAUDE_PROVIDER"] = "claudecode" if mode == "claudecode" else "channelrecipe"
     os.environ["SCRIPT_PROVIDER"] = os.environ["CLAUDE_PROVIDER"]
     os.environ["CLAUDE_HANDOFF_DIR"] = ""
+    try:                                             # before the engine reads the styles: old Shorts clones are 9:16
+        import cr_style_clone
+        upgraded = cr_style_clone.vertical_upgrade(HOME)
+        if upgraded:
+            print("Styles learned from vertical Shorts channels now make vertical videos: " + ", ".join(upgraded),
+                  flush=True)
+    except Exception:                                # noqa: BLE001 - a style left as it was never stops Studio
+        pass
     import app as studio
     from flask import Response, g, has_request_context, jsonify, request
     cr_bridge.install(studio.mv)
