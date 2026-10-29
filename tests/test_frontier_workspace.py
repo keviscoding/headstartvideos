@@ -232,7 +232,12 @@ def test_activity_only_reads_owned_local_studies_and_never_syncs_or_generates(en
     assert operation["operation_id"] == OPERATION and operation["phase"] == "build"
     assert operation["title"] == "My study" and operation["label"] == "My graphic style"
     assert operation["link"] == "/cr-style-clone?operation=" + OPERATION
-    assert set(operation) == {"operation_id", "state", "phase", "title", "label", "percent", "elapsed_seconds", "link"}
+    assert set(operation) == {"operation_id", "state", "phase", "title", "label", "percent", "elapsed_seconds", "link",
+                              "studio_closed", "can_study_again", "can_save_completed"}
+    # saved "running" with no worker on it (Studio was closed mid-study): it reads stopped, settled on this computer
+    # only (the forbidden bridge proves no finish was sent from this GET)
+    assert operation["state"] == "failed" and operation["studio_closed"] is True and operation["can_study_again"]
+    assert response.json["other_account"] == 1, "another connection's study is counted, never shown"
     assert all(value not in response.text for value in ("private style brief", "private model setup", "Foreign study", env.cfg["key"]))
 
 

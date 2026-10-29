@@ -190,6 +190,27 @@ STUDIO_UPGRADE_MESSAGE = ("ChannelRecipe Studio is included in the Creator, Pro 
                           "Choose a plan at " + UPGRADE_URL + " to download and use it.")
 # Style studies begin with this title; the allowance counts them per account.
 STYLE_STUDY_PREFIX = "Style study: "
+# A completed study whose own save stopped is saved by a separate project with this title (Studio's Save completed
+# style): from Studio 112 the study itself then ends "failed" (a closed Studio's study settles so), so a save begun by
+# 112+ is what counts as its clone (never refused at begin: the creator's paid work is always saved). Saves by older
+# Studios never count, so nobody's count jumps when this deploys.
+SAVE_COMPLETED_PREFIX = "Save completed style: "
+# A study begun by a Studio before 112 and closed mid-study died with no finish, so it stayed "running" and counted
+# forever. Such a study, not done and with no activity (a Claude stage asked or answered, its finish) for this long,
+# stops counting; it counts again the moment it does anything. Studio 112 and later send a stopped study's finish
+# themselves, so theirs always count until that finish (no holding back a done finish to get a clone back).
+STALE_STUDY_S = 6 * 3600
+SETTLES_ITS_STUDIES = 112
+
+
+def _release_number(setup_json) -> int:
+    """Studio's release number from a native session's saved setup ("5.3-admin.111" -> 111), 0 when unknown."""
+    try:
+        version = str((json.loads(setup_json or "{}") or {}).get("local_version") or "")
+    except (TypeError, ValueError):
+        return 0
+    match = re.search(r"\.(\d+)$", version)
+    return int(match.group(1)) if match else 0
 
 
 def is_admin(user: dict | None) -> bool:
@@ -210,16 +231,29 @@ def style_clone_usage(user: dict) -> dict:
     """Style studies this account has started or kept, against its plan limit.
 
     Stopped studies that failed outright don't use up the allowance, so a
-    creator can try again with the same reference.
+    creator can try again with the same reference. Neither does one left
+    unfinished with no activity for STALE_STUDY_S, begun by a Studio before
+    112 (closed mid-study, it never said so). A finished study always counts,
+    and so does a completed study's separate save (SAVE_COMPLETED_PREFIX)
+    begun by Studio 112 or later.
     """
     initialize()
     with db._conn() as conn:
         grant = conn.execute(db._q("SELECT extra, counted_from FROM style_clone_grants WHERE user_id=?"),
                              (user["id"],)).fetchone()
         extra, since = (int(grant["extra"]), float(grant["counted_from"])) if grant else (0, 0.0)
-        used = conn.execute(db._q("""SELECT COUNT(*) AS n FROM frontier_projects
-            WHERE user_id=? AND title LIKE ? AND status != 'failed' AND created_at > ?"""),
-            (user["id"], STYLE_STUDY_PREFIX + "%", since)).fetchone()["n"]
+        rows = conn.execute(db._q("""SELECT p.title, p.status, p.updated_at, s.setup_json FROM frontier_projects p
+            LEFT JOIN frontier_native_sessions s ON s.project_id = p.id
+            WHERE p.user_id=? AND (p.title LIKE ? OR p.title LIKE ?) AND p.created_at > ? AND p.status != 'failed'"""),
+            (user["id"], STYLE_STUDY_PREFIX + "%", SAVE_COMPLETED_PREFIX + "%", since)).fetchall()
+    stale = time.time() - STALE_STUDY_S
+
+    def counts(row) -> bool:
+        settles = _release_number(row["setup_json"]) >= SETTLES_ITS_STUDIES
+        if row["title"].startswith(SAVE_COMPLETED_PREFIX):
+            return settles
+        return row["status"] == "done" or float(row["updated_at"]) > stale or settles
+    used = sum(1 for row in rows if counts(row))
     limit = plans.style_clone_limit(user.get("plan"), is_admin=is_admin(user))
     if limit is not None:
         limit += extra
