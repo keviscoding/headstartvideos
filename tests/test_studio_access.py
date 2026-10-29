@@ -93,6 +93,8 @@ def test_a_study_killed_by_closing_studio_stops_counting_after_six_idle_hours(en
     """JamesElyse20 (2026-10-29): two studies died with Studio, never sent a finish, and used two clones forever."""
     creator = user(1, "daily")
     started = [studio.native_begin(creator, study(env, n))["project_id"] for n in range(3)]
+    for project in started:
+        _release(project, "5.3-admin.111")           # begun on a Studio that never settles its own studies
     _age(started[0], 7, "running")                   # a Claude stage was asked, then Studio was closed
     _age(started[1], 5, "running")                   # quiet for 5 h: may still be working, still counts
     assert studio.style_clone_usage(creator)["used"] == 2
@@ -105,6 +107,7 @@ def test_a_study_killed_by_closing_studio_stops_counting_after_six_idle_hours(en
 def test_an_idle_study_counts_again_when_it_does_anything_or_finishes(env):
     creator = user(1, "daily")
     first = studio.native_begin(creator, study(env, 0))["project_id"]
+    _release(first, "5.3-admin.111")
     _age(first, 30, "ready")
     assert studio.style_clone_usage(creator)["used"] == 0
     _age(first, 0)                                   # a stage asked or answered: it is working again

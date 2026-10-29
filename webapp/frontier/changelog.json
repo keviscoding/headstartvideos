@@ -1,5 +1,16 @@
 [
   {
+    "build": 112,
+    "date": "2026-10-29",
+    "title": "3D videos carry on where they stopped, and style clones survive closing Studio",
+    "items": [
+      "A 3D video stopped by your Claude usage limit now carries on where it stopped. Finished 3D review rounds, review answers and finished 3D clips are kept, so Try again and carry on doesn't spend your Claude usage on them again.",
+      "The stopped card says what stopped in one plain line per step, and the video's card shows how much Claude it has used so far, plus about how many 3D review calls are left. Long 3D videos get a note in Create about Claude Pro's 5 hour usage windows and the Quicker 3D review switch.",
+      "Closing Studio while a style is being cloned no longer loses it silently. The study says it stopped, no longer counts against your clones, and offers Study again with the same channels.",
+      "My styles now shows style studies in progress or stopped, and the bar on Clone a style says it counts the clones used on your plan. Keep the ChannelRecipe launcher window open while a study runs (closing the browser tab is fine)."
+    ]
+  },
+  {
     "build": 111,
     "date": "2026-10-29",
     "title": "Spanish and 12 more languages, Roblox Shorts with your own avatar, and fairer style studies",
