@@ -2301,6 +2301,22 @@ async def harness_3d_page():
     return web_assets.html_page(STATIC_DIR / "harness" / "3d-documentary-harness.html")
 
 
+# ChannelRecipe for creators (live but unannounced, noindex): the landing and its app prototype. Built from
+# creators/web on the creator-edit branch by creators/web/publish.py; its videos and images live on the CDN under
+# public/creators/. Relative links need the trailing slash, so /creators redirects to /creators/.
+@app.get("/creators", include_in_schema=False)
+async def creators_root():
+    return RedirectResponse("/creators/", status_code=308)
+
+
+@app.get("/creators/", response_class=HTMLResponse)
+async def creators_page():
+    return web_assets.html_page(STATIC_DIR / "creators" / "index.html")
+
+
+app.mount("/creators", web_assets.CachedStatic(directory=str(STATIC_DIR / "creators")), name="creators")
+
+
 # Find My Money Niche: the free quiz (webapp/money_niche.py). A shared result opens on its own page with its own
 # share picture; what anyone sees there is only the taste (niche #1 and one proof channel).
 @app.get("/money-niche", response_class=HTMLResponse)

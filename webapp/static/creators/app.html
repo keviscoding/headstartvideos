@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>ChannelRecipe for creators</title>
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#F7F5F0">
+  <link rel="icon" href="glyph.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://api.fontshare.com">
+  <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
+  <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800,900&f[]=general-sans@400,500,600,700&display=swap">
+  <link rel="stylesheet" href="creators.css">
+  <link rel="stylesheet" href="app.css">
+  <script defer src="reel-link.js"></script>
+  <script defer src="plans.js"></script>
+  <script defer src="cutline.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body class="app">
+
+<!-- ================= SIGN UP / SIGN IN ================= -->
+<section class="screen-v" data-screen="signup" aria-labelledby="su-h">
+  <div class="split">
+    <div class="left">
+      <div class="bar"><a class="brand" href="index.html"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span> <small>for creators</small></a></div>
+      <div class="qwrap">
+        <div class="auth">
+          <div class="ref-chip" id="ref-chip" hidden><svg width="18" height="18"><use href="icons.svg#i-link"/></svg><span>We'll learn the edit from <b id="ref-chip-name"></b></span></div>
+          <div class="ref-chip" id="plan-chip" hidden><svg width="18" height="18"><use href="icons.svg#i-spark"/></svg><span><b id="plan-chip-name"></b> plan picked. Your 2 free edits come first.</span></div>
+          <h1 class="qtitle" id="su-h">Create your free account</h1>
+          <p class="qsub" id="su-sub">2 free edits with everything included. No card.</p>
+          <div class="auth-proof" aria-hidden="true"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.jpg" alt=""><div><b>Raw take to finished Reel</b><span>Music scored · B-roll on the word · watched back</span></div></div>
+          <div class="stack">
+            <button type="button" class="btn btn-lg btn-google btn-block" id="google-btn"><svg><use href="icons.svg#i-g"/></svg>Continue with Google</button>
+            <div class="or-line">or</div>
+            <form id="email-form" novalidate>
+              <label class="sr-only" for="email">Email</label>
+              <input class="text-input" id="email" type="email" autocomplete="email" placeholder="you@example.com" inputmode="email">
+              <div class="field-msg" id="email-msg" role="status" aria-live="polite"></div>
+              <button type="submit" class="btn btn-lg btn-block" id="email-btn">Continue with email</button>
+            </form>
+          </div>
+          <p class="switch" id="su-switch">Already have an account? <button type="button" data-auth-toggle>Log in</button></p>
+          <p class="fine">By continuing you agree to the <a href="https://channelrecipe.com/terms">Terms</a> and <a href="https://channelrecipe.com/privacy">Privacy Policy</a>.</p>
+        </div>
+      </div>
+    </div>
+    <div class="right">
+      <div>
+        <div class="stagebox">
+          <div class="phone"><div class="screen"><div class="notch"></div><span class="tag good"><span class="dot"></span>Creator energy look</span>
+            <video data-auto muted playsinline loop preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.mp4"></video></div></div>
+          <span class="stat-chip float f1"><span class="ico"><svg width="16" height="16"><use href="icons.svg#i-music"/></svg></span><span><b>Music</b> scored to your story</span></span>
+          <span class="stat-chip float f2 green"><span class="ico"><svg width="16" height="16"><use href="icons.svg#i-check"/></svg></span><span><b>Watched back</b> before you see it</span></span>
+          <span class="stat-chip float f3 warm"><span class="ico"><svg width="16" height="16"><use href="icons.svg#i-film"/></svg></span><span><b>B-roll</b> on your words</span></span>
+        </div>
+        <p class="preview-caption"><b>Raw take to Reel in minutes.</b> Every edit gets its own music, B-roll on your words, designed type and a clean voice.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ONBOARDING ================= -->
+<section class="screen-v" data-screen="onboard" aria-label="Set up your first edit">
+  <div class="split" id="ob-split">
+    <div class="left">
+      <div class="bar">
+        <a class="brand" href="index.html"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span></a>
+        <div class="grow"></div>
+        <div class="meta"><span class="progress-label" id="ob-label">Step 1 of 5</span><div class="progress" id="ob-progress" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></div>
+      </div>
+
+      <!-- step 1 -->
+      <div class="qwrap" data-step="1">
+        <div class="qtop"><span class="qcount">Let's set up your first edit</span><button type="button" class="btn-text muted" data-skip>Skip</button></div>
+        <h1 class="qtitle">What do you make?</h1>
+        <p class="qsub">So we start you on the right kind of edit.</p>
+        <div class="qbody">
+          <div class="tiles big" role="group" aria-label="What do you make?" data-single="make">
+            <button type="button" class="tile" aria-pressed="false" data-v="talking"><span class="em"><svg><use href="icons.svg#i-talk"/></svg></span><span class="tx"><b>Videos of me talking</b><span>Reels, TikToks and Shorts</span></span><span class="key">1</span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile" aria-pressed="false" data-v="clients"><span class="em"><svg><use href="icons.svg#i-clients"/></svg></span><span class="tx"><b>Videos for clients</b><span>Freelancer or agency</span></span><span class="key">2</span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile" aria-pressed="false" data-v="brand"><span class="em"><svg><use href="icons.svg#i-brand"/></svg></span><span class="tx"><b>My brand's marketing</b><span>Founder or company content</span></span><span class="key">3</span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile" aria-pressed="false" data-v="faceless" data-hold><span class="em"><svg><use href="icons.svg#i-ghost"/></svg></span><span class="tx"><b>A faceless channel</b><span>No camera, AI does it all</span></span><span class="key">4</span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+          </div>
+          <div class="notice" id="faceless-note" hidden>
+            <span class="nic"><svg width="22" height="22"><use href="icons.svg#i-ghost"/></svg></span>
+            <div><b>Faceless videos are made in ChannelRecipe Studio</b><p>Studio writes, voices and animates whole videos with no camera. This app edits footage you film yourself.</p>
+              <div class="acts"><a class="btn btn-sm" href="https://channelrecipe.com/">Open Studio</a><button type="button" class="btn btn-sm btn-ghost" data-next>I film some too, continue</button></div></div>
+          </div>
+        </div>
+        <div class="qfoot"><span class="hint">Tip: press <span class="kbd">1</span>–<span class="kbd">4</span></span></div>
+      </div>
+
+      <!-- step 2 -->
+      <div class="qwrap" data-step="2" hidden>
+        <div class="qtop"><button type="button" class="btn-text" data-back><svg width="18" height="18"><use href="icons.svg#i-back"/></svg>Back</button><button type="button" class="btn-text muted" data-skip>Skip</button></div>
+        <h1 class="qtitle">What are your videos about?</h1>
+        <p class="qsub">We match the music, the B-roll and the pace to it.</p>
+        <div class="qbody">
+          <div class="tiles three" role="group" aria-label="What are your videos about?" data-single="topic">
+            <button type="button" class="tile compact" aria-pressed="false" data-v="money"><span class="em"><svg><use href="icons.svg#i-money"/></svg></span><span class="tx"><b>Business &amp; money</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="tech"><span class="em"><svg><use href="icons.svg#i-chip"/></svg></span><span class="tx"><b>Tech &amp; AI</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="fitness"><span class="em"><svg><use href="icons.svg#i-dumbbell"/></svg></span><span class="tx"><b>Fitness &amp; health</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="beauty"><span class="em"><svg><use href="icons.svg#i-lipstick"/></svg></span><span class="tx"><b>Beauty &amp; fashion</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="food"><span class="em"><svg><use href="icons.svg#i-food"/></svg></span><span class="tx"><b>Food</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="education"><span class="em"><svg><use href="icons.svg#i-cap"/></svg></span><span class="tx"><b>Education</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="coaching"><span class="em"><svg><use href="icons.svg#i-target"/></svg></span><span class="tx"><b>Coaching &amp; mindset</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="realestate"><span class="em"><svg><use href="icons.svg#i-house"/></svg></span><span class="tx"><b>Real estate</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="lifestyle"><span class="em"><svg><use href="icons.svg#i-smile"/></svg></span><span class="tx"><b>Comedy &amp; lifestyle</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="podcast"><span class="em"><svg><use href="icons.svg#i-mic"/></svg></span><span class="tx"><b>Podcast clips</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="travel"><span class="em"><svg><use href="icons.svg#i-plane"/></svg></span><span class="tx"><b>Travel</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="other"><span class="em"><svg><use href="icons.svg#i-sparkles"/></svg></span><span class="tx"><b>Something else</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- step 3 -->
+      <div class="qwrap" data-step="3" hidden>
+        <div class="qtop"><button type="button" class="btn-text" data-back><svg width="18" height="18"><use href="icons.svg#i-back"/></svg>Back</button><button type="button" class="btn-text muted" data-skip>Skip</button></div>
+        <h1 class="qtitle">Where do you post?</h1>
+        <p class="qsub">Pick all that apply. Every edit exports 1080×1920 at the loudness these apps play.</p>
+        <div class="qbody">
+          <div class="tiles three" role="group" aria-label="Where do you post?" data-multi="platforms">
+            <button type="button" class="tile compact" aria-pressed="false" data-v="TikTok"><span class="em"><svg><use href="icons.svg#p-tiktok"/></svg></span><span class="tx"><b>TikTok</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="Reels"><span class="em"><svg><use href="icons.svg#p-instagram"/></svg></span><span class="tx"><b>Instagram Reels</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="Shorts"><span class="em"><svg><use href="icons.svg#p-youtube"/></svg></span><span class="tx"><b>YouTube Shorts</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="LinkedIn"><span class="em"><svg><use href="icons.svg#p-linkedin"/></svg></span><span class="tx"><b>LinkedIn</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="Facebook"><span class="em"><svg><use href="icons.svg#p-facebook"/></svg></span><span class="tx"><b>Facebook</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+            <button type="button" class="tile compact" aria-pressed="false" data-v="X"><span class="em"><svg><use href="icons.svg#p-x"/></svg></span><span class="tx"><b>X</b></span><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span></button>
+          </div>
+        </div>
+        <div class="qfoot"><button type="button" class="btn btn-lg" id="plat-next" disabled>Pick at least one</button><span class="hint">or press <span class="kbd">Enter</span></span></div>
+      </div>
+
+      <!-- step 4 -->
+      <div class="qwrap" data-step="4" hidden>
+        <div class="qtop"><button type="button" class="btn-text" data-back><svg width="18" height="18"><use href="icons.svg#i-back"/></svg>Back</button><button type="button" class="btn-text muted" data-house>Skip, choose for me</button></div>
+        <h1 class="qtitle">Pick any look</h1>
+        <p class="qsub">Every look here is a real Reel. Or paste a creator you love and we learn theirs.</p>
+        <div class="qbody">
+          <div class="styles board" role="group" aria-label="Looks" id="styles">
+            <button type="button" class="style-tile" aria-pressed="false" data-style="story"><div class="vid"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_story.jpg" alt="" loading="lazy"><video muted playsinline loop preload="none" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_story.mp4"></video></div><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span><div class="cap2"><b>Cinematic story</b><span>Made here</span></div></button>
+            <button type="button" class="style-tile" aria-pressed="false" data-style="energy"><div class="vid"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.jpg" alt="" loading="lazy"><video muted playsinline loop preload="none" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.mp4"></video></div><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span><div class="cap2"><b>Creator energy</b><span>Made here</span></div></button>
+          </div>
+          <div class="divider">or paste a Reel you love</div>
+          <form id="ref-form" novalidate>
+            <label class="sr-only" for="ref-input">A TikTok, Reel or Short link</label>
+            <div class="field" id="ref-field">
+              <svg class="lead"><use href="icons.svg#i-link"/></svg>
+              <input id="ref-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a TikTok, Reel or Short link">
+              <button type="submit" class="btn btn-sm" id="ref-add">Add</button>
+            </div>
+            <div class="field-msg" id="ref-msg" role="status" aria-live="polite"></div>
+          </form>
+          <div class="row-links"><button type="button" class="btn-text" id="ref-example"><svg width="16" height="16"><use href="icons.svg#i-spark"/></svg>Try a style we've learned</button><span class="qfoot hint" style="margin:0" id="ref-count"></span></div>
+          <div class="refs" id="refs"></div>
+        </div>
+        <div class="qfoot"><button type="button" class="btn btn-lg" id="style-next" disabled>Pick a look or paste a link</button></div>
+      </div>
+
+      <!-- step 5 -->
+      <div class="qwrap" data-step="5" hidden>
+        <div class="qtop"><button type="button" class="btn-text" data-back><svg width="18" height="18"><use href="icons.svg#i-back"/></svg>Back</button><span class="pill accent" id="free-pill">2 free edits left</span></div>
+        <h1 class="qtitle">Drop your raw clip</h1>
+        <p class="qsub">Hold your phone upright and talk. Fluff a line? Say it again. We keep the best take.</p>
+        <div class="qbody">
+          <label class="drop" id="drop">
+            <input type="file" id="file" accept="video/*,.mov,.mp4,.m4v">
+            <span class="ic"><svg><use href="icons.svg#i-upload"/></svg></span>
+            <b>Drag your video here, or click to choose</b>
+            <span>MP4 or MOV from your phone, up to 5 minutes</span>
+          </label>
+          <div id="file-slot"></div>
+          <div class="alt-row">
+            <button type="button" class="btn btn-ghost" data-open="qr"><svg width="18" height="18"><use href="icons.svg#i-phone"/></svg>From my phone</button>
+            <button type="button" class="btn btn-ghost" data-open="drive"><svg width="18" height="18"><use href="icons.svg#i-drive"/></svg>Google Drive</button>
+            <button type="button" class="btn btn-ghost" id="use-sample"><svg width="18" height="18"><use href="icons.svg#i-film"/></svg>Use our sample clip</button>
+          </div>
+          <div class="tips">
+            <div><b>Upright</b>9:16, like you'd post it</div>
+            <div><b>Retakes are fine</b>We cut them for you</div>
+            <div><b>Any phone</b>Up to 4K, 5 minutes</div>
+          </div>
+        </div>
+        <div class="qfoot"><button type="button" class="btn btn-lg" id="start-edit" disabled>Choose a clip first</button><span class="hint" id="start-hint">About 2 minutes</span></div>
+      </div>
+
+      <div class="founder"><span class="av"><img src="glyph.svg" alt=""></span><p><b>From the ChannelRecipe team:</b> we built this so a 60-second Reel never eats your evening again.</p></div>
+    </div>
+
+    <div class="right" aria-hidden="true">
+      <div>
+        <div class="stagebox">
+          <div class="phone"><div class="screen"><div class="notch"></div><span class="tag" id="pv-tag"><span class="dot"></span><span id="pv-tag-t">Your Reel</span></span>
+            <video id="pv-video" muted playsinline loop preload="auto" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.mp4"></video></div></div>
+          <span class="stat-chip float f1" id="pv-chip1"><span class="ico"><svg width="16" height="16"><use href="icons.svg#i-scissors"/></svg></span><span id="pv-chip1-t"><b>Retakes</b> cut for you</span></span>
+          <span class="stat-chip float f2 green" id="pv-chip2"><span class="ico"><svg width="16" height="16"><use href="icons.svg#i-check"/></svg></span><span id="pv-chip2-t"><b>Captions</b> on every word</span></span>
+        </div>
+        <p class="preview-caption" id="pv-caption"><b>This is what you'll get:</b> your own footage, edited like a pro would.</p>
+        <div class="plat-row" id="pv-plats" hidden></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= EDITING ================= -->
+<section class="screen-v dark" data-screen="editing" aria-labelledby="ed-h">
+  <div class="bar"><a class="brand" href="index.html"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span></a><div class="grow"></div><span class="pill"><span class="live"></span><span id="ed-eta">About 2 minutes</span></span></div>
+  <div class="bay">
+    <div class="phone-col">
+      <div class="phone"><div class="screen"><div class="notch"></div><span class="tag"><span class="dot"></span><span id="ed-tag">Your raw take</span></span>
+        <video id="ed-video" muted playsinline loop preload="auto" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.mp4"></video><div class="scan"></div></div></div>
+    </div>
+    <div>
+      <h1 id="ed-h">Editing your Reel</h1>
+      <p class="lead2" id="ed-lead">In the <b>Creator energy</b> look. You can close this tab: we'll email you.</p>
+      <div class="stages" id="stages"></div>
+      <div class="transcript" aria-label="Your transcript as we cut it"><div class="in" id="tx"></div></div>
+      <div class="foot2">
+        <div class="meterbar" role="progressbar" aria-label="Edit progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="ed-bar"><i></i></div><span class="pct" id="ed-pct">0%</span>
+      </div>
+      <div class="foot2">
+        <label class="check-line"><input type="checkbox" id="ed-email" checked> Email me when it's ready</label>
+        <span class="pill" id="ed-demo">Prototype: sped up, showing a real edit's numbers</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= RESULT ================= -->
+<section class="screen-v" data-screen="result" aria-labelledby="rs-h">
+  <div class="bar"><a class="brand" href="index.html"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span></a><div class="grow"></div>
+    <span class="pill accent" id="rs-free">1 of 2 free edits left</span><button type="button" class="btn btn-sm" data-open="plans">Upgrade</button></div>
+  <div class="res">
+    <div class="player">
+      <div class="phone"><div class="screen"><div class="notch"></div><span class="tag good" id="rs-tag"><span class="dot"></span><span id="rs-tag-t">Your Reel · v1</span></span>
+        <video id="rs-video" playsinline preload="auto" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.mp4"></video></div></div>
+      <div class="controls">
+        <button type="button" class="pp" id="rs-pp" aria-label="Play"><svg><use href="icons.svg#i-play"/></svg></button>
+        <div class="scrub" id="rs-scrub" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="7" aria-valuenow="0"><span class="rail"></span><span class="fill"></span><span class="knob"></span></div>
+        <span class="t tnum" id="rs-time">0:00 / 0:07</span>
+        <button type="button" class="snd" id="rs-snd" aria-label="Mute" aria-pressed="false"><svg><use href="icons.svg#i-sound-on"/></svg></button>
+      </div>
+      <div class="seg light" role="group" aria-label="Show before or after"><button type="button" aria-pressed="false" data-ba="before">Before</button><button type="button" aria-pressed="true" data-ba="after">After</button></div>
+      <div class="acts">
+        <a class="btn" id="rs-dl" href="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.mp4" download="my-reel.mp4"><svg width="18" height="18"><use href="icons.svg#i-download"/></svg>Download</a>
+        <button type="button" class="btn btn-ghost" id="rs-again"><svg width="18" height="18"><use href="icons.svg#i-upload"/></svg>Edit another</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="res-head">
+        <span class="pill ok"><svg width="14" height="14"><use href="icons.svg#i-check"/></svg>Ready, and watched back</span>
+        <h1 id="rs-h">Your Reel is ready</h1>
+        <p id="rs-meta"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Watch-back check <span class="pill ok">Passed</span></h2>
+        <p class="sub2">We listened to the finished Reel again and checked it against what you said.</p>
+        <div class="checks" id="rs-checks"></div>
+      </div>
+
+      <div class="panel soundp" id="sound-panel">
+        <h2><span class="hic"><svg width="18" height="18"><use href="icons.svg#i-music"/></svg></span><span>Your sound</span></h2>
+        <p class="sub2" id="rs-sound-sub"></p>
+        <ul class="notes" id="rs-sound"></ul>
+      </div>
+
+      <div class="cols2" style="margin-top:14px">
+        <div class="panel">
+          <h2>What we added <span class="pill" id="rs-acount"></span></h2>
+          <p class="sub2">Tap one to jump to it.</p>
+          <ul class="rlist" id="rs-added"></ul>
+        </div>
+        <div class="panel">
+          <h2>What we changed</h2>
+          <p class="sub2" id="rs-changed-sub"></p>
+          <ul class="notes" id="rs-notes"></ul>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:14px">
+        <h2 id="rs-cl-h">Where your raw take went</h2>
+        <p class="sub2">Every cut in this edit, to scale.</p>
+        <div class="cutline light" id="rs-cutline" style="margin-top:16px"></div>
+      </div>
+
+      <div class="panel chat" style="margin-top:14px">
+        <h2>Tweak it <span class="vers" id="rs-vers" role="group" aria-label="Versions"><button type="button" aria-pressed="true" data-v="1">v1</button></span></h2>
+        <p class="sub2">Say what to change in plain words. Each change makes a new version, and v1 stays.</p>
+        <div class="msgs" id="rs-msgs" aria-live="polite"></div>
+        <div class="chips" id="rs-chips">
+          <button type="button" class="chip">More of my face, less B-roll</button>
+          <button type="button" class="chip">Different music</button>
+          <button type="button" class="chip">Make the captions bigger</button>
+          <button type="button" class="chip">Try it in Cinematic story</button>
+        </div>
+        <form id="rs-form" novalidate><label class="sr-only" for="rs-input">What to change</label><input class="text-input" id="rs-input" placeholder="Tell us what to change" autocomplete="off"><button type="submit" class="btn btn-icon" aria-label="Send"><svg width="18" height="18"><use href="icons.svg#i-send"/></svg></button></form>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- heard-about sheet (after the first edit, never before) -->
+<div class="sheet-wrap" id="heard" role="dialog" aria-modal="false" aria-labelledby="heard-h">
+  <div class="sheet">
+    <button type="button" class="modal-x" data-close-heard aria-label="Close"><svg width="18" height="18"><use href="icons.svg#i-x"/></svg></button>
+    <h2 id="heard-h">Quick one: how did you find us?</h2>
+    <p class="sub">One tap. It tells us which creators to thank.</p>
+    <div class="tiles" role="group" aria-label="How did you find us?" data-single="heard">
+      <button type="button" class="tile" aria-pressed="false" data-v="creator"><span class="em"><svg><use href="icons.svg#i-star"/></svg></span><span class="tx"><b>A creator I follow</b></span></button>
+      <button type="button" class="tile" aria-pressed="false" data-v="tiktok"><span class="em"><svg><use href="icons.svg#p-tiktok"/></svg></span><span class="tx"><b>TikTok</b></span></button>
+      <button type="button" class="tile" aria-pressed="false" data-v="instagram"><span class="em"><svg><use href="icons.svg#p-instagram"/></svg></span><span class="tx"><b>Instagram</b></span></button>
+      <button type="button" class="tile" aria-pressed="false" data-v="youtube"><span class="em"><svg><use href="icons.svg#p-youtube"/></svg></span><span class="tx"><b>YouTube</b></span></button>
+      <button type="button" class="tile" aria-pressed="false" data-v="search"><span class="em"><svg><use href="icons.svg#i-search"/></svg></span><span class="tx"><b>Google</b></span></button>
+      <button type="button" class="tile" aria-pressed="false" data-v="ai"><span class="em"><svg><use href="icons.svg#i-chat"/></svg></span><span class="tx"><b>An AI chat</b></span></button>
+      <button type="button" class="tile" aria-pressed="false" data-v="friend"><span class="em"><svg><use href="icons.svg#i-users"/></svg></span><span class="tx"><b>A friend</b></span></button>
+      <button type="button" class="tile" aria-pressed="false" data-v="other"><span class="em"><svg><use href="icons.svg#i-sparkles"/></svg></span><span class="tx"><b>Somewhere else</b></span></button>
+    </div>
+    <form class="handle" id="heard-handle" hidden novalidate>
+      <label class="sr-only" for="heard-at">Their handle</label>
+      <div class="field"><span style="color:var(--ink-3);font-weight:600">@</span><input id="heard-at" placeholder="Their handle, so we can thank them" autocomplete="off"></div>
+      <button type="submit" class="btn">Send</button>
+    </form>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"><span class="ok"><svg width="13" height="13" style="color:#fff"><use href="icons.svg#i-check"/></svg></span><span id="toast-t"></span></div>
+<div class="proto" role="note"><i></i><span>Internal prototype: demo Reels belong to their creators, nothing is uploaded</span></div>
+
+<template id="tpl-qr">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="qr-h">
+    <button type="button" class="modal-x" data-close aria-label="Close"><svg width="18" height="18"><use href="icons.svg#i-x"/></svg></button>
+    <h2 id="qr-h">Send it from your phone</h2>
+    <p class="sub">No app to install. The video goes straight into this edit.</p>
+    <div class="qr"><svg class="code" viewBox="0 0 29 29" id="qr-code" role="img" aria-label="QR code (prototype pattern)"></svg>
+      <ol><li>Open your phone's camera and point it at the code</li><li>Tap the link, then pick your raw clip</li><li>It appears here when it's uploaded</li></ol></div>
+    <p class="fine" style="text-align:left">Prototype: the live code opens a phone upload page made for this edit.</p>
+  </div>
+</template>
+<template id="tpl-drive">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dr-h">
+    <button type="button" class="modal-x" data-close aria-label="Close"><svg width="18" height="18"><use href="icons.svg#i-x"/></svg></button>
+    <h2 id="dr-h">Import from Google Drive</h2>
+    <p class="sub">Pick a video from your Drive. We only read the file you choose.</p>
+    <div class="stack" style="display:grid;gap:10px;margin-top:20px"><button type="button" class="btn btn-lg btn-google btn-block" data-drive><svg width="20" height="20"><use href="icons.svg#i-drive"/></svg>Choose from Google Drive</button></div>
+    <p class="fine" style="text-align:left">Prototype: Drive picking switches on with the real backend.</p>
+  </div>
+</template>
+<template id="tpl-plans">
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="pl-h">
+    <button type="button" class="modal-x" data-close aria-label="Close"><svg width="18" height="18"><use href="icons.svg#i-x"/></svg></button>
+    <h2 id="pl-h">Keep posting edits like this</h2>
+    <p class="sub" id="pl-sub">Every plan includes everything in your free edits. Priced in edits, never credits.</p>
+    <div style="display:flex;justify-content:center;margin:22px 0 28px"><div class="bill-toggle" role="group" aria-label="Billing period" data-bill><button type="button" aria-pressed="false" data-period="month">Monthly</button><button type="button" aria-pressed="true" data-period="year">Yearly <span class="save">2 months free</span></button></div></div>
+    <div class="plans" data-plans></div>
+    <p class="plan-note">Cancel anytime. Prototype: prices are drafts.</p>
+  </div>
+</template>
+</body>
+</html>

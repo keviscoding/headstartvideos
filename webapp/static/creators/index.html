@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>ChannelRecipe for creators: edit like the creators you watch, without the hours</title>
+  <meta name="description" content="Talk to your phone once, pick any look or paste a creator you love, and get your Reel back finished: music made for it, B-roll on your words, every word still there. No evenings in an editing app. 2 free edits, no card.">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#FFFFFF">
+  <link rel="icon" href="glyph.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&family=Instrument+Serif:ital@0;1&display=swap">
+  <link rel="stylesheet" href="creators.css">
+  <link rel="stylesheet" href="landing.css">
+  <script defer src="reel-link.js"></script>
+  <script defer src="plans.js"></script>
+  <script defer src="cutline.js"></script>
+  <script defer src="landing.js"></script>
+</head>
+<body>
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="ChannelRecipe for creators, home"><img src="glyph.svg" alt="" width="28" height="28">ChannelRecipe <small>for creators</small></a>
+    <nav class="links" aria-label="Sections">
+      <a href="#beats">Beat by beat</a>
+      <a href="#looks">Looks</a>
+      <a href="#every-edit">What's in an edit</a>
+      <a href="#learn">Learn a creator</a>
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="right">
+      <a class="btn btn-ghost btn-sm login" href="app.html#signin">Log in</a>
+      <a class="btn btn-sm" href="app.html#signup">Try it free</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="hero" aria-labelledby="hero-h">
+    <div class="wrap">
+      <a class="announce" href="#learn"><b>New</b><span>Paste a Reel you love<span class="long">, get your take edited like it</span></span><svg><use href="icons.svg#i-arrow"/></svg></a>
+      <h1 class="display" id="hero-h">Edit like the creators you watch, <span class="serif">without the hours</span></h1>
+      <p class="lead">Talk to your phone once. Pick any look, or paste a creator you love. You get your take back finished: music made for it, B-roll on your words, and every word still there.</p>
+      <div class="film" id="film">
+        <video id="film-video" playsinline muted preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/film/creators-launch-poster-v1.jpg" data-hd="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/film/creators-launch-1080-v1.mp4" data-sd="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/film/creators-launch-720-v1.mp4" aria-label="The ChannelRecipe for creators launch film, 51 seconds"></video>
+        <button class="film-play" type="button" id="film-play"><svg width="18" height="18"><use href="icons.svg#i-sound-on"/></svg><span>Watch with sound</span><small>0:51</small></button>
+      </div>
+      <div class="hero-cta">
+        <a class="btn btn-lg" href="app.html#signup">Edit your first video free <svg width="18" height="18"><use href="icons.svg#i-arrow"/></svg></a>
+        <button type="button" class="btn btn-lg btn-ghost" id="hear-it"><svg width="18" height="18"><use href="icons.svg#i-sound-on"/></svg>Hear the before and after</button>
+      </div>
+      <div class="assure"><span><svg><use href="icons.svg#i-circle-check"/></svg>2 free edits</span><span><svg><use href="icons.svg#i-circle-check"/></svg>No card needed</span><span><svg><use href="icons.svg#i-circle-check"/></svg>Still you, never an avatar</span></div>
+    </div>
+
+    <div class="stage" aria-label="A raw selfie take, the creator style it was edited in, and the finished Reel">
+      <div class="stage-in">
+        <div class="stage-col raw">
+          <span class="cap"><i>1</i>Your raw take</span>
+          <div class="phone"><div class="screen">
+            <span class="tag"><span class="dot"></span><span id="raw-tag">Raw · 0:54</span></span>
+            <video id="raw-video" data-auto muted playsinline loop preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/s_raw.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/s_raw.mp4"></video>
+          </div></div>
+        </div>
+        <span class="flow-arrow a1" aria-hidden="true"><svg><use href="icons.svg#i-arrow"/></svg></span>
+        <div class="stage-col mid">
+          <span class="cap"><i>2</i>Pick a look</span>
+          <div class="style-mini look-card" id="look-card">
+            <div class="seg look-tabs" role="group" aria-label="Look">
+              <button type="button" aria-pressed="true" data-look="story">Cinematic story</button>
+              <button type="button" aria-pressed="false" data-look="energy">Creator energy</button>
+            </div>
+            <a class="any-look" href="#looks"><svg width="16" height="16"><use href="icons.svg#i-sparkles"/></svg>Or any look, from any creator</a>
+            <ul class="spec" id="look-spec"></ul>
+          </div>
+          <div class="seg stage-toggle" role="group" aria-label="Show the raw take or the Reel">
+            <button type="button" aria-pressed="false" data-show="raw">Raw take</button>
+            <button type="button" aria-pressed="true" data-show="edit">Your Reel</button>
+          </div>
+        </div>
+        <span class="flow-arrow a2" aria-hidden="true"><svg><use href="icons.svg#i-arrow"/></svg></span>
+        <div class="stage-col reel">
+          <span class="cap"><i>3</i>Your finished Reel</span>
+          <div class="phone"><div class="screen">
+            <span class="tag good" id="reel-tag"><span class="dot"></span><span>Cinematic story · 0:50</span></span>
+            <video id="reel-video" data-auto muted playsinline loop preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/s_edit.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/s_edit.mp4"></video>
+            <button class="sound" type="button" id="reel-sound" aria-label="Turn sound on" aria-pressed="false"><svg><use href="icons.svg#i-sound-off"/></svg></button>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="platforms" aria-label="Platforms">
+    <div class="wrap">
+      <p>Learn from and post to</p>
+      <div class="logos">
+        <span><svg><use href="icons.svg#p-tiktok"/></svg>TikTok</span>
+        <span><svg><use href="icons.svg#p-instagram"/></svg>Instagram Reels</span>
+        <span><svg><use href="icons.svg#p-youtube"/></svg>YouTube Shorts</span>
+        <span><svg><use href="icons.svg#p-linkedin"/></svg>LinkedIn</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec hours-sec" id="hours" aria-labelledby="hours-h">
+    <div class="wrap hours">
+      <div class="sec-head">
+        <span class="label">Your evenings back</span>
+        <h2 class="h2" id="hours-h">Post every day. <span class="serif">Without editing every night.</span></h2>
+        <p class="lead">Editing your own Reel eats the evening, and it's the same jobs every time. Here they're done before you see it. Your part is talking to your phone.</p>
+      </div>
+      <ol class="chores" aria-label="The editing jobs done for you">
+        <li><s>Scrubbing for your best take</s><svg aria-hidden="true"><use href="icons.svg#i-arrow"/></svg><span>Retakes cut by what you said</span></li>
+        <li><s>Captions, word by word</s><svg aria-hidden="true"><use href="icons.svg#i-arrow"/></svg><span>Captions timed to your voice</span></li>
+        <li><s>Hunting for B-roll</s><svg aria-hidden="true"><use href="icons.svg#i-arrow"/></svg><span>B-roll on your words</span></li>
+        <li><s>A song that fights your voice</s><svg aria-hidden="true"><use href="icons.svg#i-arrow"/></svg><span>Music made for this take</span></li>
+        <li><s>Sound effects, one by one</s><svg aria-hidden="true"><use href="icons.svg#i-arrow"/></svg><span>Every sound on cue</span></li>
+        <li><s>Exporting at 1 a.m.</s><svg aria-hidden="true"><use href="icons.svg#i-arrow"/></svg><span>Watched back, ready to post</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="sec beats-sec" id="beats" aria-labelledby="beats-h">
+    <div class="wrap">
+      <div class="sec-head center">
+        <span class="label">Beat by beat</span>
+        <h2 class="h2" id="beats-h">Every line you say gets a reason to keep watching</h2>
+        <p class="lead">These are the real edits from the top of the page, line by line: what was said, and what the edit did with it. Tap a beat to hear it.</p>
+        <div class="seg beat-tabs" role="group" aria-label="Which edit">
+          <button type="button" aria-pressed="true" data-beats="story">Cinematic story</button>
+          <button type="button" aria-pressed="false" data-beats="energy">Creator energy</button>
+        </div>
+      </div>
+      <ol class="beats" id="beats-list" aria-label="The edit, beat by beat"></ol>
+    </div>
+  </section>
+
+  <section class="sec" id="looks" aria-labelledby="looks-h">
+    <div class="wrap">
+      <div class="sec-head center">
+        <span class="label">Looks</span>
+        <h2 class="h2" id="looks-h">Pick any look. <span class="serif">Or paste a creator you love.</span></h2>
+        <p class="lead">Cinematic, podcast, minimal, explainer, chaotic vlog, or the creator you'd hire as your editor if you could. Every look on this board is a real Reel. Paste any other and it joins yours.</p>
+      </div>
+    </div>
+    <div class="moodboard" id="moodboard" aria-label="A board of creator looks, each playing a real Reel"></div>
+    <div class="wrap">
+      <div class="board-foot"><a class="btn btn-lg" href="#learn">Paste a creator's Reel <svg width="18" height="18"><use href="icons.svg#i-arrow"/></svg></a><span>TikTok, Instagram Reels or YouTube Shorts</span></div>
+    </div>
+  </section>
+
+  <section class="sec tint" id="every-edit" aria-labelledby="every-h">
+    <div class="wrap">
+      <div class="sec-head center">
+        <span class="label">In every edit</span>
+        <h2 class="h2" id="every-h">What your editor would do. Every time.</h2>
+        <p class="lead">The creators you watch don't pile on effects. They score the moment, cut on the word and keep the type beautiful. Every edit here does the same, the free ones included.</p>
+      </div>
+      <div class="bento">
+        <article class="card wide">
+          <div class="viz">
+            <div class="soundviz" id="soundviz" role="img" aria-label="The real mix of the cinematic story Reel: the voice, the music bed under it, and each sound effect"></div>
+          </div>
+          <div class="txt"><h3 class="h3">Music scored to your video</h3><p>Every edit gets its own instrumental bed. It dips under your voice, lifts in your pauses and builds to your last line. Effects hit only on something you see. Above: the real mix of the story Reel at the top of this page.</p></div>
+        </article>
+        <article class="card">
+          <div class="viz viz-media" aria-hidden="true"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/s_broll.jpg" alt="" loading="lazy"></div>
+          <div class="txt"><h3 class="h3">B-roll on your words</h3><p>Your own clips first. Missing a shot? We make one for that exact line, so "my family gets sick" cuts to a hand being held.</p></div>
+        </article>
+        <article class="card">
+          <div class="viz viz-media" aria-hidden="true"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/s_flash.jpg" alt="" loading="lazy"></div>
+          <div class="txt"><h3 class="h3">Type that looks designed</h3><p>Editorial serifs, heavy grotesks and clean captions, set like a designer would. No neon, no emoji confetti.</p></div>
+        </article>
+        <article class="card">
+          <div class="viz viz-media" aria-hidden="true"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_ticket.jpg" alt="" loading="lazy"></div>
+          <div class="txt"><h3 class="h3">Motion made for this video</h3><p>An order ticket stamped "NO.", a calendar that books the week. Built in code for what you said, not pulled from a template pack.</p></div>
+        </article>
+        <article class="card">
+          <div class="viz" aria-hidden="true"><div class="audio"><div class="row"><span>Your take</span><div class="wave" data-wave="raw"></div></div><div class="row"><span>Voice</span><div class="wave after" data-wave="edit"></div></div><div class="lufs"><span>Music under your voice?</span><b>Lifted out</b></div></div></div>
+          <div class="txt"><h3 class="h3">A clean voice, even over music</h3><p>Filmed with a song playing? We lift your voice out of it first, then mix it to the loudness Reels and TikTok play at.</p></div>
+        </article>
+        <article class="card wide">
+          <div class="viz">
+            <p class="transcript" aria-label="A transcript with retakes cut">
+              <span class="x">Do not scroll past this. Do not scroll past this.</span><span class="tag-cut"><svg><use href="icons.svg#i-scissors"/></svg>retake</span>
+              <span class="k">Do not scroll past this.</span> <span class="x">Okay pause, nobody has time for this.</span><span class="tag-cut"><svg><use href="icons.svg#i-scissors"/></svg>fumble</span>
+              <span class="k">Literally just do this instead.</span> Go to YouTube and find the faceless history or mystery channel…
+            </p>
+            <div class="cutline" data-cutline aria-label="Timeline: a 3 minute 13 second raw take cut down to a 1 minute 3 second Reel"></div>
+          </div>
+          <div class="txt"><h3 class="h3">Retakes gone. Your pauses kept.</h3><p>We read every word, keep your cleanest take and cut false starts and dead air, but never a word, and never the pause that lands the joke. Above: a real 3-minute take with two false starts and a whole second take, made into a 1-minute Reel.</p></div>
+        </article>
+        <article class="card">
+          <div class="viz" aria-hidden="true"><div class="checks">
+            <div class="check"><span class="ok"><svg><use href="icons.svg#i-check"/></svg></span>Loudness on target<b>−14.3</b></div>
+            <div class="check"><span class="ok"><svg><use href="icons.svg#i-check"/></svg></span>Peaks under −1 dB<b>−1.5</b></div>
+            <div class="check"><span class="ok"><svg><use href="icons.svg#i-check"/></svg></span>Watched next to your take<b>2 passes</b></div>
+          </div></div>
+          <div class="txt"><h3 class="h3">Watched back before you see it</h3><p>An AI editor watches and listens to the finished Reel next to your raw take, and we fix what it flags.</p></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="learn" aria-labelledby="styles-h">
+    <div class="wrap">
+      <div class="learn">
+        <div>
+          <span class="label">Learn a creator</span>
+          <h2 class="h2" id="styles-h">Paste their video. We learn how they edit.</h2>
+          <p class="lead">Give us 1 to 3 of their TikToks, Reels or Shorts. We measure the cuts, the captions, how loud the music sits and when the sounds hit, then edit your footage the same way. Their style, never their footage, music or face.</p>
+          <div class="try-box" data-paste>
+            <form novalidate>
+              <label class="sr-only" for="learn-link">A TikTok, Reel or Short whose editing you love</label>
+              <div class="field"><svg class="lead"><use href="icons.svg#i-link"/></svg><input id="learn-link" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a TikTok, Reel or Short"></div>
+              <button class="btn btn-lg" type="submit">Learn it</button>
+            </form>
+            <div class="field-msg" role="status" aria-live="polite"></div>
+            <div class="hint"><span>TikTok, Instagram Reels or YouTube Shorts</span><button type="button" data-example>Try an example</button></div>
+          </div>
+        </div>
+        <div class="learned" id="learned" aria-live="polite">
+          <div class="top"><span class="av"><svg width="22" height="22"><use href="icons.svg#i-sparkles"/></svg></span><div><b id="learned-name">Fast talking-head style</b><span id="learned-src">Learned from 1 public Short in 44 s</span></div><span class="pill ok" id="learned-pill">Saved</span></div>
+          <div class="rows" data-meter>
+            <div class="r"><span>Cuts</span><div class="bar"><i data-w="80"></i></div><b>3.2 per 10 s</b></div>
+            <div class="r"><span>Talking speed</span><div class="bar"><i data-w="77"></i></div><b>4.6 words/s</b></div>
+            <div class="r"><span>Punch-in depth</span><div class="bar"><i data-w="70"></i></div><b>up to 2.45×</b></div>
+            <div class="r"><span>Face on screen</span><div class="bar"><i data-w="66"></i></div><b>66%</b></div>
+            <div class="r"><span>Loudness</span><div class="bar"><i data-w="92"></i></div><b>−9.2 LUFS</b></div>
+          </div>
+          <p class="look"><b>Captions</b> white, mid-frame, 3 words at a time. <b>Music</b> about 20 dB under the voice. <b>Hook</b> the payoff line in the first second.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="sec tint" id="how" aria-labelledby="how-h">
+    <div class="wrap">
+      <div class="sec-head center"><span class="label">How it works</span><h2 class="h2" id="how-h">Three steps. <span class="serif">No editing in any of them.</span></h2></div>
+      <div class="how">
+        <div class="step"><span class="n">1</span><h3 class="h3">Film it raw</h3><p>Talk to your phone. Fluff a line? Say it again. We keep the best take.</p>
+          <div class="mock"><span class="ic"><svg><use href="icons.svg#i-upload"/></svg></span><span><b>raw-take.mov</b>3:13 · 1080×1920 · 2 retakes</span></div></div>
+        <div class="step"><span class="n">2</span><h3 class="h3">Pick a look</h3><p>Choose one of our looks, or paste a creator's Reel and we learn theirs.</p>
+          <div class="mock"><span class="ic"><svg><use href="icons.svg#i-sparkles"/></svg></span><span><b>Cinematic story</b>Score, B-roll and title cards</span></div></div>
+        <div class="step"><span class="n">3</span><h3 class="h3">Post it</h3><p>Download a 1080×1920 Reel, mixed at the loudness Reels play. Change anything by saying it.</p>
+          <div class="mock"><span class="ic"><svg><use href="icons.svg#i-download"/></svg></span><span><b>my-reel.mp4</b>0:50 · watched back · ready</span></div></div>
+      </div>
+      <div class="center-cta"><a class="btn btn-lg" href="app.html#signup">Edit your first video free <svg width="18" height="18"><use href="icons.svg#i-arrow"/></svg></a></div>
+    </div>
+  </section>
+
+  <section class="sec" aria-labelledby="who-h">
+    <div class="wrap">
+      <div class="sec-head center"><span class="label">Made for people who talk to camera</span><h2 class="h2" id="who-h">If you film yourself, it edits you</h2></div>
+      <div class="personas">
+        <div class="persona"><span class="ic"><svg><use href="icons.svg#i-target"/></svg></span><b>Coaches</b><p>Turn every voice note of an idea into a Reel.</p><q>The one habit that doubled my clients' focus</q></div>
+        <div class="persona"><span class="ic"><svg><use href="icons.svg#i-brand"/></svg></span><b>Founders</b><p>Build in public without hiring an editor.</p><q>We hit $10k MRR. Here's what actually worked</q></div>
+        <div class="persona"><span class="ic"><svg><use href="icons.svg#i-dumbbell"/></svg></span><b>Fitness</b><p>Film between sets, post before you leave the gym.</p><q>Stop doing crunches. Do these three moves</q></div>
+        <div class="persona"><span class="ic"><svg><use href="icons.svg#i-cap"/></svg></span><b>Educators</b><p>Steps and facts become motion on the word.</p><q>Three AI tools that save me ten hours a week</q></div>
+        <div class="persona"><span class="ic"><svg><use href="icons.svg#i-house"/></svg></span><b>Real estate</b><p>Walkthroughs and market takes, every day.</p><q>What $500k buys you in Austin right now</q></div>
+        <div class="persona"><span class="ic"><svg><use href="icons.svg#i-mic"/></svg></span><b>Podcasters</b><p>Your best minute, cut and captioned.</p><q>The question that made my guest go quiet</q></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec tint" aria-labelledby="cmp-h">
+    <div class="wrap">
+      <div class="sec-head center"><span class="label">Why it looks better</span><h2 class="h2" id="cmp-h">The details others keep for their top plan</h2></div>
+      <div class="compare">
+        <table>
+          <thead><tr><th scope="col">In every edit</th><th scope="col" class="us">ChannelRecipe</th><th scope="col">Usual AI editors</th></tr></thead>
+          <tbody>
+            <tr><td>Music made for this video, under your voice</td><td class="us"><span class="y"><svg><use href="icons.svg#i-check"/></svg>Every edit</span></td><td class="them"><span class="n">A library track you pick</span></td></tr>
+            <tr><td>B-roll on your words</td><td class="us"><span class="y"><svg><use href="icons.svg#i-check"/></svg>Your clips first, then made for the line</span></td><td class="them"><span class="n">Stock clips</span></td></tr>
+            <tr><td>Motion graphics</td><td class="us"><span class="y"><svg><use href="icons.svg#i-check"/></svg>Built for what you said</span></td><td class="them"><span class="n">Templates</span></td></tr>
+            <tr><td>Learn a look from a TikTok link</td><td class="us"><span class="y"><svg><use href="icons.svg#i-check"/></svg>Yes, plus Reels and Shorts</span></td><td class="them"><span class="n">Reels and Shorts only</span></td></tr>
+            <tr><td>Retakes cut by what you said</td><td class="us"><span class="y"><svg><use href="icons.svg#i-check"/></svg>Every edit</span></td><td class="them"><span class="n">Paid plans</span></td></tr>
+            <tr><td>Watched back before you see it</td><td class="us"><span class="y"><svg><use href="icons.svg#i-check"/></svg>Next to your raw take</span></td><td class="them"><span class="n">Not offered</span></td></tr>
+          </tbody>
+        </table>
+        <p class="src">Compared with a leading AI captions editor's own plans and app, checked on 2026-10-29.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="pricing" aria-labelledby="price-h">
+    <div class="wrap">
+      <div class="pricing-head">
+        <span class="label">Pricing</span>
+        <h2 class="h2" id="price-h">Start free. Pay for edits, not credits.</h2>
+        <div class="bill-toggle" role="group" aria-label="Billing period" data-bill>
+          <button type="button" aria-pressed="false" data-period="month">Monthly</button>
+          <button type="button" aria-pressed="true" data-period="year">Yearly <span class="save">2 months free</span></button>
+        </div>
+      </div>
+      <div class="plans" data-plans></div>
+      <p class="plan-note">Every plan includes everything above. Cancel anytime.</p>
+    </div>
+  </section>
+
+  <section class="sec tint" id="faq" aria-labelledby="faq-h">
+    <div class="wrap">
+      <div class="sec-head center"><h2 class="h2" id="faq-h">Questions, answered</h2></div>
+      <div class="faq">
+        <details><summary>Will it cut off my words, or sound like AI?<span class="pm"><svg width="14" height="14"><use href="icons.svg#i-plus"/></svg></span></summary><p>No. We cut by what you said, not by silence, so words stay whole and the pauses that land a line stay in. Before you see an edit, we watch and listen to it next to your take.</p></details>
+        <details><summary>Do I need to know how to edit?<span class="pm"><svg width="14" height="14"><use href="icons.svg#i-plus"/></svg></span></summary><p>No. You film, pick a look or paste a link, and download a finished Reel. Want a change? Say it in plain words, like "bigger captions" or "keep my intro".</p></details>
+        <details><summary>Are you copying other creators?<span class="pm"><svg width="14" height="14"><use href="icons.svg#i-plus"/></svg></span></summary><p>We learn how a video is edited: the cut rhythm, the caption look, how loud the music sits and when the sounds hit. We never use their footage, music or face. Your Reel is 100% your own footage.</p></details>
+        <details><summary>Which links work?<span class="pm"><svg width="14" height="14"><use href="icons.svg#i-plus"/></svg></span></summary><p>TikTok, Instagram Reels and YouTube Shorts. Some Instagram Reels only load for logged-in viewers. If a link won't load, drop in the downloaded video file instead.</p></details>
+        <details><summary>How long does an edit take?<span class="pm"><svg width="14" height="14"><use href="icons.svg#i-plus"/></svg></span></summary><p>Minutes, not an evening, and none of them are yours. Close the tab: we email you when it's ready.</p></details>
+        <details><summary>What should I film?<span class="pm"><svg width="14" height="14"><use href="icons.svg#i-plus"/></svg></span></summary><p>Hold your phone upright and talk to it, for up to 5 minutes. Retakes are fine. Say the line again and we keep the best one.</p></details>
+        <details><summary>Where does the music come from?<span class="pm"><svg width="14" height="14"><use href="icons.svg#i-plus"/></svg></span></summary><p>Every edit gets its own instrumental bed, made for that video and mixed under your voice. Want a trending sound instead? Export without music and add the sound in Instagram or TikTok.</p></details>
+        <details><summary>Is the B-roll stock footage?<span class="pm"><svg width="14" height="14"><use href="icons.svg#i-plus"/></svg></span></summary><p>Your own clips come first: add them with your take and we cut them in on the right words. If a line needs a shot you don't have, we make one for that line.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec final" aria-labelledby="final-h">
+    <div class="wrap">
+      <div class="final-in">
+        <h2 class="h2" id="final-h">Your next Reel is already filmed</h2>
+        <p class="lead">It's in your camera roll. Two free edits, no card.</p>
+        <div class="try-box" data-paste>
+          <form novalidate>
+            <label class="sr-only" for="final-link">A TikTok, Reel or Short whose editing you love</label>
+            <div class="field"><svg class="lead"><use href="icons.svg#i-link"/></svg><input id="final-link" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a TikTok, Reel or Short you love"></div>
+            <button class="btn btn-lg" type="submit">Edit like this</button>
+          </form>
+          <div class="field-msg" role="status" aria-live="polite"></div>
+          <div class="hint"><a href="app.html#signup">Or just drop in your raw clip <svg width="15" height="15"><use href="icons.svg#i-arrow"/></svg></a></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="cols">
+      <div><a class="brand" href="index.html"><img src="glyph.svg" alt="" width="26" height="26">ChannelRecipe</a><p>Edit your own footage like your favourite creator. Made by the team behind ChannelRecipe Studio.</p></div>
+      <div><h4>Product</h4><ul><li><a href="#looks">Looks</a></li><li><a href="#learn">Learn a creator</a></li><li><a href="#pricing">Pricing</a></li><li><a href="app.html#signup">Try it free</a></li></ul></div>
+      <div><h4>For</h4><ul><li><a href="#who-h">Coaches</a></li><li><a href="#who-h">Founders</a></li><li><a href="#who-h">Fitness creators</a></li><li><a href="#who-h">Podcasters</a></li></ul></div>
+      <div><h4>Company</h4><ul><li><a href="https://channelrecipe.com/">Faceless Studio</a></li><li><a href="https://channelrecipe.com/privacy">Privacy</a></li><li><a href="https://channelrecipe.com/terms">Terms</a></li></ul></div>
+    </div>
+    <p class="base">© 2026 ChannelRecipe. The demo Reels are public Reels by other creators, re-edited by our engine for this internal preview. The B-roll in them is AI-generated.</p>
+  </div>
+</footer>
+
+<div class="proto" role="note"><i></i><span>Internal prototype: demo Reels belong to their creators, prices are drafts</span></div>
+</body>
+</html>
