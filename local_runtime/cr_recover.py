@@ -836,9 +836,17 @@ def _ranking(extra) -> str:
         return found.group(1)
 
 
-def twins(studio, titles, style, minutes, *, extra="") -> list:
+def _recording(ref) -> str:
+    """A narration recording as an upload's id: Create sends the id, a saved job_spec holds the path the run route
+    resolved it to (uploads/voiceovers/<id>), on Windows with backslashes. "" for none."""
+    return re.split(r"[\\/]", str(ref or "").strip())[-1]
+
+
+def twins(studio, titles, style, minutes, *, extra="", recording=None) -> list:
     """For each title, the newest stopped video of this Studio with the same title, style and minutes (and, for a
-    Ranking Short, the same countdown choices): Studio offers to resume it before starting again."""
+    Ranking Short, the same countdown choices): Studio offers to resume it before starting again. recording: the new
+    video's own narration recording ("" for an AI voice; None: not compared). A stopped video narrated another way is
+    not the same video: resuming it would quietly drop the recording, or keep one the creator no longer asked for."""
     wanted = {title_key(t): str(t).strip() for t in titles if title_key(t)}
     if not wanted:
         return []
@@ -855,6 +863,8 @@ def twins(studio, titles, style, minutes, *, extra="") -> list:
         except (TypeError, ValueError):
             continue
         if _ranking(spec.get("extra")) != ranking:
+            continue
+        if recording is not None and _recording(spec.get("byo_audio")) != _recording(recording):
             continue
         at = _mtime(job / "cr-project.json")
         if key not in found or at > found[key]["at"]:

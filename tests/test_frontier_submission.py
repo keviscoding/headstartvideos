@@ -181,3 +181,30 @@ def test_exact_installed_frontier_queue_validation_and_normalization_are_kept():
     assert spec["auto_style"] is False and spec["burn_subs"] is False
     assert spec["features"] == {"threed": True} and spec["extra"] == "Original creative direction"
     assert studio.JOBS["example"]["threed"] and studio.JOBS["example"]["state"] == "queued"
+
+
+def test_a_recording_on_a_short_that_cant_use_one_is_refused_before_it_is_queued(tmp_path, monkeypatch):
+    """Roblox Story Shorts take the creator's own narration recording (Primo, 2026-10-29); the other Shorts write and
+    voice their own and say so before anything is queued. A long video's recording stays the engine's own business."""
+    take = tmp_path / "pitched.mp3"
+    take.write_bytes(b"mp3")
+    monkeypatch.setitem(sys.modules, "voices", SimpleNamespace(
+        resolve=lambda ref: take if ref == take.name else None, _dur=lambda p: 42.0))
+    studio, _, dispatches = studio_with_original()
+    studio.styles = SimpleNamespace(STYLES={
+        "cr-shorts-3d": {"format": "short", "label": "3D Explainer Shorts", "shorts": {"pipeline": "zack3d"}},
+        "cr-shorts-roblox": {"format": "short", "label": "Roblox Story Shorts", "shorts": {"pipeline": "roblox"}},
+        "documentary": {}})
+
+    def send(style, recording):
+        body = {"title": "Everyone has a number", "steps": ["video"], "style": style, "byo_audio": recording}
+        with studio.app.test_request_context(json=body):
+            return cr_submission.submit(studio, body, PROJECT)
+    refused = send("cr-shorts-3d", take.name)
+    assert refused.status_code == 400 and not studio.QUEUE and not dispatches
+    assert refused.get_json()["error"].startswith("3D Explainer Shorts writes and voices its own narration")
+    assert "not on this computer any more" in send("cr-shorts-roblox", "gone.mp3").get_json()["error"]
+    assert not studio.QUEUE
+    queued = send("cr-shorts-roblox", take.name)
+    assert queued.status_code == 200 and len(studio.QUEUE) == 1
+    assert send("documentary", "anything-the-engine-checks.mp3").status_code == 200

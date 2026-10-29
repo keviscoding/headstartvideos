@@ -144,6 +144,10 @@ def install(studio, activity, *, token, home=None):
             shorts = info.get("shorts") if isinstance(info, dict) and info.get("format") == "short" else None
             row["short_seconds"] = int(shorts.get("seconds") or 25) if isinstance(shorts, dict) else None
             row["ranking"] = bool(isinstance(shorts, dict) and shorts.get("pipeline") == "ranking")
+            # a Shorts recipe the creator's own narration recording can voice (Roblox Story Shorts): Create offers My
+            # recording for it; the other Shorts write and voice their own (every long-video recipe takes one)
+            import cr_shorts
+            row["own_recording"] = cr_shorts.takes_own_recording(info) if cr_shorts.is_short(info) else True
             # what one Short of this recipe costs on the creator's accounts (voice, music, effects), for quotes
             cost = shorts.get("cost_usd") if isinstance(shorts, dict) else None
             row["short_cost_usd"] = (float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool)
