@@ -440,10 +440,19 @@ def _prompt_parts(request: dict, folder: Path) -> tuple[str, list]:
     return "\n\n".join(t for t in texts if t), images
 
 
+RELAYED_CC_TIMEOUT = 1500        # seconds: what the 3D engine allows its own Claude Code calls (threed._cc, 900 + 600)
+
+
 def answer(request: dict) -> str:
     if request.get("kind") == "ytdlp":
         return json.dumps(run_ytdlp(request))
     import make_video as mv
+    # The machine's 3D director and reviews reach this computer as plain requests, so they ran under the engine's
+    # 15-minute Claude Code limit instead of the 25 minutes threed gives its own calls at home: a 1-minute 3D video's
+    # Opus director timed out at 900 s on the first own-account GPU test (2026-10-29), and the failed stage stopped
+    # every Claude step after it. Relayed calls get the 3D engine's own limit.
+    if int(getattr(mv, "CC_TIMEOUT", 900) or 900) < RELAYED_CC_TIMEOUT:
+        mv.CC_TIMEOUT = RELAYED_CC_TIMEOUT
     with tempfile.TemporaryDirectory(prefix="cr-cloud-") as tmp:
         prompt, images = _prompt_parts(request, Path(tmp))
         if images:

@@ -302,3 +302,18 @@ def test_old_leftovers_are_tidied_but_finished_videos_stay(byo):
     assert byo.byo.tidy(b, "overlay-new", "5.3-admin.112") == 4
     assert sorted(byo.vol.files) == ["code/overlay-new.zip", "jobs/a.json", "out/a/a.mp4",
                                      "releases/channelrecipe-5.3-admin.112.zip"]
+
+
+def test_a_relayed_3d_director_gets_the_3d_engines_claude_time_not_15_minutes(byo, monkeypatch):
+    """The first own-account GPU test (2026-10-29): the machine's Opus 3D director reached this Studio as a plain
+    request, ran under the engine's 900 s Claude Code limit and timed out; at home threed allows 1500 s."""
+    seen = {}
+
+    def claude(prompt, model, max_tokens, provider=None):
+        seen["timeout"] = engine.CC_TIMEOUT
+        return "a plan"
+    engine = SimpleNamespace(CC_TIMEOUT=900, SCRIPT_MODEL="m", claude=claude)
+    monkeypatch.setitem(sys.modules, "make_video", engine)
+    assert byo.cloud.answer({"model": "claude-opus", "messages": [{"role": "user", "content": "Direct"}]}) == "a plan"
+    assert seen["timeout"] == byo.cloud.RELAYED_CC_TIMEOUT == 1500
+    assert byo.byo.RELAY_WAIT_S > byo.cloud.RELAYED_CC_TIMEOUT, "the machine waits longer than the Studio may take"

@@ -52,7 +52,7 @@ PRICE_PER_HR = {"cpu": round((8 * 0.0000131 + 32 * 0.00000222) * 3600, 2),
 LABELS = {"cpu": "Your Modal machine (8 cores)", "gpu": "Your Modal machine with a graphics card (NVIDIA L4)"}
 # The same planning numbers as ChannelRecipe's own machines (webapp/cloud_jobs.py): fixed work plus time per minute
 STARTUP_MINUTES, PER_VIDEO_MINUTE, MAX_MINUTES = 12, {"cpu": 2.5, "gpu": 7.0}, 240
-RELAY_WAIT_S = 20 * 60
+RELAY_WAIT_S = 30 * 60          # longer than a relayed Claude Code call may take here (cr_cloud.RELAYED_CC_TIMEOUT)
 # The settings a machine is given: the engine's render keys (farm/config.py RENDER_KEYS) and the job's own. Never an
 # Anthropic key: the machine's Claude is the creator's Claude Code, through the relay.
 RENDER_KEYS = {
@@ -623,6 +623,7 @@ class Relay:
                         text, error = cr_cloud.answer(request), ""
                     except BaseException as e:              # noqa: BLE001 - the engine exits on Claude errors
                         text, error = "", f"{type(e).__name__}: {str(e)[:200]}"
+                        print(f"Studio Cloud: a question from your Modal machine failed here: {error}", flush=True)
                     for _ in range(3):
                         try:
                             answers.put("a:" + item["id"], {"text": text, "error": error})
