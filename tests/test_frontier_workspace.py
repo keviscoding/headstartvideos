@@ -430,7 +430,7 @@ def test_a_video_whose_voice_stopped_can_be_voiced_another_way(env, monkeypatch)
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
     got = env.get("/cr-workspace/voice/the-heist--abc").json
     assert got["stopped_on_voice"] and got["current"] == "again" and got["script"] == "The vault opened at midnight."
-    assert [c["id"] for c in got["choices"]] == ["again", "gemini-man", "gemini-woman", "elevenlabs", "own"]
+    assert [c["id"] for c in got["choices"]] == ["again", "gemini-man", "gemini-woman", "elevenlabs", "fish", "own"]
     eleven = next(c for c in got["choices"] if c["id"] == "elevenlabs")
     assert eleven["ready"] is False and eleven["setup"] == "/cr-setup" and "never in a chat" in eleven["note"]
     pick = lambda body, **kw: env.client.post("/cr-workspace/voice/the-heist--abc", base_url=BASE, json=body,
@@ -445,6 +445,22 @@ def test_a_video_whose_voice_stopped_can_be_voiced_another_way(env, monkeypatch)
     monkeypatch.setenv("ELEVENLABS_API_KEY", "customer-eleven-key")
     assert pick({"choice": "elevenlabs"}).json["saved"]
     assert json.loads((job / cr_media.VOICE_CHOICE).read_text()) == {"provider": "original"}
+    # the creator's own Fish Audio account (cr_fish): its key in Setup, then the voice they chose there
+    import cr_fish
+    import cr_workspace
+    monkeypatch.delenv(cr_fish.KEY_ENV, raising=False)
+    fish = lambda: next(c for c in env.get("/cr-workspace/voice/the-heist--abc").json["choices"] if c["id"] == "fish")
+    assert fish()["ready"] is False and fish()["setup"] == "/cr-setup" and "never in a chat" in fish()["note"]
+    monkeypatch.setenv(cr_fish.KEY_ENV, "customer-fish-key-0123")
+    settings = {**cr_workspace.cr_bridge.load_settings(), "narration": {"provider": "fish", "model": "s2-pro"}}
+    monkeypatch.setattr(cr_workspace.cr_bridge, "load_settings", lambda: settings)
+    assert fish()["ready"] is False and "Choose voice" in fish()["note"], "no Fish Audio voice chosen yet"
+    settings["narration"].update(voice="f" * 32, voice_name="Deep Narrator")
+    assert fish()["ready"] is True and "Deep Narrator" in fish()["note"]
+    assert pick({"choice": "fish"}).json["saved"]
+    assert json.loads((job / cr_media.VOICE_CHOICE).read_text()) == {"provider": "fish", "model": "s2-pro",
+                                                                     "voice": "f" * 32, "voice_name": "Deep Narrator"}
+    assert env.get("/cr-workspace/voice/the-heist--abc").json["current"] == "fish"
     take = env.home / "Desktop" / "my take.m4a"
     take.parent.mkdir()
     take.write_bytes(b"my voice")

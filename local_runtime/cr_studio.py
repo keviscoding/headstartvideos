@@ -715,8 +715,8 @@ def create_app():
         if request.method in ("POST", "DELETE", "PUT", "PATCH"):
             if request.headers.get("X-CR-Local-Token") != token:
                 return jsonify(error="Refresh your studio page and try again."), 403
-        account_change = request.path in {"/cr-connect", "/cr-provider", "/cr-hub", "/cr-voice", "/cr-images", "/cr-claude/setup",
-                                          "/cr-cloud/modal", "/cr-cloud/modal/remove"}
+        account_change = request.path in {"/cr-connect", "/cr-provider", "/cr-hub", "/cr-voice", "/cr-voice/fish", "/cr-images",
+                                          "/cr-claude/setup", "/cr-cloud/modal", "/cr-cloud/modal/remove"}
         setup_action = (request.get_json(silent=True) or {}).get("action") if request.path == "/cr-claude/setup" else None
         if setup_action == "check":
             account_change = False
@@ -843,7 +843,7 @@ def create_app():
                                   "visual": brain.get("visual_model") or brain.get("model", "")}
         # Key readiness only; never send saved provider keys to the browser.
         checks["providers"] = {name: bool(os.getenv(name)) for name in
-                              ["ELEVENLABS_API_KEY", "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "ATLASCLOUD_API_KEY", "PEXELS_API_KEY", "GEMINI_API_KEY", "EPIDEMIC_API_KEY", "AI33_API_KEY", "SIRAY_API_KEY", "BRAVE_API_KEY"]}
+                              ["ELEVENLABS_API_KEY", "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "ATLASCLOUD_API_KEY", "PEXELS_API_KEY", "GEMINI_API_KEY", "EPIDEMIC_API_KEY", "AI33_API_KEY", "SIRAY_API_KEY", "BRAVE_API_KEY", "FISH_AUDIO_API_KEY"]}
         hub = cr_media.profile()
         checks["model_accounts"] = cr_media.PROVIDERS
         try:                                                # Setup's Render in the cloud card (never the token)
@@ -879,6 +879,10 @@ def create_app():
             # Setup's ElevenLabs card: narration on the creator's own ElevenLabs key is connected (it read as not
             # connected, and Create asked to connect a voice account that was already connected).
             checks["narration"].update(connected=True, label="ElevenLabs", direct="elevenlabs")
+        if override.get("provider") == "fish":
+            # Setup's Fish Audio card: narration on the creator's own Fish Audio key (cr_fish)
+            import cr_fish
+            checks["narration"] = cr_fish.setup_row()
         image_cfg = cr_media.profile("images") if cr_media.active("images") else {}
         plan = []
         if image_cfg.get("provider") == "kie":
@@ -1704,6 +1708,8 @@ def create_app():
 
     import cr_voice_library
     cr_voice_library.install(studio, activity)                  # Choose voice with ElevenLabs connected directly
+    import cr_fish
+    cr_fish.install(studio, activity, write_provider)           # Fish Audio on the creator's own key: Setup + Choose voice
 
     @studio.app.post("/cr-hub")
     def save_hub():

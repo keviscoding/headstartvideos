@@ -205,6 +205,12 @@ under Saved ideas.
 - Voices: Kie narrates with Gemini voices only (70 of them, in Create → Choose voice, each with a free sample). For
   ElevenLabs voices the customer adds their own ElevenLabs key in Setup & accounts (its whole voice library then shows
   in Choose voice). Studio moved any saved Kie ElevenLabs voice to the Gemini voice of its kind and says so once.
+  Fish Audio works the same way on the customer's own Fish Audio API key (Setup & accounts → Narration voice → Fish
+  Audio; never in chat): `voices` lists their own Fish Audio voices, the library voices they picked, or Fish Audio's
+  public library (search, or a pasted fish.audio voice link), each with its free sample where Fish Audio has one;
+  `choose_voice` uses one for their next videos, and `make_videos` options.voice reads one batch with another Fish
+  Audio voice. `quote` counts its price (S2.1 Pro: $15 a million bytes of script, about $0.015 a minute). The
+  self-voiced Shorts (Ranking, Roblox) keep their own narrator.
 - Research footage (YouTube): Studio's video watcher is Kie when that's their only video-model key. If Kie's
   watcher isn't answering, ChannelRecipe's own watcher takes over that video's footage watching, from the plan's
   monthly clip watches (the same ones Ranking Shorts use; at most 20 a video), never their credits; if those are
@@ -215,7 +221,9 @@ under Saved ideas.
   why a video that should have had captions has none (for example its narration had no timed words): tell them.
 - A video that stopped on its voice (`progress(id)` shows `voice_choices`, for example Kie answering "Internal Error"):
   tell them what failed and whether anything was charged (`voice_failed`), then ask which way to carry on: the same
-  voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs account, or their own recording.
+  voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs or Fish Audio account, or their
+  own recording. When the again choice's note says Fish Audio may already have read part of it, again can pay for
+  that part twice (a few cents): say so and pass it only after they say yes.
   Offer only the ready ones (an ElevenLabs key goes in Setup & accounts, never in chat) and never pick for them. For
   their own recording, show them the script (`script_file`) to read, then `resume_video(id, voice="own",
   recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.

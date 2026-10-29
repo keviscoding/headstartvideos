@@ -134,7 +134,7 @@ def _check_hub(provider, key):
     _accounts[identity] = time.monotonic()+300
 
 
-def own_narration(studio, style, info, why):
+def own_narration(studio, style, info, why, spec=None):
     """(ok, why) for narration the engine's own check does not know. That check counts only Algrow, WaveSpeed and AI33
     keys, so with ElevenLabs connected on Setup (narration on the creator's own key) every Create stopped on "The
     voiceover needs ALGROW_API_KEY, WAVESPEED_API_KEY or AI33_API_KEY" (the owner, 2026-10-21). A Ranking or Roblox
@@ -146,6 +146,16 @@ def own_narration(studio, style, info, why):
         if eleven or os.getenv("KIE_API_KEY", "").strip():
             return True, ""
         return False, "Connect ElevenLabs or Kie.ai in Setup & accounts for the narrator."
+    import cr_fish
+    asked = (spec or {}).get("cr_voice") if isinstance((spec or {}).get("cr_voice"), dict) else {}
+    if asked.get("provider") == "fish" and cr_fish.VOICE_ID.fullmatch(str(asked.get("voice") or "")) \
+            and cr_fish.key():
+        return True, ""                    # a Fish Audio voice for this video only (make_videos options.voice)
+    if cr_fish.selected():
+        # the creator's own Fish Audio key (Setup's Fish Audio card): any recipe that isn't a self-voiced Short
+        if cr_fish.voice_for_style(style).get("voice"):
+            return True, ""
+        return False, "Choose this recipe's Fish Audio voice in Create, under Narration, Choose voice."
     if eleven:
         try:
             pick = (studio.voices.picks() or {}).get(style) or {}
@@ -231,7 +241,13 @@ def preset(studio, checks, spec, ahead=0.0):
         voice = caps.get("base",{}).get("voice",{})
         ok, why = voice.get("ok"), voice.get("why") or "Connect narration in step 4."
         if not ok:
-            ok, why = own_narration(studio, style, info, why)
+            ok, why = own_narration(studio, style, info, why, spec)
+        elif ((info or {}).get("shorts") or {}).get("pipeline") not in ("ranking", "roblox"):
+            import cr_fish
+            if cr_fish.selected() and not cr_fish.voice_for_style(style).get("voice") \
+                    and not (spec.get("cr_voice") or {}).get("voice"):
+                # Fish Audio reads it (Setup's choice), but no Fish Audio voice was chosen: said before anything starts
+                ok, why = False, "Choose this recipe's Fish Audio voice in Create, under Narration, Choose voice."
         results.append(item("voice", "Narration account", ok, why))
     for feature, active in wanted.items():
         if active and "video" in steps or active and feature == "ai_images" and any(s in steps for s in ("images","thumbnail")):
