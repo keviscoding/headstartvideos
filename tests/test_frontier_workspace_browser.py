@@ -1336,6 +1336,8 @@ def test_roblox_story_shorts_take_my_recording_and_the_other_shorts_say_they_voi
         o.value = 'adam-pitched-1a2b.mp3'; o.textContent = 'adam-pitched · 32s'; s.append(o); s.value = o.value;
         s.dispatchEvent(new Event('change'));}""")
     page.locator("#crw-title").fill("Everyone has a number")
+    # a length typed before My recording was chosen is hidden now: it can't stop the Create
+    page.evaluate("document.getElementById('crw-seconds').value = '90'")
     page.locator("#crw-create").click()
     page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
     body = env.creates[0]["body"]

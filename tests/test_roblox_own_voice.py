@@ -29,7 +29,7 @@ def align(monkeypatch):
     return align
 
 
-def roblox(tmp_path, align, own="", heard=None, seconds=0.0, ran=None):
+def roblox(tmp_path, align, own="", heard=None, seconds=0.0, ran=None, lang="en"):
     """make_roblox's own functions (never run as a whole: that needs Claude, a voice and the renderer). heard: what the
     stand-in Whisper hears in the recording; ran: the commands run (the stand-in ffmpeg writes voice.wav)."""
     tree = ast.parse(ROBLOX.read_text(encoding="utf-8"))
@@ -47,7 +47,7 @@ def roblox(tmp_path, align, own="", heard=None, seconds=0.0, ran=None):
     voicefit = types.SimpleNamespace(SR=44100, words=lambda path: list(heard or []),
                                      _load=lambda path, sr=44100: [0.0] * int(seconds * 44100))
     space = {"os": __import__("os"), "re": re, "json": json, "Path": Path, "OUT": tmp_path, "OWN_VOICE": own,
-             "FF": "ffmpeg", "SECONDS": 55, "WPS": 4.35, "log": lambda *a: None, "align": align, "voicefit": voicefit,
+             "FF": "ffmpeg", "LANG_CODE": lang, "SECONDS": 55, "WPS": 4.35, "log": lambda *a: None, "align": align, "voicefit": voicefit,
              "subprocess": types.SimpleNamespace(run=run),
              "tts": lambda *a: (_ for _ in ()).throw(AssertionError("no voice is made for a recording"))}
     exec(compile(ast.Module(body=consts + body, type_ignores=[]), str(ROBLOX), "exec"), space)
@@ -153,3 +153,22 @@ def test_main_needs_no_voice_account_with_a_recording_and_plans_on_it():
     assert "elif not (OUT / \"voice.json\").exists()" in main, "the voice-account check is only for the AI voice"
     assert "plan = fit_to_recording(plan, own_heard()[\"words\"])" in source
     assert source.count("own_block()") >= 2 and source.count('.replace("{words}", str(target_words()))') == 2
+
+
+def test_the_same_recording_in_another_language_is_heard_and_planned_again(tmp_path, align):
+    """Whisper heard a Spanish take as English (Create's Language left on English): the creator corrects the language and
+    makes the Short again. The old words must not be reused: the take is heard again and the plan starts over."""
+    take = tmp_path / "toma.mp3"
+    take.write_bytes(b"una toma")
+    ran = []
+    english = roblox(tmp_path, align, str(take), HEARD, seconds=4.9, ran=ran)
+    english.own_reset()
+    english.own_heard()
+    (tmp_path / "plan.json").write_text("{}")
+    assert english.own_sig() == roblox(tmp_path, align, str(take)).own_sig(), "English: the recording's own signature"
+    spanish = roblox(tmp_path, align, str(take), HEARD, seconds=4.9, ran=ran, lang="es")
+    assert spanish.own_sig() != english.own_sig()
+    spanish.own_reset()
+    assert not (tmp_path / "plan.json").exists() and not (tmp_path / "own_heard.json").exists()
+    spanish.own_heard()
+    assert len(ran) == 2, "heard again in Spanish"

@@ -196,7 +196,8 @@ def resume_first(studio, payload):
         minutes = 10
     try:
         import cr_recover
-        matches = cr_recover.twins(studio, titles, payload.get("style"), minutes, extra=payload.get("extra") or "")
+        matches = cr_recover.twins(studio, titles, payload.get("style"), minutes, extra=payload.get("extra") or "",
+                                   recording=str(payload.get("byo_audio") or ""))
     except Exception:                                  # noqa: BLE001 - never in the way of a new video
         return None
     if not matches:
