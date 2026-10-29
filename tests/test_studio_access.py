@@ -140,18 +140,37 @@ def test_studio_112_studies_never_stop_counting_by_idling(env):
     assert studio._release_number("not json") == studio._release_number("{}") == 0
 
 
-def test_saving_a_completed_study_counts_as_its_clone(env):
-    """A study whose own save stopped ends failed; Save completed style is then what uses the clone, never a free one."""
+def _save_completed(env, creator, n, version):
+    saved = studio.native_begin(creator, studio.NativeBegin(
+        begin_id=f"save_completed_{n:04d}", title=f"Save completed style: Channel {n}", style="history",
+        setup={**env.proof, "purpose": "creative"}, max_calls=1))["project_id"]
+    _release(saved, version)
+    return saved
+
+
+def test_saving_a_completed_study_counts_as_its_clone_from_studio_112(env):
+    """112 settles a closed Studio's completed study to failed; its Save completed style then uses the clone, so a
+    study plus its save is one clone, never zero."""
+    creator = user(1, "daily")
+    begun = studio.native_begin(creator, study(env, 0))["project_id"]
+    _release(begun, "5.3-admin.112")
+    _age(begun, 0, "failed")
+    assert studio.style_clone_usage(creator)["used"] == 0
+    saved = _save_completed(env, creator, 0, "5.3-admin.112")
+    assert studio.style_clone_usage(creator)["used"] == 1
+    _age(saved, 30, "done")
+    assert studio.style_clone_usage(creator)["used"] == 1, "study + save stays one clone"
+    _age(saved, 30, "failed")
+    assert studio.style_clone_usage(creator)["used"] == 0, "a save that failed saved nothing"
+
+
+def test_an_older_studios_save_never_counts_so_no_count_jumps_on_deploy(env):
     creator = user(1, "daily")
     begun = studio.native_begin(creator, study(env, 0))["project_id"]
     _age(begun, 0, "failed")
+    saved = _save_completed(env, creator, 0, "5.3-admin.111")
+    _age(saved, 0, "done")
     assert studio.style_clone_usage(creator)["used"] == 0
-    saved = studio.native_begin(creator, studio.NativeBegin(
-        begin_id="save_completed_0001", title="Save completed style: Channel 0", style="history",
-        setup={**env.proof, "purpose": "creative"}, max_calls=1))["project_id"]
-    assert studio.style_clone_usage(creator)["used"] == 1
-    _age(saved, 30, "done")
-    assert studio.style_clone_usage(creator)["used"] == 1
 
 
 def test_videos_and_other_creative_work_never_count(env):
