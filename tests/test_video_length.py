@@ -60,7 +60,7 @@ def make_engine(tmp_path, *, style_info=None, wpm=None, draft_words=None, answer
 def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(cr_length, "STORE", tmp_path / ".cr-voice-pace.json")
     monkeypatch.setattr(cr_length, "voice_key", lambda engine, job, style: "kie|gemini|Charon|en")
-    monkeypatch.setattr(cr_length, "_language_factor", lambda: 1.0)
+    monkeypatch.setattr(cr_length, "_language_factor", lambda engine, style, learned_style: 1.0)
     cr_length._asked.clear()
 
 
@@ -117,7 +117,7 @@ def test_one_measurement_is_not_enough_and_odd_ones_are_not_kept(tmp_path):
 
 
 def test_another_language_scales_the_pace(tmp_path, monkeypatch):
-    monkeypatch.setattr(cr_length, "_language_factor", lambda: 0.9)
+    monkeypatch.setattr(cr_length, "_language_factor", lambda engine, style, learned_style: 0.9)
     engine = make_engine(tmp_path, style_info=CLONE, wpm={"cr_clone_jp": 120})
     cr_length.install(engine)
     engine.generate_script("Qué pasaría", 2, job_dir(tmp_path), False, style="cr_clone_jp")
@@ -226,8 +226,110 @@ def test_the_narrator_key_follows_the_video_voice_choice(tmp_path, monkeypatch):
     assert cr_length.voice_key(engine, tmp_path, "s").startswith("kie|gemini-tts|Kore|")
     media.active = lambda task: False
     assert cr_length.voice_key(engine, tmp_path, "s").startswith("engine|s|")
+    media.active = lambda task: True
+    media.job_voice = lambda job: {"provider": "original"}             # the engine's own voice, chosen for this video
+    assert cr_length.voice_key(engine, tmp_path, "s").startswith("engine|s|")
+    media.job_voice = lambda job: {"provider": "own", "file": "take.mp3"}
+    assert cr_length.voice_key(engine, tmp_path, "s") == ""
+    media.active = lambda task: False
+    media.job_voice = lambda job: {"provider": "kie", "model": "gemini-tts", "voice": "Puck"}
+    assert cr_length.voice_key(engine, tmp_path, "s").startswith("kie|gemini-tts|Puck|")   # read by Kie all the same
 
 
-def test_studio_installs_it_with_the_media_hooks():
+def test_studio_installs_it_around_the_studio_voiceover():
+    """cr_media's voiceover narrates through Studio's accounts without calling the engine's voiceover: cr_length must
+    wrap it from outside, or no Kie narration is ever measured."""
     source = (Path(__file__).parents[1] / "local_runtime" / "cr_media.py").read_text(encoding="utf-8")
     assert "cr_length.install(engine)" in source
+    assert source.index("cr_length.install(engine)") > source.index("engine.generate_voiceover = voiceover")
+
+
+def test_a_voiceover_that_never_calls_the_engines_is_still_measured(tmp_path):
+    engine = make_engine(tmp_path, style_info=CLONE, wpm={"cr_clone_jp": 120}, draft_words=290)
+    engine_voice = engine.generate_voiceover
+
+    def studio_voice(script, job, force=False, avatar_min=0, style=""):     # cr_media.make_voiceover's shape
+        (Path(job) / "audio.mp3").write_bytes(b"kie")
+        return Path(job) / "audio.mp3", Path(job) / "subs.srt"
+    engine.generate_voiceover = studio_voice
+    cr_length.install(engine)
+    job = job_dir(tmp_path)
+    script = engine.generate_script("What if", 2, job, False, style="cr_clone_jp")
+    engine.durations["audio"] = 116.0
+    engine.generate_voiceover(script, job, False, 0, "cr_clone_jp")
+    assert cr_length._load()["kie|gemini|Charon|en"] == [150.0]
+    assert engine_voice is not engine.generate_voiceover
+
+
+def test_a_script_an_earlier_run_wrote_is_not_lengthened_on_resume(tmp_path):
+    """A Resume reuses script.txt, which split_chapters already turned into narration with its chapters placed by their
+    paragraphs' first words: rewriting it there would lose the chapters (and the script the creator saw)."""
+    engine = make_engine(tmp_path, style_info=CLONE, wpm={"cr_clone_jp": 120}, answers=[" ".join(["more"] * 300)])
+    job = job_dir(tmp_path)
+    cached = " ".join(["word"] * 170)
+    (job / "script.txt").write_text(cached, encoding="utf-8")
+
+    def resumed(title, minutes, job, force, style=""):                     # the engine's cached path
+        return engine._factchecked(job, (Path(job) / "script.txt").read_text(encoding="utf-8"), style, title, force)
+    engine.generate_script = resumed
+    cr_length.install(engine)
+    assert engine.generate_script("What if", 2, job, False, style="cr_clone_jp") == cached
+    assert engine.asks == []
+
+
+def test_mood_lines_count_as_markers_and_must_survive_in_order(tmp_path):
+    assert cr_length.spoken_words("[[mood: tense]]\nfour words right here") == 4
+    draft = "## One | calm\n" + " ".join(["a"] * 100) + "\n[[mood: tense]]\n" + " ".join(["b"] * 50)
+    moved = "[[mood: tense]]\n## One | calm\n" + " ".join(["a"] * 300)                    # order changed
+    dropped = "## One | calm\n" + " ".join(["a"] * 300)                                      # mood line lost
+    kept = "## One  | calm\n" + " ".join(["a"] * 200) + "\n[[mood: tense]]\n" + " ".join(["b"] * 100)
+    engine = make_engine(tmp_path, answers=[moved, dropped])
+    assert cr_length.lengthen(engine, job_dir(tmp_path), draft, "x", 320) == draft
+    engine = make_engine(tmp_path, answers=[kept])
+    assert cr_length.lengthen(engine, tmp_path / "job", draft, "x", 320) == kept
+
+
+def test_a_script_without_spaces_between_words_is_not_lengthened(tmp_path):
+    engine = make_engine(tmp_path)
+    draft = "。".join(["これは日本語の文章です"] * 40)
+    assert cr_length.lengthen(engine, job_dir(tmp_path), draft, "x", 320) == draft
+    assert engine.asks == []
+
+
+def test_your_own_recording_chosen_after_an_ai_voice_stopped_is_not_measured(tmp_path):
+    engine = make_engine(tmp_path)
+    job = job_dir(tmp_path)
+    (job / "cr-voice.json").write_text('{"provider": "own", "file": "take.mp3"}', encoding="utf-8")
+    (job / "audio.mp3").write_bytes(b"x")
+    engine.durations["audio"] = 120.0
+    cr_length.after_voice(engine, job, " ".join(["w"] * 300), "x", None)
+    assert cr_length._load() == {}
+
+
+def test_a_style_that_speeds_its_voice_up_is_measured_and_planned_at_the_narrators_own_pace(tmp_path):
+    fast = {"cr_clone_jp": {"cr_style_clone": {"visual_mode": "reference_only"}, "voice": {"speed": 1.25}}}
+    engine = make_engine(tmp_path, style_info=fast, wpm={"cr_clone_jp": 120})
+    job = job_dir(tmp_path)
+    (job / "audio.mp3").write_bytes(b"x")
+    engine.durations["audio"] = 96.0                       # 320 words in 96 s after a 1.25x speed-up: 200 heard
+    cr_length.after_voice(engine, job, " ".join(["w"] * 320), "cr_clone_jp", None)
+    assert cr_length._load()["kie|gemini|Charon|en"] == [160.0]  # the narrator reads 160 at its own speed
+    cr_length.install(engine)
+    other = tmp_path / "other"
+    other.mkdir()
+    engine.generate_script("What if", 2, other, False, style="cr_clone_jp")
+    assert engine.targets == [400]                          # 2 x 160 x 1.25: the sped-up voice reads more a minute
+    cr_length.record("kie|gemini|Charon|en", 340, 120.0)    # measured twice now: 160 and 170, median 165
+    again = tmp_path / "again"
+    again.mkdir()
+    engine.generate_script("What if", 2, again, False, style="cr_clone_jp")
+    assert engine.targets[-1] == int(2 * 165 * 1.25)
+
+
+def test_a_damaged_pace_file_is_read_as_no_measurement(tmp_path):
+    cr_length.STORE.write_text('{"k": 5, "j": {"a": 1}, "i": [150, true, "x", 170]}', encoding="utf-8")
+    assert cr_length.measured("k") == (None, 0)
+    assert cr_length.measured("j") == (None, 0)
+    assert cr_length.measured("i") == (160.0, 2)
+    assert cr_length.record("k", 300, 120.0) == 150.0
+    assert cr_length._load()["k"] == [150.0]
