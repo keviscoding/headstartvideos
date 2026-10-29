@@ -1155,7 +1155,7 @@
     try {p=payload();} catch(e){error(e.message);return;}
     if(state.renderOn==='cloud'&&state.cloudInfo?.available&&!cloudBlock()){
       state.submitting=true;gate();$('crw-create').textContent='Starting in the cloud…';
-      try {await api('/cr-cloud/start',{method:'POST',body:p});save();showPage('projects');toast('Studio is preparing your video here. A ChannelRecipe machine renders it next.');await cloudPanel();}
+      try {await api('/cr-cloud/start',{method:'POST',body:p});save();showPage('projects');toast(state.cloudInfo?.byo?'Studio is preparing your video here. Your Modal machine renders it next.':'Studio is preparing your video here. A ChannelRecipe machine renders it next.');await cloudPanel();}
       catch(e){error(e.message);if(e.details?.quote){state.cloudQuote=e.details.quote;cloudQuoteShow();}} finally{state.submitting=false;gate();}
       return;
     }

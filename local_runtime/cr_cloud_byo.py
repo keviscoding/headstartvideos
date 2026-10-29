@@ -513,6 +513,12 @@ class ModalPods:
             return True
         if job["status"] != "running":
             return True
+        # the farm also "terminates" a machine whose video is done: it is only uploading its last files and returning
+        # how long it ran, so give it a moment to finish by itself before stopping it
+        for _ in range(12 if self._done_already(job) else 0):
+            if self._refresh(job)["status"] != "running":
+                return True
+            time.sleep(5)
         for _ in range(max(1, tries)):
             try:
                 _modal().FunctionCall.from_id(job["call_id"], client=client(self.home)).cancel(terminate_containers=True)
@@ -524,6 +530,13 @@ class ModalPods:
                 _final_status(self.home, job)
             return True
         return False
+
+    def _done_already(self, job: dict) -> bool:
+        try:
+            return json.loads(bucket(self.home).get_bytes(f"status/{job['slug']}.json").decode("utf-8")).get(
+                "state") == "done"
+        except Exception:                                   # noqa: BLE001
+            return False
 
     def gpus(self) -> list:
         return []
