@@ -106,6 +106,8 @@ def install(studio, activity, *, token, home=None):
         if not isinstance(data, dict) or not isinstance(data.get("channels"), list):
             raise RuntimeError("The local recipe catalogue is unavailable.")
         data = dict(data)
+        import cr_media as media_prices
+        media_prices.price_catalog(data)       # picture prices at the creator's Setup image model
         styles = getattr(studio.styles, "STYLES", {})
         automatic = next((row for row in data["channels"]
                           if row.get("name") == "documentary" and row.get("auto_style") is True), None)
@@ -184,6 +186,11 @@ def install(studio, activity, *, token, home=None):
                              + preview_version(source)) if source else None,
                 preview_label=source.label if source else "No video preview yet",
                 preview_video_url=source.video_url if source else None)
+            # a few moving seconds for the card (hover or open): our loop of a ready-made recipe, else a few seconds of
+            # the creator's own latest video in it (cr_recipe_clips); None keeps the picture
+            import cr_recipe_clips
+            own = outputs.get(row.get("name"))
+            row["preview_clip"] = cr_recipe_clips.clip_for(row.get("name"), own.video_url if own else None)
         preview_cache.update(at=time.monotonic(), sources=sources)
         # what Research footage may watch for each length, 1 to 60 minutes (Create says it before a video starts)
         import cr_watch

@@ -255,6 +255,14 @@ def thumbnail(row: dict) -> str:
     return ""
 
 
+def clip_link(clip) -> str:
+    url = clip.get("url") if isinstance(clip, dict) and isinstance(clip.get("url"), str) else ""
+    if url.startswith("/f/video/"):
+        start, end = clip.get("start") or 0, clip.get("end") or 0
+        return link(url) + (f"#t={start:g},{end:g}" if end else "")
+    return url if url.startswith("https://") else ""
+
+
 def style_card(row: dict, thumb: str = "") -> dict:
     block = cloud_block(row)
     return {"id": row["name"], "name": row.get("label") or row["name"],
@@ -264,6 +272,8 @@ def style_card(row: dict, thumb: str = "") -> dict:
             "cloud_note": block, "media_cost": one_line(row.get("cost"), 220) if row.get("cost") else "",
             "short_seconds": row.get("short_seconds"), "needs_panels": bool(row.get("panels")),
             "thumbnail_path": thumb, "preview_url": link(row["preview_url"]) if row.get("preview_url") else "",
+            # a few moving seconds of the style (cr_recipe_clips): the gallery plays it on hover; a link to show them
+            "moving_preview_url": clip_link(row.get("preview_clip")),
             # burned-in captions by the style's own design (false: none, like its channel; captions=true adds them)
             "captions": row.get("captions", True) is not False,
             # its recurring character (options.character / character_picture change it for a video)
@@ -326,7 +336,27 @@ def coded_usd(row: dict, minutes: float) -> float:
     return float(coded.get("plates_usd") or 0) + pieces * float(coded.get("music_usd_per_piece") or 0)
 
 
-def media_estimate(cat: dict, row: dict, minutes: int, features: dict) -> dict:
+def picture_usd(cat: dict) -> float:
+    """One AI picture on the creator's image account at their Setup model (the catalog's picture_price), else the
+    engine's estimate."""
+    for value in ((cat.get("picture_price") or {}).get("usd"), (cat.get("prices") or {}).get("picture")):
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return float(value)
+    return 0.02
+
+
+def thumbnail_count(row: dict, options: dict) -> int:
+    """How many YouTube thumbnails a video makes: options.thumbnails=false makes none (Swapnil, 2026-10-29: "save some
+    Kie credits"); a Short makes none either way."""
+    if kind(row) == "short" or (options or {}).get("thumbnails", True) is False:
+        return 0
+    try:
+        return max(1, min(int((options or {}).get("thumbnail_count") or 2), 4))
+    except (TypeError, ValueError):
+        return 2
+
+
+def media_estimate(cat: dict, row: dict, minutes: int, features: dict, thumbnails: int = 0) -> dict:
     prices = cat.get("prices") or {}
     per = prices.get("features") or {}
     voice = float(((prices.get("voice") or {}).get("per_min")) or 0)
@@ -334,13 +364,19 @@ def media_estimate(cat: dict, row: dict, minutes: int, features: dict) -> dict:
     each = total * minutes + coded_usd(row, minutes)
     if kind(row) == "short" and isinstance(row.get("short_cost_usd"), (int, float)):
         each = float(row["short_cost_usd"])                        # the recipe's own estimate for one Short
-    return {"per_video_usd": round(each, 2), "recipe_note": one_line(row.get("cost"), 260),
+    # the YouTube thumbnails: one AI picture each on the image account, none when the creator turns them off
+    thumbs = {"count": thumbnails, "usd": round(thumbnails * picture_usd(cat), 2), "offered": kind(row) != "short",
+              "note": "Each YouTube thumbnail is one AI picture on your image account. options.thumbnails=false "
+                      "makes none and saves that." if thumbnails else "No YouTube thumbnails for these videos."}
+    each += thumbs["usd"]
+    return {"per_video_usd": round(each, 2), "thumbnails": thumbs, "recipe_note": one_line(row.get("cost"), 260),
             "note": "Media runs on your own accounts (pictures, voice, footage watching). Claude's writing and "
                     "directing run on your Claude Code plan, not billed per video."}
 
 
-def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, features: dict) -> dict:
-    media = media_estimate(cat, row, minutes, features)
+def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, features: dict,
+              thumbnails: int = 0) -> dict:
+    media = media_estimate(cat, row, minutes, features, thumbnails)
     out = {"style": row["name"], "style_name": row.get("label"), "titles": titles, "minutes": minutes,
            "where": where, "media": media}
     if where == "studio_cloud":
@@ -412,7 +448,8 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
         out["footage"] = {"videos_watched_at_most": b["videos"], "adds_minutes": b["typical_minutes"],
                           "stops_watching_after_minutes": b["stop_minutes"], "note": cr_watch.estimate_text(minutes)
                           + " Turn off the youtube feature (options.features) for a faster video without real footage."}
-    key = json.dumps([row["name"], titles, minutes, where, sorted(k for k, v in features.items() if v)])
+    key = json.dumps([row["name"], titles, minutes, where, sorted(k for k, v in features.items() if v)]
+                     + ([thumbnails] if thumbnails != 2 else []))       # the usual 2 keeps quote ids as they were
     out["quote_id"] = "q_" + hashlib.sha256(key.encode()).hexdigest()[:16]
     quotes = _read(STATE / "quotes.json")
     quotes = {k: v for k, v in quotes.items() if time.time() - v < QUOTE_SECONDS}
@@ -426,6 +463,11 @@ def summary(q: dict) -> str:
     n, each = q["titles"], " each" if q["titles"] > 1 else ""
     usd = q["media"]["per_video_usd"]
     media = f"media about ${usd:.2f}{each}" if usd >= 0.01 else "media a few cents"
+    t = q["media"].get("thumbnails") or {}
+    if t.get("count"):
+        media += f" (including {t['count']} YouTube thumbnail{'' if t['count'] == 1 else 's'}, about ${t['usd']:.2f})"
+    elif t.get("offered"):
+        media += " (no YouTube thumbnails)"
     footage = q.get("footage")
     # the footage is watched on this computer wherever the video renders
     watching = (f" Research footage adds about {footage['adds_minutes'][0]} to {footage['adds_minutes'][1]} minutes a "
@@ -798,7 +840,8 @@ def tool_quote(args):
     if not isinstance(options, dict):
         raise Refused("options must be an object.")
     character_choice(row, options, where)
-    q = quote_for(cat, row, titles=titles, minutes=minutes, where=where, features=features_for(row, options.get("features")))
+    q = quote_for(cat, row, titles=titles, minutes=minutes, where=where, features=features_for(row, options.get("features")),
+                  thumbnails=thumbnail_count(row, options))
     if character_note(row, options):
         q["character"] = character_note(row, options)
     return q
@@ -953,7 +996,8 @@ def tool_make_videos(args):
         if found.get("matches"):
             return resume_first_answer(found["matches"], found.get("others") or [])
     issued = _read(STATE / "quotes.json").get(str(args.get("quote_id") or ""))
-    q = quote_for(cat, row, titles=len(titles), minutes=minutes, where=where, features=features)
+    q = quote_for(cat, row, titles=len(titles), minutes=minutes, where=where, features=features,
+                  thumbnails=thumbnail_count(row, options))
     if character_note(row, options):
         q["character"] = character_note(row, options)
     if args.get("quote_id") != q["quote_id"] or not issued or time.time() - issued > QUOTE_SECONDS:
@@ -1442,6 +1486,20 @@ def clone_progress(operation: str) -> dict:
                            "they want it back, open the page (open_in_studio page='style_clone' id=<this op id>) and "
                            "press Use Claude's animation again; never choose for them.")
     return out
+
+
+def tool_claude_usage(args):
+    """Studio's Claude use across every video (cr_claude_use.overall), or one video's with id."""
+    vid = str(args.get("id") or "").strip()
+    if vid:
+        slug = vid.split(":", 1)[1] if vid.startswith("video:") else vid
+        out = call("GET", "/cr-workspace/claude-use/" + _quote_path(slug), timeout=30)
+        return {**out, "note": "What Studio counted for this video. Claude Code doesn't say how much of the plan's "
+                               "allowance is left, so never give a percentage."}
+    out = call("GET", "/cr-workspace/claude-use", timeout=60)
+    limit = max(1, min(int(args.get("videos") or 10), 50))
+    return {**out, "videos": (out.get("videos") or [])[:limit],
+            "what_to_tell_them": (out.get("line") or "") + " " + (out.get("note") or "")}
 
 
 def tool_list_videos(args):
@@ -1941,7 +1999,8 @@ def _schema(properties=None, required=()):
 
 _OPTIONS = {"type": "object", "description": (
     "Optional. captions (default: the style's own; a style whose captions is false has none, like its channel, and "
-    "captions=true burns them in anyway), thumbnails (default true), thumbnail_count 1-4, description (YouTube "
+    "captions=true burns them in anyway), thumbnails (default true; false makes no YouTube thumbnails and saves their image credits, about $0.02 "
+    "each at the default model: the quote drops by that), thumbnail_count 1-4, description (YouTube "
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
     "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
     "short_seconds 15-60 for Shorts, quicker_3d_review (true: one 3D review round instead of three, about a quarter "
@@ -2040,6 +2099,13 @@ TOOLS = {
                  "cloud, lk_… (a style look) or op_… (a style study); none for everything. Free. Check every few "
                  "minutes, not in a tight loop. A stopped video says what stopped it (stopped_on: voice, presenter, "
                  "claude_stage, media) and what carrying it on involves.", _schema({"id": {"type": "string"}}), _FREE),
+    "claude_usage": (tool_claude_usage, "How much Claude Studio has used for the creator's videos: today, the last 7 "
+                     "days and all time (calls, Claude minutes, tokens from Studio 115 on), and by video, the most "
+                     "used first; id='video:<slug>' for one video. Claude Code never says how much of the plan's "
+                     "allowance is left: say what was used, never a percentage of a limit. Their own chats and style "
+                     "studies aren't counted. Free.",
+                     _schema({"id": {"type": "string"}, "videos": {"type": "integer", "minimum": 1, "maximum": 50}}),
+                     _FREE),
     "list_videos": (tool_list_videos, "Finished videos: on this computer (file path, watch link, project link) and on "
                     "Studio Cloud (download link). Free.",
                     _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 60},

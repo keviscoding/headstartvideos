@@ -847,6 +847,56 @@ def image_model(model):
     raise AccountStop("Choose a supported Kie image model in Setup & accounts.")
 
 
+def picture_price(engine_usd=None) -> dict:
+    """What one AI picture (a still or a YouTube thumbnail) costs on the creator's image account, for quotes:
+    {"usd", "model", "label"}. The Kie model chosen in Setup when the provider catalog names its price (Nano Banana Pro,
+    Google's Gemini 3 Pro Image, is about $0.09 a picture against the default's $0.02), else the engine's own estimate.
+    An estimate for the cost lines, not a bill: Kie's dashboard has the real numbers."""
+    usd = float(engine_usd) if isinstance(engine_usd, (int, float)) and not isinstance(engine_usd, bool) \
+        and engine_usd > 0 else 0.02
+    try:
+        cfg = profile("images")
+    except Exception:                                         # noqa: BLE001 - an unreadable setup: the estimate
+        cfg = {}
+    if cfg.get("provider") != "kie":
+        return {"usd": round(usd, 4), "model": "", "label": ""}
+    try:
+        choice = image_model(cfg.get("model") or PROVIDERS["kie"]["models"]["images"])
+    except AccountStop:
+        return {"usd": round(usd, 4), "model": "", "label": ""}
+    price = choice.get("usd_per_image")
+    # Studio's default model keeps the engine's estimate, so a creator who never chose a model sees the quotes they saw
+    # before (the engine prices pictures by the services this computer has, which can differ from Kie's ~$0.02)
+    default = image_model(PROVIDERS["kie"]["models"]["images"])["id"]
+    if choice["id"] != default and isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0:
+        usd = float(price)
+    return {"usd": round(usd, 4), "model": choice["id"], "label": choice["label"]}
+
+
+def price_catalog(data: dict) -> dict:
+    """The recipe catalog's picture prices at the creator's own Kie model (Setup's first image model): a picture, each
+    YouTube thumbnail and the AI pictures switch's cost a minute. The engine estimates every Kie model at the
+    default's ~$0.02; Nano Banana Pro is ~$0.09, so its quotes would have read four times too low. Changes data in
+    place (data["picture_price"], data["prices"]) and returns it."""
+    prices = data.get("prices") if isinstance(data.get("prices"), dict) else None
+    engine = (prices or {}).get("picture")
+    pic = picture_price(engine)
+    data["picture_price"] = pic                       # {"usd", "model", "label"}: Create's thumbnail line, quotes
+    if not prices or not isinstance(engine, (int, float)) or isinstance(engine, bool) or engine <= 0 \
+            or abs(pic["usd"] - engine) < 1e-9:
+        return data
+    prices = dict(prices)
+    prices["picture"] = pic["usd"]
+    feats = dict(prices.get("features") or {})
+    row = feats.get("ai_images")
+    if isinstance(row, dict) and isinstance(row.get("per_min"), (int, float)):
+        feats["ai_images"] = {**row, "per_min": round(row["per_min"] * pic["usd"] / engine, 4),
+                              "note": f"about ${pic['usd']:.2f} a picture on {pic['label'] or 'your image model'}"}
+    prices["features"] = feats
+    data["prices"] = prices
+    return data
+
+
 def picture_range(style: dict):
     """(floor, default, ceiling) pictures a minute a story recipe allows, or None for other recipes. The floor
     keeps quality: never fewer than half the recipe's own pace, nor under four a minute."""

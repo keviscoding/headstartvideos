@@ -8,10 +8,17 @@ counted itself.
   side by side, so this is Claude time, not the time on the clock.
 - 3D: the review's round and "up to about M review calls left" (cr_threed_resume's progress: the calls of this round not yet
   answered, plus each later round at most this round's shots; rounds end early when every shot passes).
+- overall (Swapnil, the same day: "Show the Claude credit/token consumption in the app per project & overall"): the
+  same counts across every video, for today, the last 7 days and all time, and by video. Tokens are what Claude Code
+  reported for each call (cache files from Studio 115 on: "tokens"); older calls, and plain-text answers (Claude Code
+  reports no usage for those), count without them, and the words then say for how many calls tokens were reported. Claude Code
+  never says how much of a plan's allowance is left, so this is use, never a percentage of a limit. Studio's own
+  Claude steps only: a creator's own chats in Claude Code and style studies aren't in these files.
 """
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 _seen: dict = {}            # path -> ((mtime_ns, size), (state, seconds)): each cache file is read once per change
@@ -33,14 +40,25 @@ def _call(path: Path):
     if not isinstance(data, dict):
         return None
     seconds = data.get("seconds")
-    value = (str(data.get("state") or ""), float(seconds) if isinstance(seconds, (int, float)) else None)
+    at = data.get("at")
+    tokens = data.get("tokens") if isinstance(data.get("tokens"), dict) else {}
+
+    def count(*names):
+        return sum(int(tokens[n]) for n in names if isinstance(tokens.get(n), (int, float))
+                   and not isinstance(tokens.get(n), bool) and tokens[n] >= 0)
+    value = (str(data.get("state") or ""), float(seconds) if isinstance(seconds, (int, float)) else None,
+             # when: the call's own time (Studio 115 on), else the file's last change
+             float(at) if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 0 else st.st_mtime,
+             # tokens in (the prompt, cached or not) and out (what Claude wrote), or None when not reported
+             (count("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"), count("output_tokens"))
+             if tokens else None)
     _seen[str(path)] = (mark, value)
     return value
 
 
 def so_far(home, project_id) -> dict:
     """{"calls", "timed", "minutes", "running"} for one project's Claude steps."""
-    out = {"calls": 0, "timed": 0, "minutes": 0, "running": 0}
+    out = {"calls": 0, "timed": 0, "minutes": 0, "running": 0, "tokens_in": 0, "tokens_out": 0, "tokens_counted": 0}
     if not project_id:
         return out
     seconds = 0.0
@@ -52,12 +70,16 @@ def so_far(home, project_id) -> dict:
         got = _call(path)
         if not got or not got[0]:
             continue
-        state, took = got
+        state, took = got[0], got[1]
         out["calls"] += 1
         out["running"] += state == "running"
         if took is not None:
             out["timed"] += 1
             seconds += took
+        if got[3]:
+            out["tokens_counted"] += 1
+            out["tokens_in"] += got[3][0]
+            out["tokens_out"] += got[3][1]
     out["minutes"] = round(seconds / 60)
     return out
 
@@ -85,9 +107,108 @@ def summary(home, job, project_id) -> dict:
             said += f", about {max(1, use['minutes'])} min of Claude time"
         elif use["timed"]:
             said += f", about {max(1, use['minutes'])} min of Claude time for the {use['timed']} Studio timed"
+        said += _tokens_words(use)
         parts.append(said + ".")
     if three and not three.get("finished") and three.get("rounds"):
         left = three["left"]
         parts.append(f"3D review: round {three['round']} of {three['rounds']}, up to about {left} review "
                      f"call{'' if left == 1 else 's'} left (fewer if the shots pass sooner).")
     return {**use, "threed": three, "line": " ".join(parts)}
+
+
+def _blank() -> dict:
+    return {"calls": 0, "minutes": 0, "seconds": 0.0, "timed": 0, "tokens_in": 0, "tokens_out": 0, "tokens_counted": 0}
+
+
+def _add(total: dict, got) -> None:
+    state, took, _at, tokens = got
+    total["calls"] += 1
+    if took is not None:
+        total["timed"] += 1
+        total["seconds"] += took
+    if tokens:
+        total["tokens_counted"] += 1
+        total["tokens_in"] += tokens[0]
+        total["tokens_out"] += tokens[1]
+
+
+def _done(total: dict) -> dict:
+    total["minutes"] = round(total.pop("seconds") / 60)
+    return total
+
+
+def overall(home, names=None, now=None, limit=50) -> dict:
+    """Studio's Claude use across every video: {"today", "week", "all": counts, "videos": [counts + slug/title, the
+    most used first, at most `limit`], "line", "note"}. names: project id -> {"slug", "title"} (videos deleted since
+    keep their counts, by id). Today is since this computer's midnight; week is the last 7 days."""
+    now = time.time() if now is None else now
+    midnight = time.mktime(time.localtime(now)[:3] + (0, 0, 0, 0, 0, -1))
+    week = now - 7 * 86400
+    names = names or {}
+    totals = {"today": _blank(), "week": _blank(), "all": _blank()}
+    videos = []
+    try:
+        folders = sorted(p for p in (Path(home) / "output" / "cr-claude-cache").iterdir() if p.is_dir())
+    except OSError:
+        folders = []
+    for folder in folders:
+        row, last = _blank(), 0.0
+        try:
+            paths = sorted(folder.glob("cc_*.json"))
+        except OSError:
+            continue
+        for path in paths:
+            got = _call(path)
+            if not got or not got[0]:
+                continue
+            _add(row, got)
+            _add(totals["all"], got)
+            last = max(last, got[2])
+            if got[2] >= week:
+                _add(totals["week"], got)
+            if got[2] >= midnight:
+                _add(totals["today"], got)
+        if row["calls"]:
+            known = names.get(folder.name) or {}
+            videos.append({**_done(row), "project_id": folder.name, "slug": known.get("slug") or "",
+                           "title": known.get("title") or "A deleted video", "last_at": round(last)})
+    videos.sort(key=lambda v: (-v["calls"], -v["last_at"]))
+    out = {k: _done(v) for k, v in totals.items()}
+    out["videos"] = videos[:limit]
+    out["video_count"] = len(videos)
+    out["line"] = line(out)
+    out["note"] = ("Counted by Studio from its own Claude steps for your videos. Claude Code doesn't say how much of "
+                   "your plan's allowance is left, so this shows what Studio used, not a percentage. Your own chats "
+                   "in Claude Code and style studies aren't included. Tokens are what Claude Code reported, from "
+                   "Studio 115 on; some steps answer in plain text, which reports none, so the token sum covers the "
+                   "calls it names.")
+    return out
+
+
+def words_for(total: dict) -> str:
+    n = total["calls"]
+    if not n:
+        return "no Claude calls"
+    text = f"{n} call{'' if n == 1 else 's'}"
+    if total["timed"]:
+        text += f", about {max(1, total['minutes'])} min of Claude time"
+    return text + _tokens_words(total)
+
+
+def _tokens_words(total: dict) -> str:
+    """The tokens Claude Code reported, saying when only some calls reported them (calls before Studio 115, and
+    plain-text answers, for which Claude Code reports none): a partial sum never reads as the whole."""
+    counted, calls = total.get("tokens_counted") or 0, total.get("calls") or 0
+    if not counted:
+        return ""
+    text = f", {_short(total['tokens_in'] + total['tokens_out'])} tokens"
+    return text + (f" (reported for {counted} of the {calls} calls)" if counted < calls else "")
+
+
+def _short(n: int) -> str:
+    return f"{n / 1e6:.1f}M" if n >= 1e6 else f"{n / 1e3:.0f}K" if n >= 1e3 else str(n)
+
+
+def line(out: dict) -> str:
+    return (f"Claude used by Studio: today {words_for(out['today'])}; last 7 days {words_for(out['week'])}; "
+            f"all time {words_for(out['all'])} across {out['video_count']} video{'' if out['video_count'] == 1 else 's'}.")

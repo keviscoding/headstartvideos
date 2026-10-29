@@ -671,6 +671,45 @@ def test_research_footage_says_what_its_watching_adds_and_progress_counts_the_vi
     assert page.locator("#crw-progress-phase").inner_text() == "Watching YouTube clips (12 of 42)"
 
 
+def test_thumbnails_are_said_in_the_summary_and_turned_off_in_one_click(workspace):
+    """Swapnil (2026-10-29) wanted no thumbnails, to save Kie credits; the switch sat folded under Captions &
+    publishing. The summary says them with their cost; Turn off leaves the thumbnail step out and is remembered."""
+    env, page = workspace, workspace.page
+    env.catalog["picture_price"] = {"usd": 0.09, "model": "nano-banana-pro", "label": "Nano Banana Pro"}
+    env.open("?cr-preset=documentary")
+    assert page.inner_text("#crw-summary-thumbs") == "2 YouTube thumbnails (about $0.18 in pictures)"
+    page.locator("#crw-summary-thumbs-toggle").click()
+    assert page.inner_text("#crw-summary-thumbs").startswith("Off") and not page.locator("#crw-thumbnails").is_checked()
+    assert page.inner_text("#crw-summary-thumbs-toggle") == "Turn on"
+    env.open("?cr-preset=documentary")
+    assert not page.locator("#crw-thumbnails").is_checked(), "remembered like the other Create choices"
+    page.locator("#crw-title").fill("Why Rome fell")
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    assert "thumbnail" not in env.creates[0]["body"]["steps"]
+
+
+def test_a_recipe_card_plays_its_clip_only_when_hovered(workspace):
+    """Swapnil (2026-10-29): judge a style by how it moves. Nothing downloads until a card is hovered or opened."""
+    env, page = workspace, workspace.page
+    for row in env.catalog["channels"]:
+        if row["name"] == "3d":
+            row["preview_clip"] = {"url": "/no-such-clip.mp4", "start": 0, "end": 0, "kind": "recipe"}
+    env.open()
+    page.evaluate("() => {window.played=[];HTMLMediaElement.prototype.play=function(){window.played.push(this.getAttribute('src'));"
+                  "return new Promise(()=>{});};}")
+    page.locator("#crw-recipe-open").click()
+    page.locator("#crw-gallery-search").fill("Documentary")
+    clips = page.locator("#crw-gallery .crw-recipe-clip")
+    assert clips.count() == 0                                   # a recipe without a clip keeps its picture
+    page.locator("#crw-gallery-search").fill("3D Reconstruction")
+    card = page.locator("#crw-gallery-grid .crw-recipe-card").first
+    assert card.locator(".crw-recipe-clip").get_attribute("src") is None
+    assert card.locator(".crw-recipe-clip").get_attribute("preload") == "none"
+    card.hover()
+    assert "/no-such-clip.mp4" in page.evaluate("window.played")
+
+
 def test_gallery_works_with_keyboard_and_a_mobile_viewport(workspace):
     env, page = workspace, workspace.page
     page.set_viewport_size({"width": 390, "height": 844})

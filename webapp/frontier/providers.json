@@ -211,7 +211,8 @@
         "reference_field": "image_urls",
         "options": {
           "output_format": "png"
-        }
+        },
+        "usd_per_image": 0.02
       },
       {
         "id": "nano-banana-2-1",
@@ -256,6 +257,18 @@
           "resolution": "1K",
           "background": "opaque"
         }
+      },
+      {
+        "id": "nano-banana-pro",
+        "label": "Nano Banana Pro (Gemini 3 Pro Image)",
+        "generate": "nano-banana-pro",
+        "edit": "nano-banana-pro",
+        "reference_field": "image_input",
+        "options": {
+          "resolution": "1K",
+          "output_format": "png"
+        },
+        "usd_per_image": 0.09
       }
     ],
     "image_fallbacks": [

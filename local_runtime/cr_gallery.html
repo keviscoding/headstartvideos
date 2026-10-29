@@ -109,9 +109,22 @@ function card(r) {
   const img = el('img', r.preview_url ? '' : 'art'); img.alt = ''; img.loading = 'lazy'; img.src = r.preview_url || r.art_url || '/cr-workspace/icon.svg';
   img.onerror = () => {img.className = 'art'; img.src = r.art_url || '/cr-workspace/icon.svg';};
   t.append(img);
-  if (r.preview_video_url) {const v = el('video'); v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'none'; v.src = r.preview_video_url;
-    c.addEventListener('mouseenter', () => v.play().then(() => v.classList.add('ready')).catch(() => {}));
-    c.addEventListener('mouseleave', () => {v.pause(); v.classList.remove('ready');}); t.append(v);}
+  // a few moving seconds (cr_recipe_clips): our loop of a ready-made recipe, else seconds of the creator's own video;
+  // nothing loads until the card is hovered or tapped
+  const clip = r.preview_clip && r.preview_clip.url ? r.preview_clip : r.preview_video_url ? {url: r.preview_video_url, start: 8, end: 14} : null;
+  if (clip) {const v = el('video'); v.muted = true; v.playsInline = true; v.preload = 'none'; v.setAttribute('muted', '');
+    let start = Number(clip.start) || 0, end = Number(clip.end) || 0; v.loop = !end;
+    v.addEventListener('loadedmetadata', () => {if (end && v.duration && v.duration < end + 1) {start = 0; end = 0; v.loop = true;} if (start) v.currentTime = start;});
+    v.addEventListener('timeupdate', () => {if (end && v.currentTime >= end) v.currentTime = start;});
+    v.addEventListener('error', () => v.remove());
+    const play = () => {if (!v.getAttribute('src')) v.src = clip.url; v.play().then(() => v.classList.add('ready')).catch(() => {});};
+    const stop = () => {v.pause(); v.classList.remove('ready');};
+    // a mouse plays it on hover; a tap toggles it (a phone's tap also sends a mouseenter just before its click, which
+    // started the clip and had the click stop it at once)
+    c.addEventListener('pointerenter', e => {if (e.pointerType === 'mouse') play();});
+    c.addEventListener('pointerleave', e => {if (e.pointerType === 'mouse') stop();});
+    t.addEventListener('click', () => v.paused ? play() : stop());
+    t.append(v);}
   if (r.preview_label) t.append(el('span', 'label', r.preview_label));
   const b = el('div', 'body');
   b.append(el('h2', 'name', r.name || r.id));
