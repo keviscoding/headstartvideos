@@ -8,6 +8,7 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 
 import cr_bridge
 import cr_claude
@@ -35,6 +36,25 @@ def install(studio, activity, setup_status, *, token, home=None):
     app = studio.app
     # A reservation for another studio task is not evidence this worker lives.
     live_workers = set()
+    sent_at = {}                           # operation -> when its waiting stopped finish was last tried
+
+    def send_waiting_finish(operation):
+        """A study's finish not yet sent (settled by the workspace list, which never calls the network, or offline
+        then) goes now, whoever settled it: a stopped one's, so its clone stops counting, or a left-behind finished
+        one's, so it counts and is done. Saved metadata only, tried at most once a minute."""
+        try:
+            saved = cr_style_clone._saved(home, operation, cr_bridge)[1]
+        except Exception:                  # noqa: BLE001 - status says why below
+            return
+        if not saved.get("finish_receipt") or saved.get("state") not in {"failed", "complete_local"}:
+            return
+        if time.monotonic() - sent_at.get(operation, -1e9) < 60:
+            return
+        sent_at[operation] = time.monotonic()
+        try:
+            cr_style_clone.sync(home, operation, cr_bridge)
+        except Exception:                  # noqa: BLE001 - the page offers Sync, and the next start sends it
+            pass
 
     def local_access(mutation=False):
         if request.host not in {"127.0.0.1:7860", "localhost:7860"}:
@@ -74,7 +94,6 @@ def install(studio, activity, setup_status, *, token, home=None):
         return cr_style_clone._operation(home, operation) / "launch.json"
 
     def safe_status(operation):
-        settled = False
         with activity.lock:
             if operation not in live_workers:
                 try:                       # a change Studio stopped working on (it quit mid-change) never stays stuck
@@ -82,16 +101,10 @@ def install(studio, activity, setup_status, *, token, home=None):
                 except Exception:          # noqa: BLE001 - status says what it can below
                     pass
                 try:                       # nor a study whose worker died with a closed Studio (JamesElyse20)
-                    before = cr_style_clone._saved(home, operation, cr_bridge)[1].get("state")
-                    after = cr_style_clone.settle_study(home, operation, cr_bridge, send=False)
-                    settled = bool(after.get("finish_receipt")) and after.get("state") != before
+                    cr_style_clone.settle_study(home, operation, cr_bridge, send=False)
                 except Exception:          # noqa: BLE001 - status says what it can below
                     pass
-        if settled:                        # its stopped finish (the clone stops counting), off the shared lock
-            try:
-                cr_style_clone.sync(home, operation, cr_bridge)
-            except Exception:              # noqa: BLE001 - the page offers Sync, and the next start sends it
-                pass
+        send_waiting_finish(operation)     # off the shared lock: the network
         with activity.lock:
             result = cr_style_clone.status(home, operation, cr_bridge)
             working = operation in live_workers
@@ -152,12 +165,14 @@ def install(studio, activity, setup_status, *, token, home=None):
                     live_workers.discard(operation)
                     activity.release(reservation)
         try:
-            cr_claude._private_write(location, {"state": "running"})
+            # this Studio process: until its thread marks the worker finished, the study is never "closed with Studio"
+            cr_claude._private_write(location, {"state": "running", "studio": cr_style_clone.PROCESS,
+                                                "studio_pid": os.getpid()})
             live_workers.add(operation)
             threading.Thread(target=work, daemon=True).start()
             # in the launcher's window too: closing it stops the study (plain ASCII for any Windows console)
-            print("A style study is running. Keep this window open until it finishes: closing it (or shutting "
-                  "down the computer) stops the study.", flush=True)
+            print("A style study is running. Keep this launcher window open until it finishes: closing it (or "
+                  "shutting down the computer) stops the study. Closing the browser tab does not.", flush=True)
         except BaseException:
             try:
                 cr_claude._private_write(location, {"state": "finished", "returncode": 1})

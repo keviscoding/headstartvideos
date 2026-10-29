@@ -510,8 +510,9 @@ def install(studio, activity, *, token, home=None):
                     if not cr_style_clone._read(folder / "operation.json").get("renderer_improve"):
                         try:
                             # a study whose worker died with a closed Studio reads "stopped", never "Studying..."
-                            # forever: settled here on this computer only (the start of Studio, or its own page,
-                            # sends its stopped finish; a GET here never calls the network)
+                            # forever: settled here on this computer only (a GET here never calls the network). Its
+                            # stopped finish waits in operation.json and goes from the study's own status (page or
+                            # Claude Code's progress), at most once a minute, or from the next start of Studio
                             cr_style_clone.settle_study(home, folder.name, cr_bridge, send=False)
                         except Exception:             # noqa: BLE001 - status below says what it can
                             pass
@@ -527,6 +528,8 @@ def install(studio, activity, *, token, home=None):
                         "elapsed_seconds": status["elapsed_seconds"],
                         "studio_closed": status.get("studio_closed") is True,
                         "can_study_again": bool(status.get("retry_spec")),
+                        # its Claude work finished before it stopped: the page saves it (Save completed style)
+                        "can_save_completed": status.get("metadata_recovery_available") is True,
                         "link": "/cr-style-clone?operation=" + folder.name})
                 except RuntimeError as error:
                     # a study another ChannelRecipe connection started: counted, never shown (no title or brief)

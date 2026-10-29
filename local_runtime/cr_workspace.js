@@ -537,15 +537,17 @@
   // a style study that isn't a saved style yet, as a card: still studying (with its own progress), or stopped and why
   function studyCard(study) {
     const a = el('a','crw-study-card'); a.href = study.link;
-    const kind = study.state === 'running' ? 'running' : study.state === 'pending' ? 'done' : 'stopped';
+    const kind = study.state === 'running' ? 'running' : ['pending','validated'].includes(study.state) ? 'done' : 'stopped';
     const pct = Number.isFinite(study.percent) ? ` ${Math.round(study.percent)}%` : '';
     const said = study.state === 'running' ? `Studying the channel…${pct}`
       : study.state === 'pending' ? 'Saved. Open to finish saving it'
+      : study.state === 'validated' ? 'Finished. Open to save the style'
       : study.state === 'prepared' ? 'Approved, not started. Open to start it'
+      : study.can_save_completed ? `Stopped${study.studio_closed ? ': Studio was closed' : ''}. Open to save the finished style`
       : study.studio_closed ? 'Stopped: Studio was closed. Study again'
       : study.can_study_again ? 'Stopped. Study again' : 'Stopped. Open to review';
     a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${kind}`,said));
-    if (study.state === 'running') a.append(el('small','crw-study-note','Keep Studio’s window open until it finishes.'));
+    if (study.state === 'running') a.append(el('small','crw-study-note','Keep the ChannelRecipe launcher window open until it finishes.'));
     return a;
   }
   const phaseCopy = line => {

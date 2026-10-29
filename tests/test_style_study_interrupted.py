@@ -143,9 +143,12 @@ def test_pid_alive_is_windows_safe():
     assert body.index('if os.name == "nt"') < body.index("        os.kill(pid, 0)")
 
 
-def test_the_pages_warn_before_closing_and_say_what_the_bar_is():
+def test_the_pages_name_the_launcher_window_and_say_what_the_bar_is():
     page = (RUNTIME / "cr_style_clone.html").read_text(encoding="utf-8")
-    assert "beforeunload" in page and "Keep Studio’s window open until this study finishes" in page
+    # the study runs in the launcher's window, not the browser tab: no "Leave site?" false alarm
+    assert "beforeunload" not in page
+    assert "Keep the ChannelRecipe launcher window open until this study finishes" in page
+    assert "You can close this browser tab." in page
     assert "/again'" in page and "'Study again'" in page
     script = (RUNTIME / "cr_workspace.js").read_text(encoding="utf-8")
     assert "Stopped: Studio was closed. Study again" in script and "style clones used on your plan" in script
@@ -155,5 +158,75 @@ def test_the_pages_warn_before_closing_and_say_what_the_bar_is():
     routes = (RUNTIME / "cr_style_routes.py").read_text(encoding="utf-8")
     line = routes[routes.index('print("A style study is running.'):].split("flush=True")[0]
     assert line.isascii(), "the launcher window may be a cp1252 Windows console"
+    assert "launcher window" in line and "browser tab does not" in line
+    assert "Open to save the finished style" in script and "Finished. Open to save the style" in script
+    assert "Keep the ChannelRecipe launcher window open" in script
     studio = (RUNTIME / "cr_studio.py").read_text(encoding="utf-8")
     assert "cr_style_clone.settle_all" in studio
+
+
+def test_a_finish_the_list_saved_is_sent_by_the_studys_own_status_whoever_settled_it(env, monkeypatch):
+    operation, _ = _left_running(env)
+    record = clone.settle_study(env.home, operation, env.bridge, send=False)   # as My styles' list does
+    assert record["state"] == "failed" and record["finish_receipt"] and not _finishes(env)
+    offline = []
+    def finish(payload):
+        offline.append(payload)
+        raise RuntimeError("offline")
+    monkeypatch.setattr(env.bridge, "finish_project", finish)
+    assert env.get(f"/cr-style-clone/{operation}/status").json["reconciliation_pending"] is True
+    env.get(f"/cr-style-clone/{operation}/status")
+    assert len(offline) == 1, "tried at most once a minute"
+    monkeypatch.setattr(env.bridge, "finish_project", lambda payload: env.calls.append(("finish", payload)))
+    import cr_style_routes
+    real = time.monotonic
+    monkeypatch.setattr(cr_style_routes.time, "monotonic", lambda: real() + 120)
+    assert env.get(f"/cr-style-clone/{operation}/status").json["reconciliation_pending"] is False
+    assert [f["status"] for f in _finishes(env)] == ["failed"]
+
+
+def test_studio_start_waits_for_a_list_holding_the_study_for_a_moment(env):
+    import threading
+    operation, folder = _left_running(env)
+    held = clone._lock(folder)
+    held.__enter__()                                    # the workspace list, reading it as Studio starts
+    threading.Timer(0.8, lambda: held.__exit__(None, None, None)).start()
+    assert clone.settle_all(env.home, env.bridge) == 1
+    assert clone._read(folder / "operation.json")["state"] == "failed" and len(_finishes(env)) == 1
+
+
+def test_a_study_whose_claude_work_finished_offers_save_completed_not_study_again(env, monkeypatch):
+    monkeypatch.setattr(clone, "_recovery_checkpoint_ready", lambda folder, saved: True)
+    operation, _ = _left_running(env)
+    result = env.get(f"/cr-style-clone/{operation}/status").json
+    assert result["state"] == "failed" and result["metadata_recovery_available"] is True
+    assert "retry_spec" not in result and result["failure_code"] == "metadata_handoff_failed"
+    # its server project must end failed for Save completed style to start; that save is what counts as the clone
+    assert _finishes(env)[0]["status"] == "failed"
+    import cr_studio_tools
+    monkeypatch.setattr(cr_studio_tools, "call", lambda method, path, timeout=30: result)
+    told = cr_studio_tools.clone_progress(operation)
+    assert told["can_save_completed"] is True and "Save completed style" in told["next"]
+    assert "Study again" not in told["next"]
+
+
+def test_a_worker_this_studio_started_is_never_blamed_on_a_closed_studio(env):
+    operation, folder = _left_running(env)
+    clone._write(folder / "launch.json", {"state": "running", "studio": clone.PROCESS, "studio_pid": os.getpid()})
+    assert env.get(f"/cr-style-clone/{operation}/status").json["state"] == "running", "its end isn't marked yet"
+    clone._write(folder / "launch.json", {"state": "finished", "returncode": -9})
+    result = env.get(f"/cr-style-clone/{operation}/status").json
+    assert result["state"] == "failed" and result["stop_reason"].startswith(clone.WORKER_ENDED)
+
+
+def test_another_running_studio_gets_a_short_grace_then_the_study_settles(env):
+    operation, folder = _left_running(env)
+    clone._write(folder / "launch.json", {"state": "running", "studio": "another-process", "studio_pid": os.getpid()})
+    assert clone.settle_study(env.home, operation, env.bridge, send=False)["state"] == "running"
+    old = time.time() - clone.LAUNCH_GRACE_S - 60
+    for name in ("operation.json", "worker.log", "launch.json"):
+        path = folder / name
+        path.touch()
+        os.utime(path, (old, old))
+    record = clone.settle_study(env.home, operation, env.bridge, send=False)
+    assert record["state"] == "failed" and record["stopped_by"] == "studio_closed"

@@ -1384,13 +1384,21 @@ def clone_progress(operation: str) -> dict:
     if d.get("state") == "done" and d.get("style_ready"):
         out["next"] = ("The style is ready: it appears in list_styles under kind='mine'. Its samples and character "
                        "can be set on the page.")
+    elif d.get("metadata_recovery_available"):
+        # its Claude work finished before it stopped: saved without repeating anything, never studied again
+        out["can_save_completed"] = True
+        out["next"] = ("This study's Claude work finished before it stopped" + (" (Studio was closed)" if
+                       d.get("studio_closed") else "") + ". Open its page (open_in_studio page='style_clone' id=<this "
+                       "op id>) and press Save completed style: it saves the style without repeating Claude, downloads "
+                       "or rendering. Don't start a new study for it.")
     elif d.get("studio_closed"):
         # its worker died with a closed Studio (Studio 112 settles it): the stopped study no longer uses a clone
         out["studio_closed"] = True
         out["next"] = ("Studio was closed during this study, so it stopped; it no longer uses one of their style "
                        "clones. To study the channel again with the same links and choices, open its page "
                        "(open_in_studio page='style_clone' id=<this op id>) and press Study again: a new study, which "
-                       "uses their Claude usage and a clone. Tell them to keep Studio's window open until it finishes.")
+                       "uses their Claude usage and a clone. Tell them to keep the ChannelRecipe launcher window open until it "
+                       "finishes (closing the browser tab is fine).")
     renderer = d.get("renderer") or {}
     if renderer:
         # an animated style: Claude's renderer for the channel, scored against the channel's own frames

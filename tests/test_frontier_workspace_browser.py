@@ -1043,7 +1043,7 @@ def test_unfinished_and_stopped_studies_show_in_my_styles_and_the_clone_bar_says
     cards = page.locator("#crw-styles-list .crw-study-card")
     assert cards.count() == 2
     assert "Studying the channel… 34%" in cards.nth(0).inner_text()
-    assert "Keep Studio’s window open" in cards.nth(0).inner_text()
+    assert "Keep the ChannelRecipe launcher window open" in cards.nth(0).inner_text()
     assert "Stopped: Studio was closed. Study again" in cards.nth(1).inner_text()
     assert cards.nth(1).get_attribute("href") == "/cr-style-clone?operation=op_" + "2" * 24
     assert "another ChannelRecipe connection" in page.locator("#crw-styles-list").inner_text()

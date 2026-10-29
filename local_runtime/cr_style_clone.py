@@ -776,6 +776,24 @@ def worker_alive(folder, saved) -> bool:
     return change_working(folder)
 
 
+# This Studio process, written in launch.json beside the worker it starts: its own worker thread marks the worker's
+# end ("finished") the moment the process returns, so until then a study it launched was never "closed with Studio".
+PROCESS = secrets.token_hex(8)
+LAUNCH_GRACE_S = 120
+
+
+def _launcher_will_mark(folder, saved) -> bool:
+    """The Studio that started this worker is still running and hasn't marked the worker's end yet (it does so right
+    after the process returns): the study is not settled until it has, so it is never blamed on a closed Studio."""
+    launch = _read(Path(folder) / "launch.json")
+    if launch.get("state") != "running":
+        return False
+    if launch.get("studio") == PROCESS:
+        return True
+    # another Studio process that is still running (or a pid reused since): a short grace after the study's last sign
+    return pid_alive(launch.get("studio_pid")) and time.time() - _last_activity(folder, saved) < LAUNCH_GRACE_S
+
+
 def _last_activity(folder, saved) -> float:
     """When the study last wrote anything (its phase, its log): when it really stopped, for its elapsed time."""
     times = [float(saved.get("started_at") or 0)]
@@ -799,7 +817,7 @@ def settle_study(home, operation_id, bridge, *, send=True) -> dict:
     if saved.get("renderer_improve"):
         return settle_improvement(home, operation_id, bridge) if send else saved
     if (saved.get("state") not in {"running", "validated"} or saved.get("metadata_only")
-            or worker_alive(folder, saved)):
+            or worker_alive(folder, saved) or _launcher_will_mark(folder, saved)):
         return saved
     held = _lock(folder)
     try:
@@ -850,11 +868,17 @@ def settle_all(home, bridge) -> int:
             if not re.fullmatch(r"op_[a-f0-9]{24}", folder.name) or folder.is_symlink() or not folder.is_dir():
                 continue
             before = _read(folder / "operation.json")
+            after = before
             if before.get("state") in {"running", "validated", "prepared"}:
-                after = settle_study(home, folder.name, bridge)
+                # the workspace list (or the study's page) may hold the folder for a moment as Studio starts: tried
+                # again for up to 10 s, unless a worker really is on it (its process still running)
+                for attempt in range(20):
+                    after = settle_study(home, folder.name, bridge)
+                    if (after.get("state") not in {"running", "validated"} or after.get("metadata_only")
+                            or pid_alive(after.get("pid"))):
+                        break
+                    time.sleep(0.5)
                 changed += after.get("state") != before.get("state")
-            else:
-                after = before
             if after.get("finish_receipt") and after.get("state") in {"failed", "complete_local", "complete"}:
                 sync(home, folder.name, bridge)             # saved metadata only: never a model call
         except Exception:                                   # noqa: BLE001 - another account's or a broken study
