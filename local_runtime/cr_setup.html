@@ -153,20 +153,9 @@ async function fixBrowser(button,note){
 // Fix it for FFmpeg and Node.js (and Claude Code below): Studio downloads a pinned version into its own folder,
 // checks its fingerprint and that it runs (cr_installs). These follow its progress line, and the row's badge says
 // what is happening (Downloading…, not Needs attention, while it downloads).
-const fixing={},fixStage={},fixFailed={},autoFixed={},FIX_BUSY=['starting','downloading','checking','installing'];
+const fixing={},fixStage={},fixFailed={},FIX_BUSY=['starting','downloading','checking','installing'];
 const FIX_BADGE={starting:'Downloading…',downloading:'Downloading…',checking:'Checking…',installing:'Installing…'};
 const toolBadge=(kind,ok)=>ok?'Ready':fixing[kind]?(FIX_BADGE[fixStage[kind]]||'Downloading…'):'Needs attention';
-// Missing or too old, FFmpeg and Node.js can start downloading by themselves while this page is open, as the speech-timing
-// model does (owner's Windows test, 2026-10-26: two Fix it presses nobody should need), when the Studio allows it
-// (auto_fix_tools, off until the owner decides). Once per page; a fix already
-// running is followed; one that failed shows why and waits for Fix it.
-function autoFix(data,ok){
- if(data.auto_fix_tools!==true)return;                  // off until the owner decides (cr_installs.AUTO_FIX_TOOLS)
- for(const kind of ['ffmpeg','node']){
-  if(ok(kind)||fixing[kind]||fixFailed[kind]||autoFixed[kind]||data.can_fix?.[kind]===false)continue;
-  autoFixed[kind]=true;fixTool(kind,null);
- }
-}
 function toolFixRow(kind,data){
  const row=$(kind+'-row');if(!row)return;row.classList.add('wide');
  const text=document.createElement('span'),note=document.createElement('small');text.append(row.firstChild);row.prepend(text);
@@ -275,7 +264,6 @@ async function refresh(){try{
  const ok=key=>key==='node'?(data.node_youtube??data.node):data[key];
  // a fix that failed before this page opened says why (and isn't started again by itself)
  for(const kind of ['ffmpeg','node']){const last=data.fixes?.[kind];if(!ok(kind)&&last?.state==='failed'&&!fixing[kind]&&!fixFailed[kind])fixFailed[kind]=(last.message||'It couldn’t finish.')+' Press Fix it to try again.';}
- autoFix(data,ok);                                      // before the rows: they show Downloading…, no Fix it
  $('checks').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="check '+(ok(key)?'ok':'')+'" id="'+key+'-row">'+label+'<b>'+toolBadge(key,ok(key))+'</b></div>').join('');
  for(const kind of ['ffmpeg','node'])if(!ok(kind))toolFixRow(kind,data);
  // laid out like the FFmpeg and Node rows (a wide row, the note and button under the label: in the narrow row the

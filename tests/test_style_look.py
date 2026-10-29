@@ -262,6 +262,32 @@ def test_the_study_spec_checks_the_look_and_the_answers(home, monkeypatch):
         clone._spec(home, {**{k: v for k, v in payload.items() if k != "look_id"}, "answers": {"music": "No music"}})
 
 
+def test_a_style_written_in_code_has_nowhere_to_upload_a_host(home, monkeypatch):
+    """The host question's "Yes, I'll upload mine" led nowhere for a style written in code: its renderer draws the
+    character in code and the upload panel is hidden for it (the owner's Windows test, 2026-10-26). The page offers
+    the answer only for pictures; a study asked for it anyway (Claude Code's style tools) is refused, plainly."""
+    import cr_animated2d
+    import cr_style_map
+    monkeypatch.setattr(cr_animated2d, "available", lambda home=None: True)
+    _, done, _ = run_look(home)
+    path = look.folder(home, done["look_id"]) / "look.json"
+    saved = json.loads(path.read_text())
+    host = ["Yes, design one for my channel", "Yes, I'll upload mine", "No, a new cast for each story"]
+    saved["profile"]["questions"] = [{"id": "host", "ask": "Should every video keep one recurring character?",
+                                      "options": host}]
+    saved.pop("mapping", None)
+    path.write_text(json.dumps(saved))
+    assert look.status(home, done["look_id"])["mapping"]["route"]["engine"] == "animated2d"
+    payload = {"preview_id": "pv_" + "a" * 64, "reference_ids": [VIDEO], "base_style": "stories", "label": "Mine",
+               "title": "A video", "acknowledge_costs": True, "look_id": done["look_id"], "visual_mode": "mixed",
+               "answers": {"host": host[1]}}
+    with pytest.raises(ValueError, match="nowhere to upload yours"):
+        clone._spec(home, payload)
+    assert clone._spec(home, {**payload, "answers": {"host": host[0]}})["renderer"] == "2d"
+    pictures = clone._spec(home, {**payload, "answers": {"host": host[1], "made": cr_style_map.MADE_OTHER}})
+    assert "renderer" not in pictures and pictures["answers"]["host"] == host[1], "pictures keep the upload"
+
+
 def test_a_3d_channel_is_asked_how_its_3d_is_made_and_a_medium_studio_cant_make_is_accepted_in_words(home):
     """An @ifologyfilms clone drew stills of characters the channel animates in 3D, and was called fixed. Now the look
     screen asks how the 3D is made (Studio's guess first), the answer decides, and drawn pictures in place of 3D

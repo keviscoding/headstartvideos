@@ -406,6 +406,13 @@ def status(user: dict) -> dict:
             "supported_versions": list(SUPPORTED_RELEASES)}
 
 
+def download_name() -> str:
+    """The studio ZIP's file name, which Windows' Extract All also gives the folder it unpacks into (the Studio's own
+    "ChannelRecipe studio" folder sits inside it): short, so the Studio folder keeps room under Windows' 260-character
+    path limit (cr_paths), and different from the inner folder's name. No "admin" (owner, 2026-10-27)."""
+    return "ChannelRecipe-%s.zip" % VERSION.rsplit(".", 1)[1]
+
+
 def release_ready() -> bool:
     path = os.getenv("FRONTIER_RELEASE_PATH", "")
     if path:
@@ -1504,7 +1511,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
             milestones.record(user["id"], milestones.DOWNLOADED)
         if not release_ready():
             raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
-        return stream_private(request, RELEASE_KEY, "ChannelRecipe-local-studio-%s.zip" % VERSION,
+        return stream_private(request, RELEASE_KEY, download_name(),
                               {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     # Kie's finished files (voice, pictures, music, 3D models) for a Studio whose network can't reach Kie's file host:
@@ -1662,7 +1669,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
             return stream_private(request, SHORTS_PACK_KEY, "shorts-assets.zip", headers)
         if not release_ready():
             raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
-        return stream_private(request, RELEASE_KEY, "ChannelRecipe-local-studio-%s.zip" % VERSION, headers)
+        return stream_private(request, RELEASE_KEY, download_name(), headers)
 
     @router.get("/shorts-pack/file")
     def shorts_pack_file(request: Request, user=Depends(access)):
@@ -1675,7 +1682,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
         headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
         milestones.record(user["id"], milestones.DOWNLOADED)
         local = os.getenv("FRONTIER_RELEASE_PATH", "")
-        filename = "ChannelRecipe-local-studio-%s.zip" % VERSION
+        filename = download_name()
         if local and Path(local).is_file():
             return FileResponse(local, media_type="application/zip", filename=filename, headers=headers)
         from webapp import storage

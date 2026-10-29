@@ -724,9 +724,9 @@ def test_setup_shows_blocked_services_and_fixes_the_speech_model_with_a_progress
 
 
 def test_setup_fixes_ffmpeg_and_node_and_installs_and_signs_in_to_claude_code(page):
-    """New customers got stuck at "Install FFmpeg / Node / Claude Code, then reopen the launcher" (2026-10-26): FFmpeg
-    and Node.js now start by themselves while setup is open (the owner's Windows test: two Fix it presses nobody should
-    need), with a progress line and a Downloading… badge, and a failure says why and offers Fix it again."""
+    """New customers got stuck at "Install FFmpeg / Node / Claude Code, then reopen the launcher" (2026-10-26): Fix it
+    downloads FFmpeg and Node.js with a progress line and a Downloading… badge, and a failure says why and offers Fix it
+    again. Nothing starts by itself (owner, 2026-10-27: not needed)."""
     tab, errors = page
     tab.unroute("**/*")
     html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text()
@@ -784,22 +784,21 @@ def test_setup_fixes_ffmpeg_and_node_and_installs_and_signs_in_to_claude_code(pa
     tab.goto("http://setup-ui-fixture.invalid/cr-setup")
     tab.wait_for_selector("#fix-ffmpeg")
     tab.wait_for_timeout(1500)
-    assert asked["posts"] == [], "nothing downloads by itself until the owner turns it on (auto_fix_tools)"
-    state["auto_fix_tools"] = True
-    tab.goto("http://setup-ui-fixture.invalid/cr-setup")
-    tab.wait_for_selector("#ffmpeg-row")
-    # nobody pressed anything: both start by themselves, and the badge says Downloading…, not Needs attention
+    assert asked["posts"] == [], "nothing downloads by itself: FFmpeg and Node.js wait for Fix it"
+    tab.locator("#fix-ffmpeg").click()
+    # the badge says Downloading…, not Needs attention, while it downloads
     tab.wait_for_function("document.querySelector('#ffmpeg-row')?.innerText.includes('30 of 57 MB')", timeout=8000)
     assert tab.locator("#ffmpeg-row > b").inner_text() == "Downloading…"
-    assert not tab.locator("#fix-ffmpeg").count(), "no Fix it while it downloads"
+    assert not tab.locator("#fix-ffmpeg:enabled").count(), "no second press while it downloads"
     tab.wait_for_function("document.querySelector('#ffmpeg-row')?.classList.contains('ok')", timeout=8000)
     assert not tab.locator("#fix-ffmpeg").count()
+    tab.locator("#fix-node").click()
     tab.wait_for_function("document.querySelector('#node-row')?.innerText.includes('download Node.js 24.22.1')",
                           timeout=8000)
     assert "Press Fix it to try again" in tab.locator("#node-row").inner_text()
     assert tab.locator("#node-row > b").inner_text() == "Needs attention"
     assert tab.locator("#fix-node").is_enabled(), "a failure offers Fix it again"
-    assert sorted(asked["posts"]) == ["/cr-setup/fix-ffmpeg", "/cr-setup/fix-node"], "each started once, by itself"
+    assert asked["posts"] == ["/cr-setup/fix-ffmpeg", "/cr-setup/fix-node"], "each started once, by its press"
     tab.locator("#fix-node").click()
     tab.wait_for_function("document.querySelector('#fix-node') && !document.querySelector('#fix-node').disabled",
                           timeout=8000)

@@ -157,7 +157,10 @@ def test_download_alias_keeps_file_bytes_headers_and_private_stream(api, monkeyp
     assert response.headers["content-type"] == "application/zip"
     assert response.headers["cache-control"] == "private, no-store"
     assert response.headers["x-content-type-options"] == "nosniff"
-    assert "ChannelRecipe-local-studio" in response.headers["content-disposition"]
+    # no "admin" in the name the creator sees (owner, 2026-10-27), and short: Extract All names a folder after it
+    name = "ChannelRecipe-" + studio.VERSION.rsplit(".", 1)[1] + ".zip"
+    assert studio.download_name() == name and "admin" not in name
+    assert name in response.headers["content-disposition"]
     assert int(response.headers["content-length"]) == len(content)
 
     # Remote releases are handed out as a short-lived signed link instead of
@@ -176,7 +179,7 @@ def test_download_alias_keeps_file_bytes_headers_and_private_stream(api, monkeyp
     assert response.status_code == 302
     assert response.headers["location"] == "https://private-bucket.example/release.zip?sig=1"
     assert response.headers["cache-control"] == "private, no-store"
-    assert signed[0]["Bucket"] == "private-bucket" and "ChannelRecipe-local-studio" in signed[0]["ResponseContentDisposition"]
+    assert signed[0]["Bucket"] == "private-bucket" and name in signed[0]["ResponseContentDisposition"]
 
 
 def test_shorts_pack_is_a_signed_private_link_for_a_studio_plan_only(api, monkeypatch):

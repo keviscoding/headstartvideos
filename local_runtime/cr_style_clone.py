@@ -448,6 +448,11 @@ def _spec(home, supplied):
         engine = (planned.get("route") or {}).get("engine")
         # "2d" / "3d": the study has the creator's Claude Code write the channel's renderer on that kit
         renderer = {"animated2d": "2d", "animated3d": "3d"}.get(engine, False) if visual_mode != "reference_only" else False
+        # a style written in code draws its character in code: there is nowhere to upload one (the page offers the
+        # answer only for pictures; this catches Claude Code's style tools too)
+        if renderer and str(answers.get("host") or "").startswith("Yes, I'll upload"):
+            raise ValueError("A style written in code draws its own character in code, so there's nowhere to upload "
+                             "yours. Choose \"Yes, design one for my channel\", or make it with pictures instead.")
     elif answers:
         raise ValueError("Look at the references before answering questions about them.")
     else:
