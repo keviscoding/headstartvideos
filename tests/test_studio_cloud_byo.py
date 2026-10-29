@@ -404,3 +404,30 @@ def test_a_relayed_download_never_writes_outside_its_folder(byo, tmp_path):
         assert not byo.cloud._inside(work, bad), bad
     with pytest.raises(ValueError):
         byo.cloud._safe_ytdlp_args(["-o", byo.cloud.ROOT_MARK + "/..\\..\\evil.mp4", "ytsearch1:cats"])
+
+
+def test_modals_library_is_an_exact_tested_pin_that_can_never_move_studios_own_libraries(byo, monkeypatch):
+    """2026-10-29 dependency check: modal 1.6.3 only adds packages to Studio's requirements (Python 3.10 and 3.13);
+    the install also pins every library already there, so a resolver conflict refuses instead of changing one."""
+    import importlib.metadata
+    import cr_cloud_byo
+    assert cr_cloud_byo.MODAL_REQUIREMENT == "modal==1.6.3"
+    ready = iter([False, True])
+    monkeypatch.setattr(cr_cloud_byo, "library_ready", lambda: next(ready))
+    seen = {}
+
+    def run(cmd, **kw):
+        seen["cmd"] = cmd
+        seen["pins"] = Path(cmd[cmd.index("-c") + 1]).read_text(encoding="utf-8").splitlines()
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(cr_cloud_byo.subprocess, "run", run)
+    assert cr_cloud_byo.install_library() == ""
+    assert seen["cmd"][-1] == "modal==1.6.3" and "-c" in seen["cmd"]
+    pytest_version = importlib.metadata.version("pytest")
+    assert any(p.lower() == f"pytest=={pytest_version}" for p in seen["pins"]), "installed libraries stay as they are"
+    assert not any(p.lower().startswith("modal==") for p in seen["pins"])
+
+    monkeypatch.setattr(cr_cloud_byo, "library_ready", lambda: False)
+    monkeypatch.setattr(cr_cloud_byo.subprocess, "run", lambda cmd, **kw: SimpleNamespace(
+        returncode=1, stdout="", stderr="ERROR: ResolutionImpossible: protobuf conflict"))
+    assert "never changes those" in cr_cloud_byo.install_library()

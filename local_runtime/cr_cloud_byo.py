@@ -43,7 +43,11 @@ ANSWERS = "channelrecipe-studio-answers"
 SCHEME = "modalvol://"
 STATE = ".cr-cloud-byo.json"
 APP_FILE = "cr_cloud_modal.py"
-MODAL_REQUIREMENT = "modal>=1.2,<2"
+# Exact: checked 2026-10-29 in fresh venvs with Studio's own requirements.txt on Python 3.10 and 3.13. It only ADDS
+# packages (grpclib, synchronicity, aiohttp, rich, toml, watchfiles…) and changes none Studio already has (protobuf,
+# click, requests…); pip check stays clean and Studio's modules still import. install_library also pins everything
+# already installed, so a later Modal can never move one of Studio's own libraries.
+MODAL_REQUIREMENT = "modal==1.6.3"
 
 # Modal's list prices (modal.com/pricing, 2026-10): $0.0000131 a physical core-second, $0.00000222 a GiB-second, an
 # NVIDIA L4 $0.000222 a second. The CPU machine is 8 cores and 32 GiB; the GPU machine the same plus an L4.
@@ -125,18 +129,40 @@ def install_library(timeout: int = 600) -> str:
     else why not."""
     if library_ready():
         return ""
-    try:
-        p = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check",
-                            MODAL_REQUIREMENT], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           timeout=timeout)
-    except (OSError, subprocess.SubprocessError) as e:
-        return f"Studio couldn't install Modal's library ({type(e).__name__})."
+    import tempfile
+    pins = installed_pins()
+    with tempfile.TemporaryDirectory(prefix="cr-modal-") as tmp:
+        constraints = Path(tmp) / "keep-studio.txt"
+        constraints.write_text("\n".join(pins) + "\n", encoding="utf-8")
+        try:
+            p = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check",
+                                "-c", str(constraints), MODAL_REQUIREMENT], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as e:
+            return f"Studio couldn't install Modal's library ({type(e).__name__})."
     import importlib
     importlib.invalidate_caches()
     if p.returncode != 0 or not library_ready():
-        tail = (p.stderr or p.stdout or "").strip().splitlines()[-1:] or [""]
+        text = (p.stderr or p.stdout or "").strip()
+        if "conflict" in text.lower() or "resolutionimpossible" in text.lower():
+            return ("Studio didn't install Modal's library: it needs a different version of one of Studio's own "
+                    "libraries, and Studio never changes those. Nothing was changed. Copy diagnostics for support.")
+        tail = text.splitlines()[-1:] or [""]
         return "Studio couldn't install Modal's library: " + tail[0][:200]
     return ""
+
+
+def installed_pins() -> list:
+    """Every library already in Studio's Python, pinned to its installed version: the constraints Modal's library is
+    installed under, so it can add what it needs but never upgrade or downgrade one of Studio's own."""
+    from importlib import metadata
+    pins = {}
+    for dist in metadata.distributions():
+        name, version = (dist.metadata.get("Name") or "").strip(), (dist.version or "").strip()
+        if name and version and re.fullmatch(r"[A-Za-z0-9._-]+", name) and re.fullmatch(r"[A-Za-z0-9.+!_-]+", version):
+            pins[name.lower()] = f"{name}=={version}"
+    pins.pop("modal", None)
+    return sorted(pins.values())
 
 
 _CLIENT = {"key": "", "client": None}
