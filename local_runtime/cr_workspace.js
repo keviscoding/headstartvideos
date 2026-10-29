@@ -183,7 +183,7 @@
     if (persist) save();}
   async function setNarration(mode) {
     state.narration = mode; chooseGroup('[data-narration-mode]', 'narrationMode', mode);
-    hide('crw-narration-ai', mode !== 'ai'); hide('crw-narration-own', mode !== 'own');
+    hide('crw-narration-ai', mode !== 'ai'); hide('crw-narration-own', mode !== 'own'); shortsMode();
     if (mode === 'own' && !$('crw-audio-recent').dataset.loaded) {
       try {const result = await api('/api/voiceovers'); const records = result.voiceovers || result.items || [];
         for (const row of records) {const o = el('option', '', `${row.name} · ${Math.round(row.seconds || 0)}s`); o.value = row.id; $('crw-audio-recent').append(o);}
@@ -196,13 +196,20 @@
   // Shorts recipes (family "Shorts"): a vertical Short of 15-60 seconds; the long-form options don't apply
   const isShort = (r) => String(r?.family || '') === 'Shorts';
   const isRanking = (r) => !!r?.ranking;   // Ranking Shorts: real clips counted down; their length comes from the clips
+  // My recording: every long-video recipe, and the Shorts recipes a recording can narrate (Roblox Story Shorts, Primo
+  // 2026-10-29: his own pitched take); the other Shorts write and voice their own narration (catalog own_recording)
+  const takesRecording = (r) => !isShort(r) || r?.own_recording === true;
   const SHORT_ONLY_HIDDEN = ['crw-fast-section','crw-palette-section','crw-avatar-section','crw-character-section','crw-offer-section','crw-cta-section','crw-pictures-section'];
   function shortsMode() {
     const s = isShort(state.selected), rk = isRanking(state.selected);
     // The owner couldn't find "Create several videos" for a batch of ranking ideas: for Ranking Shorts it says what it is.
     text('crw-batch-label', rk ? 'Queue more topics (up to 15, one per line)' : 'Create several videos');
     $('crw-batch-titles').placeholder = rk ? 'Ranking the Funniest Dog Moments\nRanking the Best Bunny Moments' : 'One additional title per line';
-    hide('crw-short-duration', !s || rk); hide('crw-long-duration', s); hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
+    // a Short narrated by the creator's recording is as long as the recording: no length to choose
+    const own = takesRecording(state.selected), ownButton = document.querySelector('[data-narration-mode="own"]');
+    if (ownButton) ownButton.hidden = !own;
+    if (!own && state.narration === 'own') setNarration('ai');
+    hide('crw-short-duration', !s || rk || state.narration === 'own'); hide('crw-long-duration', s); hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
     const tall = s || !!state.selected?.vertical;   // a style learned from Shorts is vertical too, at any length
     text('crw-canvas-label', tall ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', tall ? '9:16 vertical' : '16:9 landscape');
     if (s) for (const id of SHORT_ONLY_HIDDEN) hide(id, true);
@@ -361,7 +368,7 @@
     const reads = scriptMinutes ? (scriptMinutes < 1 ? `about ${Math.max(5, Math.round(scriptMinutes * 60 / 5) * 5)} seconds` : `about ${Math.round(scriptMinutes * 10) / 10} minutes`) : '';
     text('crw-script-length', reads ? `${scriptWords} words: ${reads} of video at this style's reading pace. Your script sets the length.` : '');
     hide('crw-script-length', !reads);
-    text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) && !isShort(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
+    text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) && !isShort(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) && state.narration !== 'own' ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     // a cloned style reads with its own narrator (the kind of voice its channel has), else the account's voice
     const narrator = state.selected?.narrator || state.setup?.narration?.voice;
@@ -991,7 +998,7 @@
   function schedule() {clearTimeout(state.timer);state.timer=setTimeout(async()=>{await refreshActivity();schedule();},document.hidden?15000:state.busy||state.openJob?2500:10000);}
   function payload() {
     const title = [$('crw-title').value.trim(),...$('crw-batch-titles').value.split('\n').map(v=>v.trim()).filter(Boolean)].filter(Boolean).join('\n');
-    if (!title) throw new Error('Give your video a title or idea.'); if (title.split('\n').some(t=>t.length>280)) throw new Error('Keep each title under 280 characters. Put detailed guidance in Extra instructions.'); if (title.split('\n').length>30) throw new Error('Create up to 30 titles in one batch.'); if (!state.selected) throw new Error('Choose a visual recipe.'); const short=isShort(state.selected); if (short) {const sec=Number($('crw-seconds').value); if (!Number.isInteger(sec)||sec<15||sec>60) throw new Error('Choose a Short length between 15 and 60 seconds.'); if (state.narration==='own') throw new Error('Shorts write and voice their own narration. Choose My idea.');} else {const duration=Number($('crw-minutes').value); if (!Number.isInteger(duration)||duration<1||duration>60) throw new Error('Choose a whole-number duration between 1 and 60 minutes.');}
+    if (!title) throw new Error('Give your video a title or idea.'); if (title.split('\n').some(t=>t.length>280)) throw new Error('Keep each title under 280 characters. Put detailed guidance in Extra instructions.'); if (title.split('\n').length>30) throw new Error('Create up to 30 titles in one batch.'); if (!state.selected) throw new Error('Choose a visual recipe.'); const short=isShort(state.selected); if (short) {const sec=Number($('crw-seconds').value); if (!Number.isInteger(sec)||sec<15||sec>60) throw new Error('Choose a Short length between 15 and 60 seconds.'); if (state.narration==='own' && !takesRecording(state.selected)) throw new Error(`${state.selected.label || 'This Shorts recipe'} writes and voices its own narration. Choose AI narration.`);} else {const duration=Number($('crw-minutes').value); if (!Number.isInteger(duration)||duration<1||duration>60) throw new Error('Choose a whole-number duration between 1 and 60 minutes.');}
     if (state.input==='script' && !$('crw-script').value.trim()) throw new Error('Paste your narration script, or choose My idea.');
     if (state.narration==='own' && !state.audio) throw new Error('Choose your narration recording first.');
     if (state.narration==='own' && title.includes('\n')) throw new Error('Use one title for an uploaded narration recording.');

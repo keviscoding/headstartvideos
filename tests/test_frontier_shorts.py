@@ -322,3 +322,105 @@ def test_the_roblox_recipe_runs_the_roblox_pipeline():
     assert row["shorts"]["pipeline"] in shorts.PIPELINES and row["shorts"]["pipeline"] not in shorts.PACKLESS
     assert shorts.SECONDS[0] <= row["shorts"]["seconds"] <= shorts.SECONDS[1]
     assert "minutes" in row["cost"] and "Kie" in row["cost"], "the cost and the time are quoted"
+
+
+def _roblox_stub(tmp_path, monkeypatch, seconds=31.6):
+    """a Studio whose make_roblox only says what it was handed, and whose engine voices module knows one upload"""
+    import types
+    monkeypatch.syspath_prepend(str(ROOT / "local_runtime"))          # cr_language, as in a Studio
+    root = tmp_path / "shorts"
+    (root / "roblox").mkdir(parents=True)
+    (root / "roblox" / "make_roblox.py").write_text(
+        "import json, os, sys, pathlib\n"
+        "work = pathlib.Path(sys.argv[2])\n"
+        "(work / 'seen.json').write_text(json.dumps({'args': sys.argv[3:], 'own': os.environ.get('CR_RBX_OWN_VOICE'),\n"
+        "                                          'voice': os.environ.get('CR_RBX_VOICE')}))\n"
+        "(work / 'short.mp4').write_bytes(b'mp4')\n"
+        "(work / 'plan.json').write_text(json.dumps({'title': 'Pitched', 'narration': 'In this world everyone'}))\n"
+        "(work / 'voice.json').write_text(json.dumps({'words': [[0.1, 0.4, 'In'], [0.4, 0.8, 'this']]}))\n")
+    monkeypatch.setenv("CR_SHORTS_ROOT", str(root))
+    monkeypatch.setattr(shorts, "ensure_pack", lambda *a, **k: None)
+    monkeypatch.setattr(shorts, "ready", lambda home=None: [])
+    uploads = tmp_path / "uploads" / "voiceovers"
+    uploads.mkdir(parents=True)
+    take = uploads / "adam-pitched-1a2b.mp3"
+    take.write_bytes(b"mp3")
+    lengths = {take.name: seconds}
+
+    def resolve(ref):
+        ref = str(ref or "").strip()
+        p = uploads / ref if "/" not in ref else Path(ref)
+        return p if p.is_file() else None
+    monkeypatch.setitem(sys.modules, "voices", types.SimpleNamespace(
+        picks=lambda: {"cr-shorts-roblox": {"provider": "elevenlabs", "voice_id": "bIHbv24MWmeRgasZH58o"}},
+        resolve=resolve, _dur=lambda p: lengths.get(Path(p).name, 0.0)))
+    return take, lengths
+
+
+ROBLOX = {"format": "short", "label": "Roblox Story Shorts", "shorts": {"pipeline": "roblox", "seconds": 55}}
+
+
+def test_a_roblox_short_is_narrated_by_the_creators_own_recording_at_its_length(tmp_path, monkeypatch):
+    """Primo (Discord, 2026-10-29): he pitches the Adam voice 1.3x in CapCut and uploads that take as the narration, but
+    Roblox Story Shorts refused it and the engine's run_custom wrapper dropped byo_audio. The recording now reaches
+    make_roblox (CR_RBX_OWN_VOICE), no AI voice is chosen for it, and its length is the Short's."""
+    take, _ = _roblox_stub(tmp_path, monkeypatch, seconds=31.6)
+    said = []
+
+    class Engine:
+        def job_dir(self, title, style):
+            return str(tmp_path / "job")
+    job = shorts.run_short(Engine(), "Everyone has a pitch", "cr-shorts-roblox", ROBLOX, sink=said.append,
+                           extra="[[short_seconds=55]]", recording=str(take))
+    seen = json.loads((job / "short" / "seen.json").read_text())
+    assert seen == {"args": ["Everyone has a pitch", "32"], "own": str(take), "voice": None}
+    assert any("narrated by your recording" in line for line in said)
+    # an upload id (what the Create page sends) resolves to the same recording
+    job = shorts.run_short(Engine(), "Everyone has a pitch", "cr-shorts-roblox", ROBLOX, recording=take.name)
+    assert json.loads((job / "short" / "seen.json").read_text())["own"] == str(take)
+    # and without a recording the recipe's own voice reads it, exactly as before
+    job = shorts.run_short(Engine(), "Everyone has a pitch", "cr-shorts-roblox", ROBLOX, extra="[[short_seconds=55]]")
+    assert json.loads((job / "short" / "seen.json").read_text()) == {
+        "args": ["Everyone has a pitch", "55"], "own": None, "voice": "bIHbv24MWmeRgasZH58o"}
+
+
+def test_the_engine_hands_its_byo_audio_to_the_short(tmp_path, monkeypatch):
+    got = {}
+    monkeypatch.setattr(shorts, "run_short", lambda *a, **k: got.update(k))
+
+    class Engine:
+        STYLE_INFO = {"cr-shorts-roblox": ROBLOX}
+
+        def run_custom(self, title, minutes=20, **kwargs):
+            raise AssertionError("a Short never runs the long-video engine")
+    engine = Engine()
+    shorts.install(engine)
+    engine.run_custom("t", 1, style="cr-shorts-roblox", byo_audio="/x/take.mp3")
+    assert got["recording"] == "/x/take.mp3"
+
+
+def test_only_a_recipe_a_recording_can_narrate_takes_one_and_a_bad_recording_stops_before_anything(tmp_path, monkeypatch):
+    take, lengths = _roblox_stub(tmp_path, monkeypatch)
+    assert shorts.takes_own_recording(ROBLOX)
+    for pipe in ("zack3d", "photo2d", "ranking"):
+        info = {"format": "short", "label": "3D Explainer Shorts", "shorts": {"pipeline": pipe}}
+        assert not shorts.takes_own_recording(info)
+        assert "writes and voices its own narration" in shorts.own_recording_problem(info, take.name, "3D Explainer Shorts")
+    assert not shorts.takes_own_recording({"format": "video"})
+    assert shorts.own_recording_problem({"look": {}}, take.name) == "", "a long video's recording is the engine's own"
+    assert shorts.own_recording_problem(ROBLOX, "") == "" and shorts.own_recording_problem(ROBLOX, take.name) == ""
+    assert "not on this computer any more" in shorts.own_recording_problem(ROBLOX, "gone.mp3")
+    lengths[take.name] = 3.0
+    assert "at least 5 seconds" in shorts.own_recording_problem(ROBLOX, take.name)
+    lengths[take.name] = 200.0
+    assert "at most 3 minutes" in shorts.own_recording_problem(ROBLOX, take.name)
+    packs = []
+    monkeypatch.setattr(shorts, "ensure_pack", lambda *a, **k: packs.append(1))
+
+    class Engine:
+        def job_dir(self, title, style):
+            raise AssertionError("nothing is started for a recording that can't be used")
+    import pytest
+    with pytest.raises(RuntimeError, match="at most 3 minutes"):
+        shorts.run_short(Engine(), "t", "cr-shorts-roblox", ROBLOX, recording=take.name)
+    assert packs == []
