@@ -4581,10 +4581,8 @@ def _niche_job_response(run: dict) -> dict:
 
 
 def _run_niche_hunt_locally(*, job_id: str, runner: str = "local") -> None:
-    """Run the light discovery in this process: in development, or on the web
-    server when the Fly worker cannot start (NICHE_WEB_FALLBACK). The light hunt
-    is HTTP + metadata only (2 threads, bounded time and API budget), and the
-    catalog lease in Postgres keeps two web instances from running it at once."""
+    """Run the light discovery in this process: only in development (COOK_ON_FLY off).
+    In production discovery runs on Fly only, never on the web server."""
     from core.niche_cloud import run_cloud_hunt
     try:
         run_cloud_hunt(job_id, runner=runner)
@@ -4667,22 +4665,15 @@ def _start_niche_hunt(
         append_niche_hunt_progress(job_id, f"Started lightweight Fly discovery…{mid_note}")
         return job_id
 
-    web_fallback = bool(getattr(config, "NICHE_WEB_FALLBACK", True))
-    if COOK_ON_FLY and not web_fallback:
+    # Discovery never runs on the web server in production: it would slow the site for everyone (owner, 2026-10-29).
+    if COOK_ON_FLY:
         note = f" Fly said: {fly_reason}" if fly_reason else ""
         finish_niche_hunt_run(run_id,status="error",error=f"Cloud discovery worker could not start.{note}"[:500])
         raise HTTPException(503,"Cloud discovery worker could not start. Check the Fly worker image and credentials.")
     if not _niche_scrape_lock.acquire(blocking=False):
         finish_niche_hunt_run(run_id,status="error",error="Discovery worker on this server is busy.")
         raise HTTPException(409,"A discovery worker is already running on this server.")
-    runner = "local"
-    if COOK_ON_FLY:
-        # The light hunt needs no Chromium or models, so the web server can run it
-        # when Fly refuses a Machine (for example while Fly billing is unpaid).
-        runner = "web"
-        reason = f" ({fly_reason[:200]})" if fly_reason else ""
-        append_niche_hunt_progress(job_id, f"Fly worker unavailable{reason}; running light discovery on the web server.")
-    threading.Thread(target=_run_niche_hunt_locally,kwargs={"job_id":job_id,"runner":runner},
+    threading.Thread(target=_run_niche_hunt_locally,kwargs={"job_id":job_id,"runner":"local"},
                      daemon=True,name="niche-discovery").start()
 
     return job_id
