@@ -621,6 +621,9 @@ from webapp import cloud_jobs as _cloud_jobs
 app.include_router(_cloud_jobs.make_router(_studio_access(_current_user)))
 from webapp import studio_ranking as _studio_ranking
 app.include_router(_studio_ranking.make_router(_studio_access(_current_user)))
+# The niche agent's teaching and the niche database's breakouts for Studio (webapp/niche_agent.py): read-only.
+from webapp import niche_agent as _niche_agent
+app.include_router(_niche_agent.make_router(_studio_access(_current_user)))
 app.include_router(_frontier_router(_current_user))
 app.include_router(_frontier_router(_current_user, prefix="/api/studio"))
 
