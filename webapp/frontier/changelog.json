@@ -1,5 +1,16 @@
 [
   {
+    "build": 115,
+    "date": "2026-10-29",
+    "title": "Render in the cloud on your own Modal account",
+    "items": [
+      "New: Studio Cloud on your own Modal account. Renders run off your computer, several at once, on Modal's machines and billed to your Modal account (Modal's free plan includes monthly credits). Studio isn't faster for one short video, but your computer stays free.",
+      "Setup has a step by step card: make a free Modal account, add a card only if you want 3D on a graphics card, create a token and paste both parts. The token stays on this computer and is never sent to ChannelRecipe.",
+      "In Create, choose Studio Cloud under Where it renders. The first cloud video sets up Studio's machines on your account once, which takes about 5 to 10 minutes. A 1 minute picture video takes about 8 minutes of machine time, about $0.10, and a 1 minute 3D video about 40 minutes on a graphics card, about $0.90.",
+      "Keep Studio open while a cloud video renders: the machine asks your own Claude Code for its directing steps, so they stay on your Claude plan."
+    ]
+  },
+  {
     "build": 114,
     "date": "2026-10-29",
     "title": "New: the niche agent finds niches and video ideas with real outlier proof",
