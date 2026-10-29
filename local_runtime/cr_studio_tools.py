@@ -353,15 +353,28 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
             hint = " Choose where='this_computer'." if cloud.get("blocked") else ""
             raise Refused((cloud.get("why") or "Studio Cloud isn't available on this account.") + hint)
         expected, most = cloud["expected_cents"] / 100, cloud["max_cents"] / 100
-        out["cloud"] = {"machine": cloud.get("label"), "expected_minutes": cloud.get("expected_minutes"),
-                        "expected_usd_each": round(expected, 2), "reserved_usd_each": round(most, 2),
-                        "balance_usd": cloud.get("balance_usd"), "topup_url": cloud.get("topup_url"),
-                        "note": "Each video reserves its most before its machine starts and pays only for the "
-                                "seconds it used."}
-        out["expected_total_usd"] = round((expected + media["per_video_usd"]) * titles, 2)
-        out["most_reserved_usd"] = round(most * titles, 2)
-        if (cloud.get("balance_usd") or 0) < most * titles:
-            out["short_by_usd"] = round(most * titles - (cloud.get("balance_usd") or 0), 2)
+        if cloud.get("byo"):
+            # the creator's own Modal account: Modal bills the machine time to them; no ChannelRecipe balance
+            out["cloud"] = {"machine": cloud.get("label"), "own_account": "Modal",
+                            "expected_minutes": cloud.get("expected_minutes"),
+                            "expected_usd_each": round(expected, 2), "most_usd_each": round(most, 2),
+                            "first_setup": "" if cloud.get("deployed") else
+                            "The first cloud video also sets up Studio's machines on their Modal account (about 5 "
+                            "to 10 minutes, once).",
+                            "note": "Billed by Modal to the creator's own account, per second; each machine stops by "
+                                    "itself at its time limit."}
+            out["expected_total_usd"] = round((expected + media["per_video_usd"]) * titles, 2)
+            out["most_reserved_usd"] = round(most * titles, 2)
+        else:
+            out["cloud"] = {"machine": cloud.get("label"), "expected_minutes": cloud.get("expected_minutes"),
+                            "expected_usd_each": round(expected, 2), "reserved_usd_each": round(most, 2),
+                            "balance_usd": cloud.get("balance_usd"), "topup_url": cloud.get("topup_url"),
+                            "note": "Each video reserves its most before its machine starts and pays only for the "
+                                    "seconds it used."}
+            out["expected_total_usd"] = round((expected + media["per_video_usd"]) * titles, 2)
+            out["most_reserved_usd"] = round(most * titles, 2)
+            if (cloud.get("balance_usd") or 0) < most * titles:
+                out["short_by_usd"] = round(most * titles - (cloud.get("balance_usd") or 0), 2)
     else:
         out["expected_total_usd"] = round(media["per_video_usd"] * titles, 2)
         out["this_computer"] = ("Renders on this computer, one video at a time: while one is made, these wait in "
@@ -422,6 +435,14 @@ def summary(q: dict) -> str:
         lo, hi = check["adds_minutes"]
         watching += (f" The frame check adds about {lo} to {hi} minutes of Claude time a video (Claude looks at each "
                      "minute's frames before they are drawn; options.frame_check=false skips it).")
+    if q["where"] == "studio_cloud" and q["cloud"].get("own_account"):
+        c = q["cloud"]
+        text = (f"{n} × {q['minutes']}-min {q['style_name']} on Studio Cloud (their own Modal account): machine about "
+                f"${c['expected_usd_each']:.2f}{each} on their Modal bill (at most ${c['most_usd_each']:.2f}{each}), "
+                f"{media}; about ${q['expected_total_usd']:.2f} in all.")
+        if c.get("first_setup"):
+            text += " " + c["first_setup"]
+        return text + watching
     if q["where"] == "studio_cloud":
         c = q["cloud"]
         text = (f"{n} × {q['minutes']}-min {q['style_name']} on Studio Cloud: machine about "
@@ -603,7 +624,9 @@ def tool_setup_check(args):
                             "models_verified": bool(claude.get("models_verified")),
                             "usage_limit_reached": bool((claude.get("allowance") or {}).get("blocked"))},
             "studio_cloud": {"available": bool(cloud.get("available")), "balance_usd": cloud.get("balance_usd"),
-                             "why": cloud.get("why") or "", "topup_url": cloud.get("topup_url")},
+                             "why": cloud.get("why") or "", "topup_url": cloud.get("topup_url"),
+                             **({"own_account": "Modal", "setup_page": link("/cr-setup#cloud-render")}
+                                if cloud.get("byo") else {})},
             "gallery_url": link("/cr-gallery")}
 
 
@@ -954,7 +977,8 @@ def tool_make_videos(args):
         return {"started": True, "where": "studio_cloud", "titles": titles, "style": row["name"], "quote": q["summary"],
                 "progress_id": "cloud",
                 "next": "Studio writes the script and makes the voice and pictures here with your Claude Code, then a "
-                        "ChannelRecipe machine renders. Keep Studio open. Check with progress(id='cloud') every few "
+                        + ("machine on their own Modal account" if q["cloud"].get("own_account") else
+                           "ChannelRecipe machine") + " renders. Keep Studio open. Check with progress(id='cloud') every few "
                         "minutes (don't wait in a loop); Studio shows a notification when it's done."}
     try:
         result = call("POST", "/api/run", payload, timeout=120)
@@ -1488,6 +1512,12 @@ def open_url(url: str) -> bool:
 
 def tool_cloud_balance(args):
     d = call("GET", "/cr-cloud?fresh=1", timeout=30)
+    if d.get("byo"):
+        return {"available": bool(d.get("available")), "own_account": "Modal", "why": d.get("why") or "",
+                "machines": d.get("machines"), "setup_page": link("/cr-setup#cloud-render"),
+                "note": "Studio Cloud renders on the creator's own Modal account and Modal bills them for the machine "
+                        "time; there is no ChannelRecipe balance. Without a Modal account, setup_page's Render in the "
+                        "cloud card shows them how to add one (never ask for the token in chat)."}
     return {"available": bool(d.get("available")), "balance_usd": d.get("balance_usd"), "why": d.get("why") or "",
             "topup_url": d.get("topup_url"), "top_up_amounts_usd": d.get("chunks_usd"),
             "machines": d.get("machines"),
@@ -1934,8 +1964,8 @@ _OPTIONS = {"type": "object", "description": (
     "reported, trying that step once more on their Claude plan.")}
 _WHERE = {"type": "string", "enum": ["this_computer", "studio_cloud"],
           "description": "this_computer (free machine, one video at a time: more wait in Studio's queue and start by "
-                         "themselves) or studio_cloud (a ChannelRecipe machine renders it, paid from the cloud balance; "
-                         "videos render side by side)."}
+                         "themselves) or studio_cloud (a machine on the creator's own Modal account renders it, billed "
+                         "by Modal; videos render side by side)."}
 _FREE = {"readOnlyHint": True, "openWorldHint": False}
 _DELETES = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 

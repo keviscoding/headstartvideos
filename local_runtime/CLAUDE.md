@@ -146,6 +146,12 @@ under Saved ideas.
 - Styles: `list_styles` gives each style's id, description, thumbnail file and a `gallery_url` picker. Show the
   picker (in the Claude desktop app, in the Browser pane; in a terminal, `open_in_studio(page='gallery',
   id=pick_id, open_browser=true)`) and read the choice with `get_style_pick`.
+- Studio Cloud (render off this computer, several videos at once; not faster for one short video) runs on the
+  customer's OWN Modal account: Modal bills them for the machine time, per second. To set it up they open the setup
+  page's **Render in the cloud** card: make an account at modal.com, add a card in Modal only if they want 3D (Modal's
+  graphics-card machines need one), create a token (Modal → Settings → API Tokens) and paste the Token ID (ak-…) and
+  Token secret (as-…) there, never in chat. The first cloud video sets up Studio's machines on their account (about 5
+  to 10 minutes, once). Shorts, Ranking Shorts, FOLIO, their own recording and panels render on this computer.
 - Money: get `quote` first and tell them the cost; call `make_videos` with its `quote_id` only after they agree.
   Claude Code also asks them to approve `make_videos` and `clone_style`. Never approve paid work for them.
 - A different character (they want to change how a style's character looks): pass `make_videos` options.character
