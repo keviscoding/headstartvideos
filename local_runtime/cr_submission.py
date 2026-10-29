@@ -49,6 +49,13 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
         refusal = cr_language.shorts_refusal(style_info, language, str(style_info.get("label") or "This Shorts recipe"))
         if refusal:
             raise ValueError(refusal)
+        # the creator's own narration recording on a Shorts recipe: only a pipeline that can be narrated by it, and a
+        # recording a Short can be (cr_shorts.own_recording_problem); a long video's recording is the engine's own
+        import cr_shorts
+        refusal = cr_shorts.own_recording_problem(style_info, payload.get("byo_audio"),
+                                                  str(style_info.get("label") or "This Shorts recipe"))
+        if refusal:
+            raise ValueError(refusal)
     except ValueError as error:
         from flask import jsonify
         return studio.app.make_response((jsonify(error=str(error)), 400))
@@ -189,7 +196,8 @@ def resume_first(studio, payload):
         minutes = 10
     try:
         import cr_recover
-        matches = cr_recover.twins(studio, titles, payload.get("style"), minutes, extra=payload.get("extra") or "")
+        matches = cr_recover.twins(studio, titles, payload.get("style"), minutes, extra=payload.get("extra") or "",
+                                   recording=str(payload.get("byo_audio") or ""))
     except Exception:                                  # noqa: BLE001 - never in the way of a new video
         return None
     if not matches:

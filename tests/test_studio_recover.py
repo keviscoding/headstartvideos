@@ -382,6 +382,23 @@ def test_a_ranking_short_is_the_same_only_with_the_same_countdown(tmp_path):
                              extra='[[ranking={"ranks":7,"booms":true}]]')
 
 
+def test_a_short_narrated_another_way_is_not_the_same_video(tmp_path):
+    """A Roblox Story Short that stopped on the AI voice, made again with the creator's recording (or the other way
+    round): resuming the stopped one would quietly drop the recording, so Create doesn't offer it."""
+    ai = make_job(tmp_path, title="Everyone has a number", style="cr-shorts-roblox", minutes=1)
+    studio = SimpleNamespace(mv=engine_for(ai), JOBS={})
+    assert recover.twins(studio, ["Everyone has a number"], "cr-shorts-roblox", 1, recording="")
+    assert recover.twins(studio, ["Everyone has a number"], "cr-shorts-roblox", 1), "not compared when not given"
+    assert not recover.twins(studio, ["Everyone has a number"], "cr-shorts-roblox", 1, recording="take-1a2b.mp3")
+    saved = json.loads((ai / "cr-project.json").read_text(encoding="utf-8"))
+    saved["job_spec"]["byo_audio"] = "C:\\Users\\Primo Q\\ChannelRecipe\\uploads\\voiceovers\\take-1a2b.mp3"
+    (ai / "cr-project.json").write_text(json.dumps(saved), encoding="utf-8")
+    assert recover.twins(studio, ["Everyone has a number"], "cr-shorts-roblox", 1, recording="take-1a2b.mp3"), \
+        "the same recording (Create's upload id, the run route's resolved Windows path)"
+    assert not recover.twins(studio, ["Everyone has a number"], "cr-shorts-roblox", 1, recording="other-9f9f.mp3")
+    assert not recover.twins(studio, ["Everyone has a number"], "cr-shorts-roblox", 1, recording="")
+
+
 def test_create_offers_resume_first_and_starts_new_only_when_insisted(tmp_path, monkeypatch):
     import cr_submission
     job = make_job(tmp_path, title="The Vault")

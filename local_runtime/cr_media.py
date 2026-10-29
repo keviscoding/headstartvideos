@@ -1480,6 +1480,10 @@ def install(engine):
     hook("_tts_one", "narration", lambda *a, **k: narrate(engine, *a, **k))
     voiceover = make_voiceover(engine, engine.generate_voiceover)
     engine.generate_voiceover = voiceover
+    # the length chosen: scripts planned at the narrator's real pace. After the voiceover hook above, which narrates
+    # through Studio's accounts without calling the engine's voiceover: wrapped inside it, no narration was measured
+    import cr_length
+    cr_length.install(engine)
     # These modules have independent voice entry points and media uploads.
     import wavespeed
     import vox

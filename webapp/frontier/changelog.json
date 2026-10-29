@@ -1,5 +1,16 @@
 [
   {
+    "build": 113,
+    "date": "2026-10-29",
+    "title": "Videos come out the length you pick, and Roblox Story Shorts take your own recording",
+    "items": [
+      "Fixed: videos made with a cloned style could come out about half the length you picked. Studio planned the script from the cloned channel's speaking pace, pauses and music included, while Studio's narrators read faster. It now plans each script at the pace your narrator really reads, measured on your own videos.",
+      "If a new script still comes out clearly shorter than the length you picked, Claude lengthens it once before the fact check, keeping every chapter and music line. Scripts you paste and scripts that already have a voice are never changed.",
+      "New: Roblox Story Shorts take your own narration. Choose Narration, My recording in Create and upload a take from 5 seconds to 3 minutes. Studio keeps it exactly as recorded, pitch and speed included, builds every shot around your words and ends the Short when your recording ends. No AI voice is made.",
+      "Create only offers My recording on recipes that can use it, and Resume no longer picks up a stopped video that was narrated a different way."
+    ]
+  },
+  {
     "build": 112,
     "date": "2026-10-29",
     "title": "3D videos carry on where they stopped, and style clones survive closing Studio",

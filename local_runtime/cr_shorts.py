@@ -3,7 +3,8 @@
 A style whose JSON says "format": "short" is a Shorts recipe. `install(engine)` wraps the engine's run_custom /
 run_pipeline: those jobs go to the Shorts pipeline named by the style ("shorts": {"pipeline": "zack3d" | "photo2d" |
 "ranking" | "roblox"}), every other job runs exactly as before. The roblox pipeline (Roblox Story Shorts: blocky-avatar
-world-rule stories) uses the 3D engine and the asset pack like zack3d, and narrates itself like ranking. The ranking pipeline (Ranking Shorts: real viral clips counted
+world-rule stories) uses the 3D engine and the asset pack like zack3d, and narrates itself like ranking, or with the
+creator's own recording (Create's My recording: OWN_RECORDING). The ranking pipeline (Ranking Shorts: real viral clips counted
 down to #1) finds its own clips and needs no asset pack; its options arrive as a [[ranking={...}]] marker. The finished Short is left in the job folder the way a long video is
 (video.mp4, title.txt, script.txt, subs.srt, youtube.txt) and published by the engine itself, so Projects, the player,
 reveal and re-render work unchanged.
@@ -38,6 +39,66 @@ def shorts_root(home: Path = HOME) -> Path:
 
 def is_short(info) -> bool:
     return isinstance(info, dict) and info.get("format") == "short"
+
+
+# Pipelines that can be narrated by the creator's own recording (Create, Narration, My recording): the recording is the
+# Short's voice, Whisper times its words for the shots, staging and captions, and its length is the Short's. The others
+# write and voice their own narration (Ranking's commentary sits between clips; the 3D and photo Shorts fit their voice).
+OWN_RECORDING = {"roblox"}
+OWN_SECONDS = (5, 180)                                       # a YouTube Short is at most 3 minutes
+OWN_REFUSED = ("{recipe} writes and voices its own narration, so it can't use your recording. Choose AI narration, "
+               "or make your recording into a Roblox Story Short or a video.")
+
+
+def takes_own_recording(info) -> bool:
+    """Whether this Shorts recipe can be narrated by the creator's own recording."""
+    shorts = info.get("shorts") if is_short(info) else None
+    return isinstance(shorts, dict) and str(shorts.get("pipeline") or "zack3d") in OWN_RECORDING
+
+
+def recording_path(ref) -> Path | None:
+    """The creator's recording: an upload's id (uploads/voiceovers) or a path on this computer (the engine's run route
+    hands the Short the path it resolved). None when it is not there."""
+    ref = str(ref or "").strip()
+    if not ref:
+        return None
+    try:
+        import voices                                            # the engine's uploaded voiceovers
+        found = voices.resolve(ref)
+        if found is not None:
+            return Path(found)
+    except Exception:                                            # noqa: BLE001 - an older engine: a plain path only
+        pass
+    path = Path(ref).expanduser()
+    return path if path.is_absolute() and path.is_file() else None
+
+
+def recording_seconds(path) -> float:
+    """How long the recording is (0.0 when it can't be read)."""
+    try:
+        import voices
+        return float(voices._dur(Path(path)) or 0.0)
+    except Exception:                                            # noqa: BLE001 - measured again by the pipeline
+        return 0.0
+
+
+def own_recording_problem(info, ref, recipe: str = "This Shorts recipe") -> str:
+    """Why this Short can't be narrated by the creator's recording `ref` ("" when it can, or none was given): checked
+    before the Short is queued (cr_submission) and again before anything is made (run_short)."""
+    if not str(ref or "").strip() or not is_short(info):
+        return ""
+    if not takes_own_recording(info):
+        return OWN_REFUSED.format(recipe=recipe)
+    path = recording_path(ref)
+    if path is None:
+        return "Your narration recording is not on this computer any more. Upload it again."
+    seconds = recording_seconds(path)
+    if seconds and seconds < OWN_SECONDS[0]:
+        return f"Your recording is {seconds:.0f} seconds long. A Short needs at least {OWN_SECONDS[0]} seconds of narration."
+    if seconds > OWN_SECONDS[1]:
+        return (f"Your recording is {seconds / 60:.1f} minutes long, and a Short is at most 3 minutes. Trim it and "
+                "upload it again.")
+    return ""
 
 
 MARK = re.compile(r"\[\[short_seconds=(\d{1,3})\]\]\s*")
@@ -359,13 +420,20 @@ def hero_picture(character_image: str) -> Path | None:
 
 
 def run_short(engine, title: str, style: str, info: dict, *, features=None, sink=None, extra: str = "",
-              character: str = "", character_image: str = "") -> Path:
+              character: str = "", character_image: str = "", recording: str = "") -> Path:
     """Make the Short for `title` with the Shorts recipe `style`; returns the job folder. A Roblox Story Short reads the
     creator's character picture (character_image) into its main character's avatar; the other pipelines can't use one,
-    and Create and the tools say so before (cr_character.picture_use)."""
+    and Create and the tools say so before (cr_character.picture_use). recording: the creator's own narration (Create's
+    My recording, the engine's byo_audio): a pipeline in OWN_RECORDING is narrated by it, at its own length."""
     pipe = str((info.get("shorts") or {}).get("pipeline") or "zack3d")
     if pipe not in PIPELINES:
         raise RuntimeError(f"Unknown Shorts pipeline {pipe!r}.")
+    own = None
+    if str(recording or "").strip():
+        problem = own_recording_problem(info, recording, str(info.get("label") or "This Shorts recipe"))
+        if problem:
+            raise RuntimeError(problem)                          # before the pack, Claude or anything paid
+        own = recording_path(recording)
     folder, script = PIPELINES[pipe]
     root = shorts_root()
     if pipe in PACKLESS:
@@ -380,6 +448,9 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
         raise RuntimeError("Type what to rank, for example Funniest Dog Moments, not a link. To make a Short from "
                            "clips you have links to, paste them on the Clip Board.")
     seconds = seconds_of(info, features, extra)
+    if own is not None:
+        # the recording is the Short's length (the director plans its shots on the recording's own words)
+        seconds = max(OWN_SECONDS[0], min(OWN_SECONDS[1], round(recording_seconds(own)) or seconds))
     ranking = ranking_options(extra)
     if pipe == "ranking" and not ranking.get("voice"):
         picked = ranking_voice(style)
@@ -419,7 +490,9 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
             env["CR_RANKING"] = json.dumps(ranking)
         if pipe == "roblox":
             picked = ranking_voice(style)
-            if picked:
+            if own is not None:
+                env["CR_RBX_OWN_VOICE"] = str(own)               # the creator's recording IS the voice: none is made
+            elif picked:
                 env["CR_RBX_VOICE"] = picked.split(":", 1)[1]    # the ElevenLabs voice chosen for this recipe
             hero = hero_picture(character_image)
             if hero is not None:                                 # the creator's avatar: the main character in every shot
@@ -434,7 +507,8 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
         args = [sys.executable, str(root / folder / script), str(HOME), str(work), title]
         args += (["auto", str(seconds)] if pipe == "photo2d" else [str(seconds)])
         _say(sink, engine, f"Short: {info.get('label') or style}, " + (f"{ranking.get('ranks', 5)} ranks" if pipe == "ranking"
-                                                                        else f"about {seconds} seconds"))
+                                                                        else f"{seconds} seconds, narrated by your recording"
+                                                                        if own is not None else f"about {seconds} seconds"))
         proc = subprocess.Popen(args, cwd=str(root / folder), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace", **low_priority())
         if pipe not in SELF_LOWERING:
@@ -486,6 +560,7 @@ def install(engine):
                 return _original(title, minutes, *args, **kwargs)
             return run_short(engine, title, style, info, features=kwargs.get("features"), sink=kwargs.get("sink"),
                              extra=kwargs.get("extra") or "", character=kwargs.get("character") or "",
-                             character_image=kwargs.get("character_image") or "")
+                             character_image=kwargs.get("character_image") or "",
+                             recording=kwargs.get("byo_audio") or "")       # the creator's own narration (was dropped)
         wrapped._cr_shorts = True
         setattr(engine, name, wrapped)
