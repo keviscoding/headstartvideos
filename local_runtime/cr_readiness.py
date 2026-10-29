@@ -238,6 +238,12 @@ def preset(studio, checks, spec, ahead=0.0):
         ok, why = voice.get("ok"), voice.get("why") or "Connect narration in step 4."
         if not ok:
             ok, why = own_narration(studio, style, info, why)
+        elif ((info or {}).get("shorts") or {}).get("pipeline") not in ("ranking", "roblox"):
+            import cr_fish
+            if cr_fish.selected() and not cr_fish.voice_for_style(style).get("voice") \
+                    and not (spec.get("cr_voice") or {}).get("voice"):
+                # Fish Audio reads it (Setup's choice), but no Fish Audio voice was chosen: said before anything starts
+                ok, why = False, "Choose this recipe's Fish Audio voice in Create, under Narration, Choose voice."
         results.append(item("voice", "Narration account", ok, why))
     for feature, active in wanted.items():
         if active and "video" in steps or active and feature == "ai_images" and any(s in steps for s in ("images","thumbnail")):

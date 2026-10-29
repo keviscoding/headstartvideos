@@ -356,3 +356,18 @@ def test_the_narration_check_knows_fish_audio(home):
     cr_bridge.save_settings({"narration": {"provider": "fish"}})
     ok, why = cr_readiness.own_narration(studio, "jung", {}, "needs a key")
     assert not ok and "Fish Audio voice" in why
+
+
+def test_a_video_doesnt_start_on_fish_audio_without_a_chosen_voice(home, monkeypatch):
+    """With a Kie key the engine's own voice check passes, so the missing Fish Audio voice is said before the start."""
+    import cr_readiness
+    from tests.test_machine_requirements import preset_studio
+    monkeypatch.setattr(cr_readiness, "basic", lambda checks: {"checks": [], "claude_code": {}, "brain_mode": "claudecode"})
+    monkeypatch.setattr(cr_readiness, "proof", lambda *a, **k: {})
+    voice_row = lambda spec: next(c for c in cr_readiness.preset(preset_studio(()), {}, {"style": "doc", **spec})
+                                  ["checks"] if c["key"] == "voice")
+    assert voice_row({"title": "T", "minutes": 1})["ready"] is True                       # Setup's voice is chosen
+    cr_bridge.save_settings({"costs_accepted": True, "narration": {"provider": "fish"}})
+    row = voice_row({"title": "T", "minutes": 1})
+    assert row["ready"] is False and "Fish Audio voice" in row["message"]
+    assert voice_row({"title": "T", "minutes": 1, "cr_voice": {"provider": "fish", "voice": VOICE}})["ready"] is True
