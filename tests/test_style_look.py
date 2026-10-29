@@ -670,8 +670,10 @@ def test_an_animation_under_the_channels_bar_is_said_and_pictures_are_used_only_
     assert "offer_pictures" not in passed and "7.1/10" in passed["say"]
     assert clone.renderer_verdict({"look": {}}) == {}, "a pictures style has no animation to report"
     shown = clone.status(home, op, bridge)
-    # the verdict is said once, in the renderer panel (and the tools' what_to_tell_them); the headline is short
-    assert shown["renderer"]["state"] == "below_bar" and shown["message"] == "Your style is saved."
+    # the score is said once, in the renderer panel (and the tools' what_to_tell_them); the headline is short and
+    # never "Your style is ready" for a style under its bar (a customer's 0/10 studies of 2026-10-27)
+    assert shown["renderer"]["state"] == "below_bar" and shown["message"] == shown["headline"] == clone.HEADLINES["below_bar"]
+    assert told["say"].startswith("Your style is saved, but it failed the likeness check: ")
     assert shown["renderer"]["say"] == told["say"] and shown["renderer"]["score"] == 5.2
     assert told["say"].count("/10") == 1, "one score"
     clone.use_pictures(home, op, bridge)
@@ -683,6 +685,104 @@ def test_an_animation_under_the_channels_bar_is_said_and_pictures_are_used_only_
     saved = json.loads((folder / "operation.json").read_text())
     assert saved["style_sha256"] == clone._file_hash(target), "the study still recognises its saved style"
     assert cr_style_map.ANIMATED_PICTURES  # the plan used is the creator's "pictures" answer
+
+
+def _coded_study(home, done, op, style):
+    """A finished coded study (2D) of `style`, saved and published as Studio leaves it."""
+    bridge = SimpleNamespace(load_settings=lambda: {"key": "cr_mcp_test", "url": "https://channelrecipe.com"})
+    folder = clone._folder(home) / op
+    folder.mkdir(parents=True)
+    (home / "styles").mkdir(exist_ok=True)
+    target = home / "styles" / (style["name"] + ".json")
+    target.write_text(json.dumps(style))
+    clone._write(folder / "operation.json", {
+        "operation_id": op, "owner": clone._owner(bridge), "state": "complete", "phase": "complete",
+        "spec": {"style_id": style["name"], "look_id": done["look_id"], "base_style": "stories", "answers": {},
+                 "reference_url": "https://www.youtube.com/@pip/videos", "references": [{"id": VIDEO}],
+                 "budget_minutes": 22, "max_calls": 40, "label": "War Map", "title": "Waterloo", "brief": "",
+                 "minutes": 1, "visual_mode": "mixed", "preview_id": "pv_" + "a" * 64, "name": style["name"],
+                 "renderer": "2d"},
+        "style_sha256": clone._file_hash(target)})
+    return bridge, folder, target
+
+
+def test_use_pictures_instead_asks_first_and_can_be_undone(home, monkeypatch):
+    """A customer pressed Use pictures instead by accident (2026-10-27): Style Lab then refused the style, and only a
+    new paid study brought its animation back. The page now asks first, and the switch can be undone."""
+    import hashlib
+    import cr_animated2d as a2d
+    import cr_style_lab
+    monkeypatch.setattr(a2d, "available", lambda home=None: True)
+    _, done, _ = run_look(home)
+    code = "Kit.renderer({name: 'map', frame() {}});"
+    kept = home / "assets" / "styles" / "learned" / "cr_clone_map"
+    kept.mkdir(parents=True)
+    (kept / "renderer-v1.js").write_text(code)
+    record = {"file": "styles/learned/cr_clone_map/renderer-v1.js", "sha256": hashlib.sha256(code.encode()).hexdigest(),
+              "version": 1, "state": "below_bar", "overall": 4.1, "bar": 5.5, "manifest": {"name": "map"}}
+    style = {"name": "cr_clone_map", "look": {"visuals": "cr_animated2d", "animated2d": {"renderer": record},
+                                              "aspect": "16:9"},
+             "cost": "Your voice only.", "cr_style_clone": {"operation_id": "op_" + "c" * 24,
+                                                            "learned_v2": {"look_id": done["look_id"],
+                                                                           "route": {"engine": "animated2d"}}}}
+    bridge, folder, target = _coded_study(home, done, "op_" + "c" * 24, style)
+    clone.use_pictures(home, folder.name, bridge)
+    switched = json.loads(target.read_text())
+    assert switched["cr_style_clone"]["pictures_instead"] and switched["look"].get("visuals") != "cr_animated2d"
+    shown = clone.status(home, folder.name, bridge)["renderer"]
+    assert shown["state"] == "pictures" and shown["can_use_animation"]
+    with pytest.raises(cr_style_lab.LabError, match="Use Claude's animation again"):
+        cr_style_lab._spec(switched)
+    clone.use_animation(home, folder.name, bridge)
+    assert json.loads(target.read_text()) == style, "the style exactly as it was, its renderer included"
+    assert clone._published(home, json.loads((folder / "operation.json").read_text())), "still the study's own"
+    assert "can_use_animation" not in clone.status(home, folder.name, bridge)["renderer"]
+    page = (Path(clone.__file__).parent / "cr_style_clone.html").read_text(encoding="utf-8")
+    assert "pictures-confirm" in page and "Yes, use pictures" in page and "/use-animation'" in page
+    assert "$('use-pictures').addEventListener('click',()=>{" in page, "the first press only asks"
+
+
+def test_a_switch_made_before_the_undo_existed_gets_the_studys_own_renderer_back(home, monkeypatch):
+    import hashlib
+    import cr_animated2d as a2d
+    import cr_style_map as cm
+    monkeypatch.setattr(a2d, "available", lambda home=None: True)
+    _, done, _ = run_look(home)
+    op = "op_" + "b" * 24
+    switched = {"name": "cr_clone_war", "look": {}, "cr_style_clone": {
+        "operation_id": op, "pictures_instead": {"renderer": {"state": "below_bar", "overall": 0.0, "bar": 5.5},
+                                                 "answers": {"made": cm.MADE_OTHER}},
+        "learned_v2": {"look_id": done["look_id"], "route": {"engine": "pictures"}}}}
+    bridge, folder, target = _coded_study(home, done, op, switched)
+    with pytest.raises(RuntimeError, match="no longer in this Studio"):
+        clone.use_animation(home, op, bridge)
+    assert json.loads(target.read_text()) == switched, "unchanged when nothing can be put back"
+    code = "Kit.renderer({name: 'war', frame() {}});"
+    (folder / "renderer").mkdir()
+    (folder / "renderer" / "renderer.js").write_text(code)
+    clone._write(folder / "renderer" / "build.json", {"state": "below_bar", "overall": 0.0, "bar": 5.5, "round": 2,
+                                                      "sha256": hashlib.sha256(code.encode()).hexdigest(),
+                                                      "manifest": {"name": "war"}})
+    assert clone.status(home, op, bridge)["renderer"]["can_use_animation"]
+    clone.use_animation(home, op, bridge)
+    back = json.loads(target.read_text())
+    assert back["look"]["visuals"] in a2d.PLUGINS and "pictures_instead" not in back["cr_style_clone"]
+    saved = back["look"]["animated2d"]["renderer"]
+    assert saved["file"] == "styles/learned/cr_clone_war/renderer-v1.js" and a2d.renderer_for(back, home)[0] == code
+
+
+def test_a_renderer_the_judge_never_scored_is_said_plainly_never_as_zero():
+    unjudged = clone.renderer_verdict({"look": {"visuals": "cr_animated2d", "animated2d": {"renderer": {
+        "state": "unjudged", "overall": None, "bar": 5.5, "file": "styles/learned/x/renderer-v1.js",
+        "why": "the likeness check couldn't run: You've used today's style checks. Try again tomorrow."}}}})
+    assert unjudged["state"] == "unjudged" and unjudged["verdict"] == "Not checked yet" and unjudged["offer_pictures"]
+    assert unjudged["say"].startswith("Your style is saved, but it hasn't been checked against the channel: ")
+    assert "likeness checks for today were used up" in unjudged["say"] and "/10" not in unjudged["say"]
+    assert "study the channel again" in unjudged["say"] and "Improve this style" in unjudged["say"]
+    # saved before Studio 111 as 0/10 (the customer's War Map 3D and Sample): said as never checked, not as a 0
+    legacy = clone.renderer_verdict({"look": {"visuals": "cr_animated2d", "animated2d": {"renderer": {
+        "state": "below_bar", "overall": 0.0, "bar": 5.5, "file": "styles/learned/x/renderer-v1.js"}}}})
+    assert legacy["state"] == "unjudged" and "0/10" not in legacy["say"] and "score" not in legacy
 
 
 def test_a_finished_look_suggests_the_closest_installed_styles_and_whether_one_can_be_tried_first(home):

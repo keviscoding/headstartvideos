@@ -411,6 +411,15 @@ def test_call_waits_out_a_busy_studio_and_sends_the_local_token(monkeypatch, tmp
     assert seen == ["tok", "tok", "tok"]
 
 
+def test_a_coded_video_is_never_offered_the_timeline(monkeypatch):
+    monkeypatch.setattr(tools, "call", lambda method, path, body=None, **kw: {"videos": [
+        {"slug": "war-map--a1", "title": "Waterloo", "style": "cr_clone_x", "mtime": 1, "size": 1, "coded": True},
+        {"slug": "money--b2", "title": "Money", "style": "documentary", "mtime": 1, "size": 1}]})
+    coded, plain = ok("list_videos", {"include_cloud": False})["this_computer"]
+    assert "project_url" not in coded and "timeline can't edit it" in coded["no_timeline"] and coded["watch_url"]
+    assert plain["project_url"].endswith("/editor/money--b2") and "no_timeline" not in plain
+
+
 def test_a_closed_studio_says_to_open_the_launcher(monkeypatch):
     def urlopen(request, timeout=None):
         raise tools.urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
@@ -984,7 +993,8 @@ def test_a_finished_look_suggests_the_closest_styles_and_a_paid_try_first_withou
     assert out["similar_styles"][1]["try_first"] == {"not_offered": "a whole Short"}
     assert out["similar_styles"][0]["picture_url"].startswith("http://localhost:7860/cr-workspace/preview/")
     assert "suggestions only, never a reason not to study" in out["next"]
-    assert "regular landscape (16:9) videos" in out["shorts_note"], "a Shorts study says what its style makes"
+    assert "Either way the style makes vertical Shorts" in out["shorts_note"] and "16:9" not in out["shorts_note"], \
+        "a Shorts study says what its style makes: vertical however it's made"
 
 
 def test_clone_style_takes_a_bounded_study_budget_and_says_what_a_shorts_study_makes(studio, more, monkeypatch):
@@ -1007,7 +1017,7 @@ def test_clone_style_takes_a_bounded_study_budget_and_says_what_a_shorts_study_m
         assert tools.run_tool("clone_style", {**args, "budget_minutes": wrong})["isError"]
     assert not studio.posted("/cr-style-clone/start")
     started = ok("clone_style", {**args, "budget_minutes": 30})
-    assert studio.posted("/cr-style-clone/start")[0]["budget_minutes"] == 30 and "16:9" in started["shorts_note"]
+    assert studio.posted("/cr-style-clone/start")[0]["budget_minutes"] == 30 and "vertical Shorts" in started["shorts_note"]
     ok("clone_style", args)
     assert studio.posted("/cr-style-clone/start")[1]["budget_minutes"] == 22, "the page's default"
 

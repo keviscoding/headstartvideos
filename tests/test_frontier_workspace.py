@@ -107,6 +107,15 @@ def test_catalog_has_actual_capabilities_and_ids_without_private_style_fields(en
     assert env.rows[0]["label"] == "Original renderer"
 
 
+def test_a_style_learned_from_shorts_is_listed_as_vertical(env):
+    env.studio.styles.STYLES["cr_clone_abcdef"]["look"] = {"aspect": "9:16"}
+    rows = {row["name"]: row for row in env.get("/cr-workspace/catalog").json["channels"]}
+    assert rows["cr_clone_abcdef"]["vertical"] is True and rows["3d"]["vertical"] is False, \
+        "Create's canvas says 9:16 vertical for a style learned from Shorts, however it's made"
+    script = (Path(__file__).parents[1] / "local_runtime" / "cr_workspace.js").read_text(encoding="utf-8")
+    assert "state.selected?.vertical" in script
+
+
 def test_adaptive_documentary_keeps_actual_engine_identity_and_all_options(env):
     row = {"name": "documentary", "label": "Original documentary", "tab": "production",
         "auto_style": True, "features": {"offered": ["youtube", "motion", "sound"],
@@ -237,6 +246,17 @@ def test_project_lookup_is_local_hint_and_resume_auth_route_is_not_invoked(env):
     assert response.json["project_id"] == PROJECT and response.json["available_for_resume"] is True
     assert response.json["title"] == "My video" and response.json["link"] == "/editor/my-video"
     assert "private script" not in response.text and "private instruction" not in response.text
+    assert "no_timeline" not in response.json
+    # a video drawn by its style's own code: no timeline link, why in plain words, and Improve this style instead
+    (job / "animated2d").mkdir()
+    (job / "animated2d" / "delivery.json").write_text("{}")
+    (env.home / "styles").mkdir(exist_ok=True)
+    (env.home / "styles" / "documentary.json").write_text(json.dumps({"cr_style_clone": {"operation_id": OPERATION}}))
+    coded = env.get("/cr-workspace/project/my-video").json
+    assert coded["link"] == "" and "timeline can't edit it" in coded["no_timeline"]
+    assert coded["improve"] == "/cr-style-clone?operation=" + OPERATION + "#improve"
+    script = (Path(workspace.__file__).parent / "cr_workspace.js").read_text(encoding="utf-8")
+    assert "saved.no_timeline" in script and "'Improve this style'" in script
     env.studio.JOBS["my-video"] = {"state": "running"}
     assert env.get("/cr-workspace/project/my-video").json["available_for_resume"] is False
     env.studio.JOBS["my-video"] = {"state": "done"}

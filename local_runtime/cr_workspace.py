@@ -169,6 +169,9 @@ def install(studio, activity, *, token, home=None):
             row["language"] = cr_language.style_language(info)
             # a ready-made Shorts recipe whose pipeline makes its Shorts in any language (Roblox Story Shorts first)
             row["any_language"] = cr_language.short_speaks_any(info)
+            row["vertical"] = look.get("aspect") == "9:16"      # a style learned from Shorts: Create's canvas says so
+            import cr_character                             # what a character picture does here (Create says so)
+            row["character_picture"] = cr_character.picture_use(info)
             # a cloned style's own narrator (its channel's kind of voice, or the one chosen for it): Create shows it
             row["narrator"] = (cr_media.style_voice(row.get("name"), info if isinstance(info, dict) else {})
                                .get("voice") or None)
@@ -841,11 +844,19 @@ def install(studio, activity, *, token, home=None):
                          and saved.get("purpose", "video") == "video"
                          and state not in {"done", "queued", "running", "held"})
             qc = _read(job / "sound_qc.json") if (job / "sound_qc.json").is_file() else {}
+            import cr_animated2d
+            coded = cr_animated2d.coded_video(job)
+            improve = ""
+            if coded:                                       # no timeline: Improve this style on its study's page
+                styled = _read(home / "styles" / (str(spec.get("style") or saved.get("style") or "") + ".json"))
+                op = str((styled.get("cr_style_clone") or {}).get("operation_id") or "")
+                improve = "/cr-style-clone?operation=" + op + "#improve" if _OPERATION.fullmatch(op) else ""
             sound = [{"state": _text(r.get("state"), 8), "text": _text(r.get("text"), 200)}
                      for r in (qc.get("lines") or []) if isinstance(r, dict)][:4]
             return protect(jsonify(slug=slug, project_id=project_id if valid else None,
                 available_for_resume=bool(available), title=_text(live.get("title") or saved.get("title"), 300),
                 style=_text(spec.get("style") or saved.get("style"), 140), status=state,
-                link="/editor/" + quote(slug, safe=""), sound_check=sound))
+                link="" if coded else "/editor/" + quote(slug, safe=""), sound_check=sound,
+                **({"no_timeline": cr_animated2d.NO_TIMELINE, "improve": improve} if coded else {})))
         except Exception as error:
             return failure(error)

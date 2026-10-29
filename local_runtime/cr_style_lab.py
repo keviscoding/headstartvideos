@@ -83,6 +83,11 @@ def _spec(style: dict) -> dict:
     import cr_animated2d as a2d
     look = style.get("look") or {}
     if look.get("visuals") not in a2d.PLUGINS or not isinstance(look.get("animated2d"), dict):
+        if (style.get("cr_style_clone") or {}).get("pictures_instead"):
+            op = _operation(style)
+            raise LabError("This style draws pictures now: Use pictures instead was chosen on its study page. Its "
+                           "animation is kept: press Use Claude's animation again on that page"
+                           + (f" (/cr-style-clone?operation={op})" if op else "") + ", then Style Lab can work on it.")
         raise LabError("This style draws pictures, so it has no renderer to work on. Style Lab works on styles animated "
                        "in code: clone a channel and answer that it is animated (2D) or rendered in 3D.")
     return look["animated2d"]

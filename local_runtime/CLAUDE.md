@@ -150,7 +150,10 @@ Studio through its own checks, so nothing needs the Studio web page.
   Creative direction → Character (type new words and press Draw this character, or upload a picture). Prefer it to
   Extra instructions: those can change the look, but the style's picture of its old character still goes with every
   picture, so nothing keeps the new face the same. New words are drawn once in the style's look (one picture, about
-  $0.02). Shorts keep their own host, and 3D scenes follow the words as closely as the 3D figures allow.
+  $0.02). Roblox Story Shorts take a picture of the creator's own avatar (options.character_picture): their Claude
+  Code reads it once and the main character wears it in every shot (what a blocky avatar can't show, the progress
+  says). The other Shorts keep their own host, and a style written in code draws its characters from words: the tools
+  refuse a character picture there, and the quote's `character` says what a picture will and won't do.
 - `make_videos` returns ids at once. Check `progress` now and then, never in a tight loop; Studio shows a desktop
   notification when a video is done. `list_videos` has each finished video's file and watch link.
 - The queue: this computer makes one video at a time, and every video joins Studio's queue, even while another is
@@ -215,7 +218,8 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Cloning a style (/clone-style): any channel is cloned in code by default. The look's `made` question comes first:
   ask it before anything else, in plain words. Written in code (Studio's recommendation, first) means the study has
   their Claude Code write this channel's own renderer from its frames, whatever they show (characters, graphics, maps,
-  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames:
+  text, 3D sets, camera), in three.js for a 3D channel (a look that is partly 3D asks `kit`, 2D or 3D, next: never
+  answer it for them), and check its test shots against the channel's frames:
   usually 10 to 25 minutes of Claude usage for the whole study (at most 46: the study budget plus 24 for the
   animation), no money.
   A style written in code has no motion-graphics kit (Studio 109 skips that step): its renderer draws every picture.
@@ -247,9 +251,11 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Before the paid study, the finished look's `similar_styles` are the styles they already have that come closest. Mention
   them in a line each, as suggestions only, never as a reason not to study: they can use one now, or try a few seconds
   of one on their topic first with `style_sample` (about $0.05 on their own accounts: say so and ask first). A channel
-  that posts only Shorts is read from its Shorts tab and studied like any other. Written in code, its videos are
-  vertical Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9)
-  videos for now, so say so before the study.
+  that posts only Shorts is read from its Shorts tab and studied like any other, and its videos are vertical Shorts
+  either way: written in code, with the channel's own captions; instead of code, with Studio's pictures drawn tall
+  and captions above the Shorts buttons. Graphics Studio draws for wide screens (maps, headlines, 3D scenes) then sit
+  whole across the middle of the frame, and its name labels, lifted subjects and punch cards are left out: say so
+  before the study.
 - A learned style can be changed after it is saved, without studying again: `edit_style` shows or changes its name,
   description, creative direction (script_notes, director_notes), character and the options Create starts from. On the
   Studio page it is Style library → Edit or study again. To study it again with other videos, run the clone again

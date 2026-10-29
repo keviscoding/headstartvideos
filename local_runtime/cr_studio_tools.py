@@ -844,8 +844,15 @@ def character_choice(row: dict, options: dict, where: str) -> tuple:
     picture = str(options.get("character_picture") or "").strip()
     if not (words or picture):
         return "", ""
-    if kind(row) == "short":
-        raise Refused("Shorts keep their own host. A character of your own works in the long-video styles.")
+    use = row.get("character_picture") or {}
+    if kind(row) == "short" and use.get("use") != "avatar":
+        raise Refused("Shorts keep their own host. A character of your own works in the long-video styles"
+                      " and Roblox Story Shorts (a picture of your avatar).")
+    if kind(row) == "short" and words and not picture:
+        raise Refused("Roblox Story Shorts build the main character from a picture of their avatar: give "
+                      "character_picture (words alone go in extra).")
+    if use.get("use") == "none" and (words or picture):
+        raise Refused(use.get("say") or "This style can't use a character of your own.")
     if row.get("visual_policy") == "reference_only":
         raise Refused(f"{row.get('label') or row['name']} draws every scene with its learned animation kit, so its "
                       "character can't be changed for one video.")
@@ -865,6 +872,9 @@ def character_choice(row: dict, options: dict, where: str) -> tuple:
 def character_note(row: dict, options: dict) -> str:
     """What a new character adds to a quote: one drawn picture when the style carries a character picture."""
     words, picture = str(options.get("character") or "").strip(), str(options.get("character_picture") or "").strip()
+    use = row.get("character_picture") or {}
+    if (words or picture) and use.get("use") in ("avatar", "partial"):
+        return str(use.get("say") or "")                       # a 3D cast: what the picture will and won't do
     if picture:
         return "Your picture replaces the style's character in every picture of these videos."
     if words and row.get("character_image"):
@@ -1318,7 +1328,9 @@ def look_progress(look_id: str) -> dict:
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
                         "with look_id, a style name, an example title (title_ideas has a few from the channel's own "
                         "titles to offer; they can change any) and their answers. The 'made' question decides "
-                        "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
+                        "how the videos are made, so ask it first, in plain words; a 'kit' question (asked when the "
+                        "look is partly 3D) decides whether the code draws in 2D or builds real 3D: ask it next and never "
+                        "answer it for them. Written in code (recommended) has "
                         "their Claude Code write the channel's own renderer during the study (usually 10 to 25 "
                         "minutes of their Claude usage for the whole study, at most 46). Its videos then cost their "
                         "voice, plus at most a "
@@ -1330,10 +1342,15 @@ def look_progress(look_id: str) -> dict:
     return out
 
 
-SHORTS_NOTE = ("These references are Shorts. Written in code (the default answer to 'made'), the style makes vertical "
-               "Shorts with the channel's captions; instead of code, the style it saves makes regular landscape (16:9) "
-               "videos for now: tell the creator before the paid study (their Shorts recipes, similar_styles "
-               "kind='short', make vertical Shorts too).")
+# a video drawn by its style's own code has no timeline (cr_animated2d.NO_TIMELINE): never offer it one
+NO_TIMELINE = ("Drawn by its style's own animation code, so the timeline can't edit it (each minute is one whole "
+               "animation). To change how the style's videos look, use Improve this style on its study page or "
+               "style_lab; to change this video, make it again with the changes in its brief.")
+SHORTS_NOTE = ("These references are Shorts. Either way the style makes vertical Shorts: written in code (the default "
+               "answer to 'made') with the channel's own captions; instead of code, with Studio's pictures drawn tall, "
+               "captions above the Shorts buttons, and any graphics made for wide screens (maps, headlines, 3D "
+               "scenes) whole across the middle of the frame: tell the creator before the paid study (their Shorts "
+               "recipes, similar_styles kind='short', make vertical Shorts too).")
 SIMILAR_NEXT = ("similar_styles are the styles they already have that come closest (suggestions only, never a reason not "
                 "to study): before the paid study, mention them in a line each. They can use one now (make_videos with its "
                 "id), try a few seconds of one on their topic first (style_sample: try_first.cost_usd on their own "
@@ -1376,6 +1393,11 @@ def clone_progress(operation: str) -> dict:
             out["next"] = ("Read what_to_tell_them to the creator. If they would rather have pictures in the channel's "
                            "look, open the page (open_in_studio page='style_clone' id=<this op id>) and press Use "
                            "pictures instead; never choose for them.")
+        if renderer.get("can_use_animation"):
+            out["animation"]["can_use_animation"] = True
+            out["next"] = ("This style draws pictures because Use pictures instead was chosen; its animation is kept. If "
+                           "they want it back, open the page (open_in_studio page='style_clone' id=<this op id>) and "
+                           "press Use Claude's animation again; never choose for them.")
     return out
 
 
@@ -1387,7 +1409,8 @@ def tool_list_videos(args):
         "made": time.strftime("%Y-%m-%d %H:%M", time.localtime(r.get("mtime") or 0)),
         "megabytes": round((r.get("size") or 0) / 1e6, 1), "file": r.get("path") or "",
         "watch_url": link("/f/video/" + _quote_path(r["slug"])),
-        "project_url": link("/editor/" + _quote_path(r["slug"]))} for r in rows[:limit]]}
+        **({"no_timeline": NO_TIMELINE} if r.get("coded") else
+           {"project_url": link("/editor/" + _quote_path(r["slug"]))})} for r in rows[:limit]]}
     if args.get("include_cloud", True) is not False:
         try:
             cloud = cloud_progress()
@@ -1968,8 +1991,7 @@ TOOLS = {
                     "style_name, an example_title and the creator's answers to the look's questions. accept_medium: "
                     "only after the creator read and accepted the medium_gap this returns (what Studio can't make yet). "
                     "budget_minutes: the Claude study budget (15-30, default 22); raise it only when a study stopped "
-                    "because its time ran out. A style learned from Shorts makes regular 16:9 videos for now, not "
-                    "vertical Shorts.",
+                    "because its time ran out. A style learned from Shorts makes vertical Shorts.",
                     _schema({"look_id": {"type": "string"}, "style_name": {"type": "string"},
                              "example_title": {"type": "string"},
                              "answers": {"type": "object", "additionalProperties": {"type": "string"}},

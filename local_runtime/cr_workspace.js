@@ -120,14 +120,30 @@
   const castOf = (r) => Array.isArray(r?.character) ? r.character.join('\n') : String(r?.character || '');
   const castKey = (v) => String(v || '').replace(/[—–]/g, '-').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').toLowerCase().split(/\s+/).filter(Boolean).join(' ');
   function characterChanged() {const own = castOf(state.selected), v = castKey($('crw-character').value); return !!v && v !== castKey(own) && v !== castKey(own.slice(0, 4000));}
+  // What a picture does in this recipe (cr_character.picture_use): with every drawn picture ("stills"), read into a Roblox
+  // Story Short's main avatar ("avatar"), only the drawn pictures of a designed 3D cast ("partial"), or nothing ("none":
+  // the inputs give way to why). Never accepted silently (the owner, 2026-10-28).
+  const pictureUse = (r = state.selected) => r?.character_picture?.use || 'stills';
+  function characterMode() {
+    const use = pictureUse(), sec = $('crw-character-section');
+    for (const n of sec.children) if (n.id !== 'crw-character-status') n.hidden = use === 'none';
+    sec.querySelector('.crw-character-actions').hidden = use === 'none' || use === 'avatar';   // a drawn sheet is for drawn pictures
+    sec.querySelector('p.crw-field-help:not(#crw-character-status)').hidden = use !== 'stills';
+    $('crw-character').placeholder = use === 'avatar' ? 'Optional: anything about your avatar the picture doesn’t show.'
+      : 'Who appears in every picture: their age, hair, face, clothes and one detail that makes them recognisable.';
+  }
   function characterView(message) {
+    characterMode();
     const r = state.selected || {}, pick = $('crw-character-image').value, row = (state.characters || []).find(x => x.rel === pick), changed = characterChanged();
+    const use = pictureUse(r), say = r.character_picture?.say || '';
+    if (message == null && (use === 'none' || use === 'avatar')) {text('crw-character-status', use === 'avatar' && !pick ? 'Upload a picture of your avatar. ' + say : say); const art0 = $('crw-character-art'); art0.hidden = !(row && use === 'avatar'); if (row && use === 'avatar') art0.src = row.src; return;}
     const src = row ? row.src : (!changed && r.character_image ? `/char/${encoded(r.name)}` : ''), art = $('crw-character-art');
     art.hidden = !src; if (src && art.getAttribute('src') !== src) art.src = src;
     $('crw-character-draw').disabled = !changed || !!state.drawing;
     text('crw-character-status', message != null ? message : pick ? 'This picture decides how your character looks in every picture of this video.'
       : changed && r.character_image ? 'Studio draws your character from these words in this recipe’s style (one picture, about $0.02) and keeps them in every picture of the video. Press Draw this character to see them first.'
       : changed ? 'Your words describe the character in every picture.' : r.character_image ? 'The recipe’s own character. Change the words or upload a picture to change who appears.' : '');
+    if (message == null && use === 'partial') text('crw-character-status', [$('crw-character-status').textContent, say].filter(Boolean).join(' '));
   }
   function addCharacter(row) {
     state.characters = [row, ...(state.characters || []).filter(x => x.rel !== row.rel)];
@@ -187,8 +203,10 @@
     text('crw-batch-label', rk ? 'Queue more topics (up to 15, one per line)' : 'Create several videos');
     $('crw-batch-titles').placeholder = rk ? 'Ranking the Funniest Dog Moments\nRanking the Best Bunny Moments' : 'One additional title per line';
     hide('crw-short-duration', !s || rk); hide('crw-long-duration', s); hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
-    text('crw-canvas-label', s ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', s ? '9:16 vertical' : '16:9 landscape');
+    const tall = s || !!state.selected?.vertical;   // a style learned from Shorts is vertical too, at any length
+    text('crw-canvas-label', tall ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', tall ? '9:16 vertical' : '16:9 landscape');
     if (s) for (const id of SHORT_ONLY_HIDDEN) hide(id, true);
+    if (s && pictureUse() === 'avatar') hide('crw-character-section', strict());    // Roblox Story Shorts: your avatar
   }
   function selectRecipe(recipe, persist = true) {
     if (state.selected) state.featureDrafts[state.selected.name] = featureValues();
@@ -831,7 +849,10 @@
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
       const thumbs = (data.thumbs || data.thumbnails || []).map(name => typeof name === 'string' ? name : name?.name).filter(Boolean);
       for (const [i, filename] of thumbs.entries()) {const a=el('a','crw-export-link',thumbs.length > 1 ? `Thumbnail ${i + 1}` : 'Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
-      try {const saved = await api(`/cr-workspace/project/${encoded(job.slug)}`); const lines = (saved.sound_check || []).map(r => (r.state === 'ok' ? '✓ ' : '• ') + r.text); text('crw-output-message', lines.length ? 'Sound check: ' + lines.join(' · ') : '');} catch (_) {/* the sound check is optional */}
+      try {const saved = await api(`/cr-workspace/project/${encoded(job.slug)}`); const lines = (saved.sound_check || []).map(r => (r.state === 'ok' ? '✓ ' : '• ') + r.text);
+        // a video drawn by its style's own code: no timeline (its minutes are whole animations), and why, plainly
+        if (saved.no_timeline) {$('crw-output-editor').hidden = true; hide('crw-output-timing', true); if (saved.improve) {$('crw-output-editor').href = saved.improve; text('crw-output-editor-label', 'Improve this style'); $('crw-output-editor').hidden = false;}}
+        text('crw-output-message', [saved.no_timeline || '', lines.length ? 'Sound check: ' + lines.join(' · ') : ''].filter(Boolean).join(' '));} catch (_) {/* the sound check is optional */}
       $('crw-output').showModal();
     } catch (e) {toast(e.message);}
   }
@@ -943,7 +964,7 @@
       desc:checked('crw-description'),chapters:checked('crw-description')?number('crw-chapters',5,0,20):0,
       sources:checked('crw-description')&&checked('crw-sources')?number('crw-source-count',3,0,10):0,
       features,render_backend:features.threed&&checked('crw-fast-toggle')&&!strict()?'manimgx':'original',
-      character:strict()?'':$('crw-character').value.trim(),character_image:strict()?'':$('crw-character-image').value,
+      character:strict()||pictureUse()==='none'?'':$('crw-character').value.trim(),character_image:strict()||pictureUse()==='none'?'':$('crw-character-image').value,
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
@@ -959,7 +980,7 @@
       const ranking={ranks:number('crw-ranks',5,3,10),commentary:checked('crw-rank-commentary'),booms:checked('crw-rank-booms'),sfx:$('crw-rank-sfx').value,
         punch_ins:checked('crw-rank-punch'),clean:checked('crw-rank-clean'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{}),...(reference?{reference}:{})};
       p.extra=`[[ranking=${JSON.stringify(ranking)}]] `+(p.extra||'');}
-    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';p.threed_quick=false;}
+    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';if(pictureUse()!=='avatar'){p.character='';p.character_image='';}p.threed_look='';p.threed_quick=false;}
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }

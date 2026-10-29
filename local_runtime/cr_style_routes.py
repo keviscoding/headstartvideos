@@ -232,6 +232,19 @@ def install(studio, activity, setup_status, *, token, home=None):
         except Exception as error:
             return error_response(error)
 
+    @app.post("/cr-style-clone/<operation>/use-animation")
+    def cr_style_use_animation(operation):
+        """Use pictures instead, undone on the creator's word: Claude's animation draws the style again."""
+        try:
+            data()
+            with activity.lock:
+                if activity.busy():
+                    raise RuntimeError("Finish the current studio work before changing this style.")
+                cr_style_clone.use_animation(home, operation, cr_bridge)
+            return no_store(jsonify(safe_status(operation)))
+        except Exception as error:
+            return error_response(error)
+
     @app.get("/cr-style-clone/<operation>/renderer-picture/<kind>/<int:index>")
     def cr_style_renderer_picture(operation, kind, index):
         """One of the renderer's test shots or the channel's frames beside them, by index (never by path)."""

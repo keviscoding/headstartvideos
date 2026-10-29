@@ -13,7 +13,7 @@ its OLD character stayed attached to every still, so the image model had two dif
 kept the new face the same (Discord, 2026-10-24: "I tried this but it didn't work"). Tested on 2026-10-24 with Kie's
 nano-banana edit on 2D Stories and Stick Figure Stories (character-fix/live-2026-10-24): clear new words won over the
 old picture in single stills, so the old picture is not always the reason a change fails. Shorts hosts and 3D figures
-are built another way (local_runtime/CLAUDE.md).
+are built another way (local_runtime/CLAUDE.md): picture_use() says, per recipe, what a picture does there.
 
 Now new words without a picture of their own draw a character sheet from those words, once, in the recipe's own
 drawing style, and that sheet goes with every still (one picture, about $0.02 on the creator's image account; the same
@@ -41,6 +41,38 @@ STYLE_NOTE = ("STYLE REFERENCE: the reference image shows the exact drawing styl
 UPLOADED = ("THE CAST: the main character is exactly the character in the character reference image, with the same "
             "face, hair, body, colours and clothes in every picture they appear in.")
 _lock = threading.Lock()
+# What a character picture does in a recipe that doesn't draw pictures (the owner, 2026-10-28: never accepted silently).
+# Roblox Story Shorts read it into the main character's blocky avatar (shorts/roblox: hero()); the others can't use it.
+AVATAR = ("Roblox Story Shorts build every character as a blocky 3D avatar. Studio has your Claude Code look at your "
+          "picture once (no picture is paid for) and builds your main character's avatar from it: hat or hair, face, "
+          "shirt colours and print, cuffs, pants and shoes, in every shot. What a blocky avatar can't show (a detailed "
+          "logo, a texture, a baggy cut) comes as close as it can, and the video's progress says what.")
+NOT_USED = {
+    "zack3d": "This recipe builds its people in 3D from the story's words, so a picture can't be copied into it. Describe "
+              "your character in Extra instructions instead.",
+    "photo2d": "This recipe has its own recurring host and makes the rest from photos, so a character picture isn't used.",
+    "ranking": "This recipe is made from real clips: it has no characters for a picture to change.",
+    "coded": "This style's own animation code draws its characters (in 2D or 3D) from words, so a picture can't be copied "
+             "into it. Describe your character in Extra instructions instead: the code draws them its own way.",
+}
+DESIGNED = ("This style's 3D scenes build their characters from the style's own cast design, so a picture can't change "
+            "them there; it only guides the style's drawn pictures between the 3D scenes.")
+
+
+def picture_use(info) -> dict:
+    """What a character picture does in this recipe: {"use": "stills"} (it goes with every drawn picture), "avatar"
+    (Roblox Story Shorts: read into the main character's 3D avatar), "partial" (a designed 3D cast: the drawn pictures
+    only) or "none" (it can't be used), with "say": what the creator is told (empty for "stills")."""
+    info = info if isinstance(info, dict) else {}
+    look = info.get("look") if isinstance(info.get("look"), dict) else {}
+    if info.get("format") == "short":
+        pipe = str((info.get("shorts") or {}).get("pipeline") or "zack3d") if isinstance(info.get("shorts"), dict) else "zack3d"
+        return {"use": "avatar", "say": AVATAR} if pipe == "roblox" else {"use": "none", "say": NOT_USED.get(pipe, NOT_USED["zack3d"])}
+    if look.get("visuals") in ("cr_animated2d", "cr_animated3d"):
+        return {"use": "none", "say": NOT_USED["coded"]}
+    if isinstance((look.get("threed") or {}).get("designed"), dict):
+        return {"use": "partial", "say": DESIGNED}
+    return {"use": "stills", "say": ""}
 
 
 def norm(text) -> str:

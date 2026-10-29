@@ -998,6 +998,8 @@ def status(home, operation_id, bridge):
                 import cr_style_map
                 result["route"]["medium_gap"] = cr_style_map.MEDIUM_GAP
         renderer = renderer_verdict(style, home)
+        if renderer.get("state") == "pictures" and can_use_animation(home, operation_id, bridge):
+            renderer["can_use_animation"] = True
         if renderer.get("graphics_offered"):
             # the opt-in graphics study asked of it, so the page can show it (and never offer a second at once)
             asked = _read(_folder(home) / ".graphics" / (operation_id + ".json")).get("operation_id")
@@ -1012,9 +1014,11 @@ def status(home, operation_id, bridge):
                 renderer["improvement_id"] = change
             result["renderer"] = renderer
             # the page's headline; the panel below it (and the tools' what_to_tell_them) says the verdict once
-            result["message"] = ("Your style is saved." if renderer.get("state") in ("passed", "below_bar", "pictures",
-                                                                                     "unchecked")
-                                 else "Your style is saved, but its animation needs your choice below.")
+            result["message"] = ("Your style is saved." if renderer.get("state") in ("passed", "pictures", "unchecked")
+                                 else HEADLINES.get(renderer.get("state"))
+                                 or "Your style is saved, but its animation needs your choice below.")
+            if renderer.get("state") in HEADLINES:          # never "Your style is ready" for a style that isn't
+                result["headline"] = HEADLINES[renderer["state"]]
     return result
 
 
@@ -1058,6 +1062,19 @@ def renderer_pictures(home, operation_id, bridge, *, style=None) -> dict:
     return {"shots": shots, "channel": channel}
 
 
+HEADLINES = {"below_bar": "Your style is saved, but it failed the likeness check",
+             "unjudged": "Your style is saved, but it hasn't been checked against the channel"}
+
+
+def _unjudged_why(why) -> str:
+    """Why a renderer has no likeness score, in the creator's words (the server's own reason after the build's)."""
+    why = re.sub(r"^the likeness check couldn't run:\s*", "", str(why or "")).strip()
+    if ("style checks" in why or "likeness checks" in why) and "today" in why:
+        # the server's 402: its own allowance since 2026-10-27; before, the references' watches used it up
+        return "your plan's likeness checks for today were used up; they come back within a day"
+    return why.rstrip(".") or "the check didn't answer"
+
+
 def renderer_verdict(style, home=None) -> dict:
     """What the creator is told about an animated style's renderer, plainly: how it scored against the channel's own
     bar, and the pictures route offered when it fell short or never worked, with where those pictures' motion graphics
@@ -1080,6 +1097,10 @@ def renderer_verdict(style, home=None) -> dict:
     r = (look.get("animated2d") or {}).get("renderer")
     if not isinstance(r, dict):
         return {}
+    if r.get("state") == "below_bar" and not r.get("overall") and r.get("file"):
+        # saved before Studio 111 as 0/10: the judge never answered (a customer's two studies of 2026-10-27, their
+        # day's style checks used up by the looks), never a real likeness
+        r = {**r, "state": "unjudged", "overall": None}
     out = {k: r.get(k) for k in ("state", "overall", "bar", "control", "version", "why") if r.get(k) is not None}
     # one score, said the same way everywhere (the study page once showed 5.67 here and "6/10" under it)
     score, bar = _tenth(r.get("overall")), _tenth(r.get("bar"))
@@ -1091,10 +1112,19 @@ def renderer_verdict(style, home=None) -> dict:
                       f"{score}/10 against the channel's own frames, reaching this channel's bar of {bar}. Every video "
                       "is drawn with it.")
     elif r.get("state") == "below_bar":
-        out["verdict"] = "Not that close yet"
-        out["say"] = (f"Your style is saved. Claude wrote this channel's animation in code: its test shots scored "
+        out["verdict"] = "Under the channel's bar"
+        out["say"] = (f"Your style is saved, but it failed the likeness check: Claude's animation in code scored "
                       f"{score}/10 against the channel's own frames, under this channel's bar of {bar}. Your videos "
-                      "will be drawn with it as it is. You can improve it below; if you'd rather have pictures in the "
+                      "will be drawn with it as it is. Improve this style below (each version is checked against the "
+                      "channel again), study the channel again, or, if you'd rather have pictures in the channel's "
+                      "look, choose Use pictures instead" + _pictures_graphics(style, recipe) + ".")
+        out["offer_pictures"] = True
+    elif r.get("state") == "unjudged" and r.get("file"):
+        out["verdict"] = "Not checked yet"
+        out["say"] = ("Your style is saved, but it hasn't been checked against the channel: Studio couldn't score "
+                      f"Claude's animation against the channel's own frames ({_unjudged_why(r.get('why'))}), so it has "
+                      "no likeness score yet. Your videos will be drawn with it as it is. Improve this style below once the check is back (each version is "
+                      "checked against the channel), study the channel again, or, if you'd rather have pictures in the "
                       "channel's look, choose Use pictures instead" + _pictures_graphics(style, recipe) + ".")
         out["offer_pictures"] = True
     elif r.get("state") == "unchecked" and r.get("file"):          # saved from Style Lab without a check
@@ -1280,6 +1310,9 @@ def use_pictures(home, operation_id, bridge):
     mapping = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=spec["base_style"],
                                       answers=answers)
     renderer = (look.get("animated2d") or {}).get("renderer") or {}
+    # the style as it was, so the creator can switch back (a customer pressed it by accident, 2026-10-27, and only a
+    # new paid study brought the animation back)
+    _write(Path(folder) / ANIMATED_BACKUP, copy.deepcopy(style))
     for key in ("visuals", "animated2d", "aspect"):
         look.pop(key, None)
     style.pop("cost", None)
@@ -1290,6 +1323,66 @@ def use_pictures(home, operation_id, bridge):
     if isinstance(clone.get("learned_v2"), dict):
         clone["learned_v2"]["route"] = mapping.get("route") or {}
     republish(folder, saved, style)
+    return status(home, operation_id, bridge)
+
+
+ANIMATED_BACKUP = "animated-style.json"     # the animated style before Use pictures instead, for its undo
+
+
+def can_use_animation(home, operation_id, bridge) -> bool:
+    """A style switched to pictures can have Claude's animation back: the style as it was (saved since Studio 111), or
+    the study's own renderer (an earlier switch)."""
+    try:
+        folder, saved = _saved(home, operation_id, bridge)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return _animated_backup(home, folder) is not None or _renderer_kept(folder, saved.get("spec") or {})
+
+
+def _animated_backup(home, folder):
+    """The saved animated style, while its renderer file is still there unchanged; else None."""
+    before = _read(Path(folder) / ANIMATED_BACKUP)
+    record = ((before.get("look") or {}).get("animated2d") or {}).get("renderer") or {}
+    if not before or not record.get("file") or not record.get("sha256"):
+        return None
+    import cr_animated2d
+    path = Path(home) / "assets" / str(record["file"])
+    return before if path.is_file() and cr_animated2d.code_sha256(path) == record["sha256"] else None
+
+
+def _renderer_kept(folder, spec) -> bool:
+    """A coded study's own renderer is still in its folder, as its build saved it."""
+    built = _read(Path(folder) / "renderer" / "build.json")
+    return bool(spec.get("renderer")) and built.get("state") in ("passed", "below_bar", "unjudged") and \
+        (Path(folder) / "renderer" / "renderer.js").is_file()
+
+
+def use_animation(home, operation_id, bridge):
+    """Use pictures instead, undone: the saved style draws with Claude's animation again, on the creator's word. The
+    style as it was before the switch when Studio kept it; for a switch made before Studio 111, the study's own
+    renderer applied again the way the study saved it (a renderer saved later from Style Lab was not kept then)."""
+    folder, saved = _saved(home, operation_id, bridge)
+    if saved.get("state") not in ("complete", "complete_local", "validated") or not _published(home, saved):
+        raise RuntimeError("Wait for the style to be saved first.")
+    spec = saved["spec"]
+    target = Path(home) / "styles" / (spec["style_id"] + ".json")
+    style = _read(target)
+    if not (style.get("cr_style_clone") or {}).get("pictures_instead"):
+        return status(home, operation_id, bridge)
+    before = _animated_backup(home, folder)
+    if before is not None:
+        restored = before
+    elif _renderer_kept(folder, spec):
+        current = copy.deepcopy(style)
+        current.setdefault("cr_style_clone", {}).pop("pictures_instead", None)
+        restored = _apply_learned(folder, spec, current, lambda m: None)
+        if ((restored.get("look") or {}).get("visuals")) not in ("cr_animated2d", "cr_animated3d"):
+            raise RuntimeError("Studio couldn't put Claude's animation back on this style. Your style is unchanged.")
+    else:
+        raise RuntimeError("This style's animation code is no longer in this Studio, so it can't be switched back. "
+                           "Your style is unchanged; study the channel again for a new animation.")
+    restored.setdefault("cr_style_clone", {}).pop("pictures_instead", None)
+    republish(folder, saved, restored)
     return status(home, operation_id, bridge)
 
 
@@ -1329,8 +1422,10 @@ def _metadata_checkpoint_ready(folder, saved):
 
 
 def _renderer_built(folder) -> bool:
-    """The study's renderer build finished (passed, below the bar or failed, as cr_animated2d.build saves it)."""
-    return _read(Path(folder) / "renderer" / "build.json").get("state") in ("passed", "below_bar", "failed")
+    """The study's renderer build finished (passed, below the bar, unjudged or failed, as cr_animated2d.build saves
+    it)."""
+    import cr_animated2d
+    return _read(Path(folder) / "renderer" / "build.json").get("state") in cr_animated2d.BUILT
 
 
 def _renderer_files(source) -> list:
@@ -1807,7 +1902,8 @@ def _renderer(folder, spec, looked, see, log):
                                                 "candidates": [cr_style_likeness._b64(p) for p in candidates],
                                                 "context": context})
     result = cr_animated2d.build(folder, {**{k: channel.get(k) for k in ("sky", "floor", "blur")}, **size}, channel, see=see,
-                                 judge=judge, references=frames, home=home, log=log, names=names)
+                                 judge=judge, references=frames, home=home, log=log, names=names,
+                                 brief=spec.get("brief") or "")
     log(f"  renderer: {result.get('state')}"
         + (f", {result.get('overall')}/10 against a bar of {result.get('bar')}" if result.get("overall") is not None
            else f" ({result.get('why', '')})"))
@@ -1849,8 +1945,6 @@ def _apply_learned(folder, spec, style, log):
         planned = (mapping["overrides"].get("features") or {})
         learned["features"] = {**(learned.get("features") or {}),
                                **{k: list(planned[k]) for k in ("offered", "on", "channel_on") if k in planned}}
-        if mapping["overrides"]["look"].get("aspect"):
-            look["aspect"] = mapping["overrides"]["look"]["aspect"]
         import cr_animated2d
         carried = _read(folder / "renderer-carried.json")
         if spec.get("renderer") and carried.get("schema") == 1:
@@ -1859,6 +1953,14 @@ def _apply_learned(folder, spec, style, log):
         elif spec.get("renderer"):
             cr_animated2d.attach(learned, folder, home)
         learned["cost"] = cr_animated2d.cost_note(learned)
+        import cr_style_art
+        for key in ("description", "tagline"):              # the card says the kit it's written on, 2D or 3D
+            if learned.get(key):
+                learned[key] = cr_style_art.kit_true(learned[key], cr_animated2d.dims_of(look["animated2d"]))
+    if ((mapping["overrides"].get("look") or {}).get("aspect")):
+        # a Shorts channel's videos are vertical however they're made (the code routes draw them tall; Studio's own
+        # engine through cr_vertical), whatever the art director's words say
+        learned.setdefault("look", {})["aspect"] = mapping["overrides"]["look"]["aspect"]
     learned.setdefault("cr_style_clone", {}).update(
         learned_v2={"look_id": spec["look_id"], "base": mapping["base"], "base_why": mapping["base_why"],
                     "route": mapping.get("route") or {},

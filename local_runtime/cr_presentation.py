@@ -120,6 +120,13 @@ def present(channel, style_info=None, *, automatic=False):
         row.setdefault("label", name or "My visual recipe")
         row.setdefault("tagline", row.get("description") or "A reusable visual recipe for your next video.")
         row.setdefault("description", row.get("tagline"))
+        look = info.get("look") if isinstance(info.get("look"), dict) else {}
+        if look.get("visuals") in ("cr_animated2d", "cr_animated3d"):
+            # a style saved before Studio 111 said "clean 3D" on a 2D kit: its card says the kit it's written on
+            import cr_style_art
+            dims = 3 if (look.get("animated2d") or {}).get("dims") == 3 else 2
+            for key in ("description", "tagline"):
+                row[key] = cr_style_art.kit_true(row.get(key), dims)
         reference = (info.get("cr_style_clone") or {}) if isinstance(info.get("cr_style_clone"), dict) else {}
         features = info.get("features") or row.get("features") or {}
         active = features.get("on", []) if isinstance(features, dict) else []

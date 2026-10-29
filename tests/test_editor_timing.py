@@ -62,6 +62,21 @@ def test_the_editor_page_loads_the_timing_add_on_once_and_keeps_everything_else(
     assert page.text.replace(cr_timing.TAGS, "") == EDITOR, "the editor itself is served as it is"
 
 
+def test_a_video_drawn_by_its_styles_own_code_gets_no_timeline_and_says_why(studio):
+    """The owner (2026-10-27): the timeline can't edit a coded video (each minute is one whole animation: a retime or
+    delete froze or restarted it, and its re-render doubled the renderer's captions), so it is hidden, said plainly."""
+    import cr_animated2d
+    assert not cr_animated2d.coded_video(studio.job)
+    (studio.job / "motion").mkdir()
+    (studio.job / "motion" / "a2d_000_1a2b3c4d.mp4").write_bytes(b"x")
+    assert cr_animated2d.coded_video(studio.job)
+    page = studio.get("/editor/suez--abc")
+    assert page.status_code == 200 and "No timeline for this video" in page.text and "Improve this style" in page.text
+    assert "let D=null" not in page.text and "/cr-editor/timing.js" not in page.text, "never the editor"
+    assert 'href="/f/video/suez--abc"' in page.text and page.headers["Cache-Control"] == "private, no-store"
+    assert studio.get("/editor/unknown").text != page.text, "any other video keeps its editor"
+
+
 def test_an_engine_without_the_timeline_editor_is_left_alone():
     app = Flask("no-editor")
     assert cr_timing.install(SimpleNamespace(app=app, mv=None)) is False
