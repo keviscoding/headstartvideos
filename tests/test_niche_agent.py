@@ -337,3 +337,80 @@ def test_thumbnails_use_their_own_certificate_context(tmp_path, monkeypatch):
         raise OSError("certificate verify failed")
     with pytest.raises(agent.YouTubeError, match="certificate verify failed"):
         agent.look_sheet("", ["Ktjk8s3xyGY"], home=tmp_path, fetch=broken)
+
+
+# ── review fixes (2026-10-29) ─────────────────────────────────────────────────────────────────────────────────
+
+def test_an_age_gated_video_is_not_youtubes_bot_check(tmp_path):
+    assert agent.bot_check("ERROR: [youtube] x: Sign in to confirm you're not a bot. Use --cookies")
+    assert not agent.bot_check("ERROR: [youtube] x: Sign in to confirm your age. This video may be inappropriate")
+    yt = FakeYouTube(stderr="ERROR: [youtube] abc: Sign in to confirm your age. This video may be inappropriate")
+    with pytest.raises(agent.YouTubeError) as caught:
+        agent.run_ytdlp(["https://www.youtube.com/watch?v=abcdefghijk"], home=tmp_path, runner=yt)
+    assert not isinstance(caught.value, agent.Wall) and not agent.walled(tmp_path)
+
+
+class GatedVideos(FakeYouTube):
+    """The tab reads; every video page fails (age gate, members only)."""
+
+    def __call__(self, command):
+        if "watch?v=" in command[-1]:
+            self.commands.append(command)
+            return SimpleNamespace(returncode=1, stdout="", stderr="ERROR: [youtube] x: Join this channel to get access")
+        return super().__call__(command)
+
+
+def test_a_video_page_that_fails_keeps_the_approximate_date_not_the_channel(tmp_path):
+    tab = {"channel": "CityEons", "channel_id": "UC" + "a" * 22, "channel_follower_count": 6_920,
+           "entries": [entry(4, 1_600_000, "2026-10-19"), entry(3, 921_000, "2026-10-15"),
+                       entry(2, 348_000, "2026-10-08"), entry(1, 668_000, "2026-10-05")]}
+    c = agent.channel_stats(["@CityEons"], home=tmp_path, today=TODAY, runner=GatedVideos(tab=tab))["channels"][0]
+    assert "error" not in c and c["first_upload"] == "2026-10-05" and not c["first_upload_exact"]
+
+
+def test_a_full_tab_is_older_even_when_live_or_upcoming_entries_are_dropped(tmp_path):
+    entries = [{"id": "upcoming001", "live_status": "is_upcoming", "title": "soon"}]
+    entries += [entry(i, 60_000, (TODAY - dt.timedelta(days=i // 10 + 1)).isoformat())
+                for i in range(agent.TAB_LIMIT - 1)]
+    tab = {"channel": "Daily", "channel_id": "UC" + "e" * 22, "channel_follower_count": 9_000, "entries": entries}
+    yt = FakeYouTube(tab=tab, dates={})
+    c = agent.channel_stats(["@Daily"], home=tmp_path, today=TODAY, runner=yt)["channels"][0]
+    assert c["more_than_listed"] and c["first_upload"] is None
+    assert not any(cmd[-1].endswith("vid00000198") for cmd in yt.commands)   # no exact date for a fake "first"
+
+
+def test_a_young_upload_already_past_the_banger_line_counts_as_a_banger():
+    new = rows(entry(3, 400_000, "2026-10-27"), entry(2, 2_000, "2026-10-26"), entry(1, 300_000, "2026-10-20"))
+    n = agent.channel_numbers(new, 4_000, today=TODAY, th=LONG)
+    assert n["bangers"] == 2 and n["flops"] == 0 and n["too_new_to_judge"] == 2   # the 2K one is still growing
+
+
+def test_unreadable_ideas_are_kept_aside_never_overwritten(tmp_path):
+    folder = tmp_path / "ideas"
+    folder.mkdir()
+    (folder / "ideas.json").write_text('{"ideas": [{"id": "id_aaaaaaaaaaaa", "title": "mine"', encoding="utf-8")
+    agent.save_ideas([IDEA], home=tmp_path)
+    kept = list(folder.glob("ideas.unreadable-*.json"))
+    assert len(kept) == 1 and "mine" in kept[0].read_text(encoding="utf-8")
+    assert [i["title"] for i in agent.list_ideas(home=tmp_path)] == [IDEA["title"]]
+    assert not (folder / "ideas.lock").exists() and not list(folder.glob("*.cr-tmp"))
+
+
+def test_saves_at_the_same_time_lose_no_idea(tmp_path):
+    import threading as th
+    titles = [f"Idea number {i}" for i in range(12)]
+    workers = [th.Thread(target=agent.save_ideas, args=([{"title": t}],), kwargs={"home": tmp_path}) for t in titles]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    assert sorted(i["title"] for i in agent.list_ideas(home=tmp_path)) == sorted(titles)
+
+
+def test_a_long_call_stops_starting_new_reads(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent, "CALL_SECONDS", -1)
+    yt = FakeYouTube(tab={"entries": []})
+    out = agent.channel_stats(["@a", "@b"], home=tmp_path, today=TODAY, runner=yt)
+    assert yt.commands == [] and all("ran long" in c["error"] for c in out["channels"])
+    found = agent.search(["city timelapse"], home=tmp_path, today=TODAY, runner=yt)
+    assert yt.commands == [] and "ran long" in found["notes"][0]

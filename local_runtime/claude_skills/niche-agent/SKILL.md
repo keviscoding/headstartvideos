@@ -17,7 +17,8 @@ on the creator's Claude plan. Nothing spends money or starts a video. Tell them 
 about 5 minutes and reads public YouTube pages; nothing is charged."
 
 The tools are the `studio` server's (in the plugin: `mcp__plugin_channelrecipe_studio__…`). If they're missing, see
-CLAUDE.md ("No studio tools in this session?").
+CLAUDE.md ("No studio tools in this session?"). Studio's other tools there but not these means Studio is older than
+114: ask them to update Studio (CLAUDE.md, "If they ask you to update Studio"); never read YouTube another way.
 
 ## 0. Read the teaching (always first)
 

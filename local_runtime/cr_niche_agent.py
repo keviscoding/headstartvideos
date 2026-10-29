@@ -61,6 +61,8 @@ SEARCH_HOURS = 6
 CHANNEL_HOURS = 12
 WALL_SECONDS = 30 * 60             # after YouTube's "confirm you're not a bot": stop reading for half an hour
 PACE_SECONDS = 1.0                 # between two YouTube reads from this computer
+CALL_SECONDS = 240                 # one yt_search / yt_channel_stats call starts no new read after this (the tool
+                                   # server answers one call at a time; what's left is read on the next call)
 MAX_IDEAS = 300
 WALL = ("YouTube asked this computer to confirm it isn't a bot, so the niche agent stopped reading YouTube for half an "
         "hour (it never signs in or uses cookies to get past that). The niche database still works; try the live "
@@ -201,6 +203,37 @@ def _mark_wall(home=None) -> None:
     _write_json(_wall_file(home), {"until": time.time() + WALL_SECONDS, "at": time.time()})
 
 
+def bot_check(err: str) -> bool:
+    """YouTube's "Sign in to confirm you're not a bot". Its age gate ("Sign in to confirm your age") is one video's
+    problem, never a reason to stop every read for half an hour."""
+    err = str(err or "").lower()
+    return "not a bot" in err or ("confirm you" in err and "bot" in err and "your age" not in err)
+
+
+_IPV4 = {}
+
+
+def _ipv4() -> list:
+    """--force-ipv4 when this computer reaches YouTube over IPv4, as Studio's own reads do (cr_studio.polite_youtube:
+    YouTube scores IPv6 addresses harder). YT_FORCE_IPV4 in the environment decides when it's set."""
+    if "on" not in _IPV4:
+        setting = os.environ.get("YT_FORCE_IPV4")
+        if setting is not None:
+            _IPV4["on"] = setting.strip().lower() not in ("", "0", "no", "off", "false")
+        else:
+            import socket
+            try:
+                family, kind, proto, _, address = socket.getaddrinfo("www.youtube.com", 443, socket.AF_INET,
+                                                                     socket.SOCK_STREAM)[0]
+                with socket.socket(family, kind, proto) as probe:
+                    probe.settimeout(2.0)
+                    probe.connect(address)
+                _IPV4["on"] = True
+            except (OSError, IndexError):
+                _IPV4["on"] = False
+    return ["--force-ipv4"] if _IPV4["on"] else []
+
+
 def run_ytdlp(args: list, *, home=None, timeout: float = 120, runner=None) -> str:
     """One yt-dlp read; its standard output. Paced, and stopped for half an hour at YouTube's bot check."""
     if walled(home):
@@ -210,7 +243,8 @@ def run_ytdlp(args: list, *, home=None, timeout: float = 120, runner=None) -> st
         if wait > 0:
             time.sleep(wait)
         _last_read[0] = time.monotonic()
-    command = ytdlp_command(home) + ["--no-warnings", "--ignore-no-formats-error", *args]
+    command = ytdlp_command(home) + ["--no-warnings", "--ignore-no-formats-error",
+                                     *(_ipv4() if runner is None else []), *args]
     try:
         if runner is not None:
             done = runner(command)
@@ -223,7 +257,7 @@ def run_ytdlp(args: list, *, home=None, timeout: float = 120, runner=None) -> st
     except OSError:
         raise YouTubeError("Studio's YouTube reader couldn't start. Run setup_check.") from None
     err = (done.stderr or "").lower()
-    if "confirm you" in err and "bot" in err or "sign in to confirm" in err:
+    if bot_check(err):
         _mark_wall(home)
         raise Wall(WALL)
     if "no module named yt_dlp" in err or "no module named 'yt_dlp'" in err:
@@ -262,11 +296,25 @@ def _keep(home, kind: str, key: str, value) -> None:
 
 
 def _write_json(path: Path, value) -> None:
+    """Whole or not at all: a temporary file of this writer's own (two writers never share one), then a rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".cr-tmp")
-    with open(temporary, "w", encoding="utf-8", newline="") as handle:
-        json.dump(value, handle, ensure_ascii=False, indent=1)
-    temporary.replace(path)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}-{threading.get_ident()}.cr-tmp")
+    try:
+        with open(temporary, "w", encoding="utf-8", newline="") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=1)
+        for attempt in range(5):
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError:                           # Windows: a reader has the file open for a moment
+                if attempt == 4:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
+    finally:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
 
 
 def _day(ts) -> str | None:
@@ -361,9 +409,13 @@ def search(queries: list, *, window: str = "month", sort: str = "views", fmt: st
     per_query = max(5, min(int(per_query or 30), 60))
     found: dict = {}
     notes = []
+    deadline = time.monotonic() + CALL_SECONDS
     for q in queries:
         key = f"{q}|{window}|{sort}|{per_query}"
         rows = _cached(home, "search", key, SEARCH_HOURS)
+        if rows is None and time.monotonic() > deadline:
+            notes.append(f"{q!r}: not searched, this call ran long (YouTube was slow). Search it again.")
+            continue
         if rows is None:
             try:
                 out = run_ytdlp(["--flat-playlist", "-J", "--playlist-end", str(per_query), "--extractor-args",
@@ -427,13 +479,15 @@ def read_tab(base: str, tab: str, *, home=None, runner=None) -> dict:
         data = json.loads(out or "{}")
     except ValueError:
         raise YouTubeError("YouTube's answer for that channel couldn't be read.") from None
-    rows = [r for r in (entry_row(e) for e in data.get("entries") or []) if r]
+    raw = [e for e in data.get("entries") or [] if isinstance(e, dict)]
+    rows = [r for r in (entry_row(e) for e in raw) if r]
     cid = str(data.get("channel_id") or "")
     subs = data.get("channel_follower_count")
     return {"channel": str(data.get("channel") or data.get("uploader") or "")[:120],
             "channel_id": cid if _CHANNEL_ID.fullmatch(cid) else "",
             "handle": str(data.get("uploader_id") or "")[:100] if str(data.get("uploader_id") or "").startswith("@")
-            else "", "subs": int(subs) if isinstance(subs, (int, float)) else None, "entries": rows}
+            else "", "subs": int(subs) if isinstance(subs, (int, float)) else None, "entries": rows,
+            "listed": len(raw)}                               # every entry the tab gave (live and upcoming too)
 
 
 def exact_date(video_id: str, *, home=None, runner=None) -> str | None:
@@ -492,8 +546,10 @@ def channel_numbers(entries: list, subs, *, today: dt.date, exact: dict | None =
     out["median_views"] = int(median)
     out["recent_avg_views"] = int(sum(newest10) / len(newest10)) if newest10 else 0
     window = [r for r in judged if r["age"] is not None and r["age"] <= th["window_days"]] or judged[:12]
+    growing = [r for r in rows if r["age"] is not None and r["age"] < th["judge_after_days"]]   # still growing:
+    #                                                         never a flop, but a banger once it's past the line
     flop_line = max(th["flop_views"], th["flop_share_of_median"] * median)
-    bangers = sum(1 for r in window if r["views"] >= th["banger_views"])
+    bangers = sum(1 for r in window + growing if r["views"] >= th["banger_views"])
     flops = sum(1 for r in window if r["views"] < flop_line)
     out.update(bangers=bangers, flops=flops, banger_flop=f"{bangers}:{flops}",
                banger_flop_window_days=th["window_days"], too_new_to_judge=len(rows) - len(judged))
@@ -569,7 +625,12 @@ def channel_stats(channels: list, *, tab: str = "videos", home=None, today=None,
     if not wanted:
         raise ValueError("Give one or more channels: a link, an @handle, a UC… id, or a video link.")
     results, notes = [], []
+    deadline = time.monotonic() + CALL_SECONDS
     for given in wanted:
+        if time.monotonic() > deadline:
+            results.append({"given": given, "error": "Not read: this call ran long (YouTube was slow). Ask for it "
+                                                     "again; the channels already read are saved."})
+            continue
         try:
             results.append(_one_channel(given, tab, th, home=home, today=today, runner=runner))
         except Wall:
@@ -601,19 +662,29 @@ def _one_channel(given: str, tab: str, th: dict, *, home, today, runner) -> dict
     saved = _cached(home, "channel", key, CHANNEL_HOURS)
     if saved is None:
         data = read_tab(base, tab, home=home, runner=runner)
+        listed = data.pop("listed", len(data["entries"]))
+        capped = listed >= TAB_LIMIT
         exact = {}
+
+        def exact_or_none(video_id):                          # one video's page failing (age gate, members only,
+            try:                                              # slow) keeps YouTube's approximate date
+                return exact_date(video_id, home=home, runner=runner)
+            except Wall:
+                raise
+            except YouTubeError:
+                return None
         rows = [r for r in data["entries"] if r.get("views") is not None]
         if rows:
             oldest = rows[-1]
             approx_age = _age(oldest.get("date"), today)
-            if len(data["entries"]) < TAB_LIMIT and (approx_age is None or approx_age <= 150):
-                exact[oldest["id"]] = exact_date(oldest["id"], home=home, runner=runner)
+            if not capped and (approx_age is None or approx_age <= 150):
+                exact[oldest["id"]] = exact_or_none(oldest["id"])
             if approx_age is None or approx_age <= 150:            # a young channel: its proof video's real date too
                 recent = [r for r in rows if (_age(r.get("date"), today) or 0) <= th["window_days"]] or rows[:30]
                 best = max(recent, key=lambda r: r["views"])
                 if best["id"] not in exact:
-                    exact[best["id"]] = exact_date(best["id"], home=home, runner=runner)
-        saved = {**data, "exact": {k: v for k, v in exact.items() if v}, "capped": len(data["entries"]) >= TAB_LIMIT,
+                    exact[best["id"]] = exact_or_none(best["id"])
+        saved = {**data, "exact": {k: v for k, v in exact.items() if v}, "capped": capped,
                  "read": today.isoformat()}
         _keep(home, "channel", key, saved)
         if saved["channel_id"]:
@@ -713,14 +784,69 @@ def ideas_file(home=None) -> Path:
     return Path(home or HOME) / "ideas" / "ideas.json"
 
 
-def load_ideas(home=None) -> list:
+def _read_ideas(home=None, *, for_writing: bool = False) -> list:
+    path = ideas_file(home)
     try:
-        data = json.loads(ideas_file(home).read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
     except (OSError, ValueError):
+        if for_writing and path.is_file():                    # unreadable: kept aside, never overwritten with less
+            try:
+                path.replace(path.with_name(f"ideas.unreadable-{int(time.time())}.json"))
+            except OSError:
+                raise RuntimeError("The saved ideas file couldn't be read or moved aside, so nothing was "
+                                   "changed.") from None
         return []
     rows = data.get("ideas") if isinstance(data, dict) else data
     return [r for r in rows if isinstance(r, dict) and _IDEA.fullmatch(str(r.get("id") or ""))] \
         if isinstance(rows, list) else []
+
+
+def load_ideas(home=None) -> list:
+    return _read_ideas(home)
+
+
+_ideas_thread_lock = threading.Lock()
+
+
+class _IdeasLock:
+    """One writer at a time across Studio and every Claude Code session's tool server: a lock file made with O_EXCL
+    (a crashed writer's is taken over after 30 s)."""
+
+    def __init__(self, home=None):
+        self.path = ideas_file(home).with_name("ideas.lock")
+
+    def __enter__(self):
+        _ideas_thread_lock.acquire()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - self.path.stat().st_mtime > 30:
+                        self.path.unlink()
+                        continue
+                except OSError:
+                    pass
+            except OSError:
+                _ideas_thread_lock.release()
+                raise
+            if time.monotonic() > deadline:
+                _ideas_thread_lock.release()
+                raise RuntimeError("The saved ideas are being changed by another window. Try again.")
+            time.sleep(0.05)
+
+    def __exit__(self, *exc):
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+        finally:
+            _ideas_thread_lock.release()
 
 
 def _text(value, limit: int) -> str:
@@ -767,16 +893,18 @@ def save_ideas(ideas: list, *, home=None) -> dict:
     if not isinstance(ideas, list) or not ideas:
         raise ValueError("Give the ideas to save (a list, each with a title).")
     cleaned = [clean_idea(i) for i in ideas[:20]]
-    rows = {r["id"]: r for r in load_ideas(home)}
-    now = time.time()
-    for idea in cleaned:
-        before = rows.get(idea["id"]) or {}
-        rows[idea["id"]] = {**before, **idea, "status": "saved" if before.get("status") != "used" else "used",
-                            "saved_at": before.get("saved_at") or now, "updated_at": now, "source": "niche-agent"}
-    kept = sorted(rows.values(), key=lambda r: -float(r.get("saved_at") or 0))
-    if len(kept) > MAX_IDEAS:                                 # dismissed ones go first, then the oldest
-        kept = sorted(kept, key=lambda r: (r.get("status") == "dismissed", -float(r.get("saved_at") or 0)))[:MAX_IDEAS]
-    _write_json(ideas_file(home), {"ideas": kept})
+    with _IdeasLock(home):
+        rows = {r["id"]: r for r in _read_ideas(home, for_writing=True)}
+        now = time.time()
+        for idea in cleaned:
+            before = rows.get(idea["id"]) or {}
+            rows[idea["id"]] = {**before, **idea, "status": "saved" if before.get("status") != "used" else "used",
+                                "saved_at": before.get("saved_at") or now, "updated_at": now, "source": "niche-agent"}
+        kept = sorted(rows.values(), key=lambda r: -float(r.get("saved_at") or 0))
+        if len(kept) > MAX_IDEAS:                             # dismissed ones go first, then the oldest
+            kept = sorted(kept, key=lambda r: (r.get("status") == "dismissed",
+                                               -float(r.get("saved_at") or 0)))[:MAX_IDEAS]
+        _write_json(ideas_file(home), {"ideas": kept})
     return {"saved": [{"id": i["id"], "title": i["title"]} for i in cleaned], "total": len(kept)}
 
 
@@ -785,14 +913,15 @@ def set_idea_status(idea_id: str, status: str, *, home=None) -> dict:
         raise ValueError("Use an idea id from list_ideas (id_…).")
     if status not in ("saved", "used", "dismissed"):
         raise ValueError("Status is saved, used or dismissed.")
-    rows = load_ideas(home)
-    for row in rows:
-        if row["id"] == idea_id:
-            row["status"], row["updated_at"] = status, time.time()
-            if status == "used":
-                row["used_at"] = time.time()
-            _write_json(ideas_file(home), {"ideas": rows})
-            return row
+    with _IdeasLock(home):
+        rows = _read_ideas(home, for_writing=True)
+        for row in rows:
+            if row["id"] == idea_id:
+                row["status"], row["updated_at"] = status, time.time()
+                if status == "used":
+                    row["used_at"] = time.time()
+                _write_json(ideas_file(home), {"ideas": rows})
+                return row
     raise LookupError("That idea isn't saved here. list_ideas shows the saved ones.")
 
 

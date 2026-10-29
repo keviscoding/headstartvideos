@@ -1802,7 +1802,10 @@ def tool_yt_look(args):
 
 def tool_save_ideas(args):
     ideas = args.get("ideas")
-    result = _niche().save_ideas(ideas if isinstance(ideas, list) else [], home=HOME)
+    try:
+        result = _niche().save_ideas(ideas if isinstance(ideas, list) else [], home=HOME)
+    except RuntimeError as error:                                 # another window is saving, or the file is stuck
+        raise Refused(str(error)) from None
     return {**result, "where": "Create → Saved ideas in Studio, and ideas/ideas.json in this folder",
             "next": "Offer use_idea(id) for the one they like best: it fills Create in. It never starts a video."}
 
@@ -1817,7 +1820,7 @@ def tool_use_idea(args):
     ident = str(args.get("id") or "").strip()
     try:
         idea = agent.set_idea_status(ident, "used", home=HOME)
-    except LookupError as error:
+    except (LookupError, RuntimeError) as error:
         raise Refused(str(error)) from None
     url = link("/?idea=" + ident)
     try:
