@@ -321,6 +321,18 @@ def test_an_admin_can_restart_and_raise_one_accounts_style_clones(env, monkeypat
     assert studio.style_clone_usage(user(7, "daily"))["limit"] == 3, "nobody else changes"
 
 
+def test_an_admin_can_give_back_a_clone_on_top_of_earlier_extras(env, monkeypatch):
+    customer = user(5, "daily", "mixer@example.com")
+    for n in range(3):
+        studio.native_begin(customer, study(env, n))
+    monkeypatch.setattr(studio.db, "get_user_by_email", lambda email: customer if email == customer["email"] else None)
+    admin = user(1, "daily", "owner@example.com")
+    first = studio.grant_style_clones(admin, customer["email"], 0, False, "clone stopped", give_back=1)
+    assert first["used"] == 3 and first["limit"] == 4 and first["remaining"] == 1, "nothing to add to: one back"
+    second = studio.grant_style_clones(admin, customer["email"], 0, False, "mix of three failed", give_back=1)
+    assert second["limit"] == 5 and second["remaining"] == 2, "a second refund adds to the first"
+
+
 def test_the_download_also_streams_through_this_site_for_providers_that_cannot_reach_storage(env, monkeypatch):
     """A creator's browser showed DNS_PROBE_FINISHED_NXDOMAIN for the storage host the signed link names; this site
     loads for them, so the website's button streams the ZIP through it, byte ranges included."""
