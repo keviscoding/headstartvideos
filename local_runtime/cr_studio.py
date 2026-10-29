@@ -2215,6 +2215,11 @@ def main():
     studio.OUT.mkdir(exist_ok=True)
     import cr_trash                                              # deleted videos and styles older than 30 days go
     threading.Thread(target=cr_trash.empty_old, args=(HOME,), daemon=True, name="cr-trash").start()
+    # a style study left "running" by a Studio that was closed stops (its clone stops counting), saying so, and any
+    # finish still waiting is sent (cr_style_clone.settle_all: no Claude, download or render)
+    import cr_style_clone
+    threading.Thread(target=cr_style_clone.settle_all, args=(HOME, cr_bridge), daemon=True,
+                     name="cr-style-studies").start()
     try:
         import cr_claude_code
         cr_claude_code.configure(HOME)                           # Claude Code in this folder: the studio tools

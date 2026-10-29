@@ -74,20 +74,34 @@ def install(studio, activity, setup_status, *, token, home=None):
         return cr_style_clone._operation(home, operation) / "launch.json"
 
     def safe_status(operation):
+        settled = False
         with activity.lock:
             if operation not in live_workers:
                 try:                       # a change Studio stopped working on (it quit mid-change) never stays stuck
                     cr_style_clone.settle_improvement(home, operation, cr_bridge)
                 except Exception:          # noqa: BLE001 - status says what it can below
                     pass
+                try:                       # nor a study whose worker died with a closed Studio (JamesElyse20)
+                    before = cr_style_clone._saved(home, operation, cr_bridge)[1].get("state")
+                    after = cr_style_clone.settle_study(home, operation, cr_bridge, send=False)
+                    settled = bool(after.get("finish_receipt")) and after.get("state") != before
+                except Exception:          # noqa: BLE001 - status says what it can below
+                    pass
+        if settled:                        # its stopped finish (the clone stops counting), off the shared lock
+            try:
+                cr_style_clone.sync(home, operation, cr_bridge)
+            except Exception:              # noqa: BLE001 - the page offers Sync, and the next start sends it
+                pass
+        with activity.lock:
             result = cr_style_clone.status(home, operation, cr_bridge)
             working = operation in live_workers
             busy = activity.busy()
         if result["state"] == "prepared" and working:
             result.update(state="running", message="Starting your approved study and checking its owned Claude session.")
         elif result["state"] == "running" and not working:
-            result.update(state="failed", needs_manual_recovery=True,
-                message="This study was interrupted. Review its saved Claude stages in setup; it will not restart automatically.")
+            # settle_study found its worker still at work: started by a Studio before this one, it carries on
+            result.update(message="This study is still working from before Studio restarted. Keep Studio open "
+                                  "until it finishes.")
         elif result["state"] == "validated":
             result.update(state="pending", reconciliation_pending=True,
                 message="Your validated kit is saved. Sync to publish its preset and completion record; no generation will repeat.")
@@ -128,6 +142,7 @@ def install(studio, activity, setup_status, *, token, home=None):
                     result = subprocess.run([sys.executable, str(home / "cr_style_clone.py"), "--operation", operation],
                         cwd=home, stdout=handle, stderr=subprocess.STDOUT)
                 cr_claude._private_write(location, {"state": "finished", "returncode": result.returncode})
+                print("The style study has ended. Its page in Studio shows how it went.", flush=True)
             except BaseException:
                 # Details stay local. Prepared means no creative stage started;
                 # running/failed must be reviewed rather than blindly rerun.
@@ -140,6 +155,9 @@ def install(studio, activity, setup_status, *, token, home=None):
             cr_claude._private_write(location, {"state": "running"})
             live_workers.add(operation)
             threading.Thread(target=work, daemon=True).start()
+            # in the launcher's window too: closing it stops the study (plain ASCII for any Windows console)
+            print("A style study is running. Keep this window open until it finishes: closing it (or shutting "
+                  "down the computer) stops the study.", flush=True)
         except BaseException:
             try:
                 cr_claude._private_write(location, {"state": "finished", "returncode": 1})
@@ -300,6 +318,16 @@ def install(studio, activity, setup_status, *, token, home=None):
             data()
             cr_style_clone.sync(home, operation, cr_bridge)
             return no_store(jsonify(safe_status(operation)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/<operation>/again")
+    def cr_style_again(operation):
+        """Study again on a stopped study: its saved listing of the channels is saved again for today (a day-old
+        one is refused at start), so the same links and choices fill the form. No YouTube, model or paid call."""
+        try:
+            data()
+            return no_store(jsonify(cr_style_clone.refresh_retry(home, operation, cr_bridge)))
         except Exception as error:
             return error_response(error)
 

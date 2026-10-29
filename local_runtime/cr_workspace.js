@@ -6,7 +6,7 @@
   const boot = window.CR_WORKSPACE || {};
   const state = {catalog: null, setup: null, selected: null, inspected: null, input: 'idea', narration: 'ai',
     audio: '', featureDrafts: {}, captionsDrafts: {}, language: null, page: 'create', family: 'all', projectFilter: 'all',
-    queue: [], jobs: [], studies: [], busy: false, submitting: false, uploading: false,
+    queue: [], jobs: [], studies: [], otherStudies: 0, busy: false, submitting: false, uploading: false,
     openJob: null, currentOutput: null, timer: null, refresh: null, optionalLoaded: false, projectNodes: new Map()};
   const STORAGE = 'channelrecipe.workspace.v1';
   const posterQueue = [];
@@ -486,7 +486,9 @@
     { const tab = document.querySelector('[data-family="shorts"]'); if (tab) tab.hidden = !rows().some(isShort); }   // private recipes: no tab without them
     const query = $('crw-gallery-search').value.trim().toLowerCase();
     const recipes = rows().filter(r => (state.family === 'all' || (state.family === 'custom' ? r.custom : familyKey(r.family) === state.family)) && [r.label,r.description,...(r.capabilities || [])].join(' ').toLowerCase().includes(query));
-    $('crw-gallery-grid').replaceChildren(...recipes.map(r => recipeCard(r, selected=>inspect(selected,true)))); text('crw-gallery-count', `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}`); hide('crw-gallery-empty',!!recipes.length); hide('crw-gallery-detail',!recipes.length);
+    // My styles also shows the styles still being studied or stopped (a closed Studio), never an empty tab for them
+    const studies = state.family === 'custom' && !query ? unfinishedStudies() : [];
+    $('crw-gallery-grid').replaceChildren(...recipes.map(r => recipeCard(r, selected=>inspect(selected,true))), ...studies.map(studyCard)); text('crw-gallery-count', `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}${studies.length ? ` · ${studies.length} style ${studies.length === 1 ? 'study' : 'studies'} not finished` : ''}`); hide('crw-gallery-empty',!!(recipes.length || studies.length)); hide('crw-gallery-detail',!recipes.length);
     if (state.inspected && recipes.includes(state.inspected)) inspect(state.inspected); else if (recipes[0]) inspect(recipes[0]);
   }
   function openGallery() {gallery(); $('crw-gallery').showModal(); $('crw-gallery-search').focus();}
@@ -495,9 +497,12 @@
     const clones = state.setup?.account?.style_clones; box.replaceChildren();
     if (!clones) {box.hidden = true; return;}
     const used = Number(clones.used || 0), limit = clones.limit;
-    const label = el('span','crw-clone-count', limit == null ? `${used} style${used === 1 ? '' : 's'} cloned · unlimited on your plan` : `${used} of ${limit} style clones used`);
+    const label = el('span','crw-clone-count', limit == null ? `${used} style${used === 1 ? '' : 's'} cloned · unlimited on your plan` : `${used} of ${limit} style clones used on your plan`);
     box.append(label);
-    if (limit != null) {const bar = el('span','crw-clone-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, limit ? used / limit * 100 : 100)}%`; bar.append(fill); box.append(bar);}
+    // the plan's clones used, never a study's progress (JamesElyse20 read a third-full bar as a study a third done):
+    // said in words beside it and to screen readers; a study's own progress is on its card below
+    if (limit != null) {const bar = el('span','crw-clone-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, limit ? used / limit * 100 : 100)}%`; bar.append(fill);
+      const said = `${used} of ${limit} style clones used on your plan (not a study's progress)`; bar.title = said; bar.setAttribute('role','img'); bar.setAttribute('aria-label', said); box.append(bar);}
     if (clones.upgrade_label && limit != null && used >= limit) {const a = el('a','crw-inline-link',`Upgrade to ${clones.upgrade_label} to clone more ↗`); a.href = clones.upgrade_url || 'https://channelrecipe.com/app#billing'; a.target = '_blank'; a.rel = 'noopener'; box.append(a);}
     box.hidden = false;
   }
@@ -518,13 +523,30 @@
       }
       actions.append(edit, del); item.append(card, actions); target.append(item);
     }
-    hide('crw-styles-empty',!!customs.length);
-    // a finished study is already a saved style above; only studies still running or stopped are listed here
-    const studies = state.studies.filter(study => study.state !== 'done');
+    // a finished study is already a saved style above; only studies still running or stopped are listed here, and
+    // "No styles of your own yet" is said only when there are none of those either
+    const studies = unfinishedStudies();
+    hide('crw-styles-empty',!!(customs.length || studies.length || state.otherStudies));
     if (studies.length) {
       const heading = el('h3','crw-library-subheading','Style studies'); target.append(heading);
-      for (const study of studies) {const a = el('a','crw-study-card'); a.href = study.link; a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${study.state === 'running' ? 'running' : study.state === 'done' ? 'done' : 'stopped'}`,study.state === 'running' ? 'Studying the channel…' : study.state === 'done' ? 'Style saved' : 'Stopped. Open to review')); target.append(a);}
+      for (const study of studies) target.append(studyCard(study));
     }
+    if (state.otherStudies) target.append(el('p','crw-study-other',`${state.otherStudies} style ${state.otherStudies === 1 ? 'study was' : 'studies were'} started with another ChannelRecipe connection. Connect that account in setup to see ${state.otherStudies === 1 ? 'it' : 'them'}.`));
+  }
+  const unfinishedStudies = () => state.studies.filter(study => study.state !== 'done');
+  // a style study that isn't a saved style yet, as a card: still studying (with its own progress), or stopped and why
+  function studyCard(study) {
+    const a = el('a','crw-study-card'); a.href = study.link;
+    const kind = study.state === 'running' ? 'running' : study.state === 'pending' ? 'done' : 'stopped';
+    const pct = Number.isFinite(study.percent) ? ` ${Math.round(study.percent)}%` : '';
+    const said = study.state === 'running' ? `Studying the channel…${pct}`
+      : study.state === 'pending' ? 'Saved. Open to finish saving it'
+      : study.state === 'prepared' ? 'Approved, not started. Open to start it'
+      : study.studio_closed ? 'Stopped: Studio was closed. Study again'
+      : study.can_study_again ? 'Stopped. Study again' : 'Stopped. Open to review';
+    a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${kind}`,said));
+    if (study.state === 'running') a.append(el('small','crw-study-note','Keep Studio’s window open until it finishes.'));
+    return a;
   }
   const phaseCopy = line => {
     const v = String(line || ''); if (/DONE|published:/i.test(v)) return 'Finishing your video';
@@ -937,7 +959,7 @@
           api(`/api/status/${encoded(was.slug)}`).then(st=>{if(st.done && st.state==='done')celebrate({...was,...(now||{})});}).catch(()=>{});
         }
       }
-      if (results[1].status==='fulfilled') {state.activityLoaded=true;state.busy=results[1].value.busy===true || results[0].status==='fulfilled' && results[0].value.busy===true;state.studies=results[1].value.operations || [];}
+      if (results[1].status==='fulfilled') {state.activityLoaded=true;state.busy=results[1].value.busy===true || results[0].status==='fulfilled' && results[0].value.busy===true;state.studies=results[1].value.operations || [];state.otherStudies=Number(results[1].value.other_account || 0);}
       if (results[2].status==='fulfilled' && results[2].value) state.jobs=results[2].value.jobs || [];
       const active = state.studies.find(x=>x.state==='running') || state.queue.find(x=>['running','queued'].includes(x.state));
       const notice=$('crw-active-notice');notice.replaceChildren();notice.hidden=!state.busy;

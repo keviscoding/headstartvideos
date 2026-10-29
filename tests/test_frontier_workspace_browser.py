@@ -265,7 +265,8 @@ def workspace(browser):
 
     @app.get("/cr-workspace/activity")
     def activity():
-        return jsonify(busy=env.busy or env.mode in ("active", "queue"), operations=[])
+        return jsonify(busy=env.busy or env.mode in ("active", "queue"), operations=getattr(env, "studies", []),
+                       other_account=getattr(env, "other_studies", 0))
 
     @app.get("/api/jobs")
     def jobs():
@@ -1021,6 +1022,40 @@ def test_a_learned_style_in_the_library_can_be_edited_or_studied_again(workspace
     assert item.locator("a").get_attribute("href") == "/cr-style-clone?edit=" + CLONE
     item.locator(".crw-recipe-card").click()
     assert page.locator("#crw-selected-name").inner_text() == "My Illustrated Worlds", "the card still picks the style"
+
+
+def test_unfinished_and_stopped_studies_show_in_my_styles_and_the_clone_bar_says_what_it_counts(workspace):
+    """JamesElyse20 (2026-10-29): two studies died with a closed Studio; My styles said "No styles of your own yet"
+    and the Clone card's bar (clones used) read as a study a third done."""
+    env, page = workspace, workspace.page
+    env.account = {"connected": True, "style_clones": {"used": 1, "limit": 3}}
+    env.studies = [
+        {"operation_id": "op_" + "1" * 24, "label": "Ocean facts", "title": "Ocean facts", "state": "running",
+         "phase": "watch", "percent": 34, "elapsed_seconds": 60, "studio_closed": False, "can_study_again": False,
+         "link": "/cr-style-clone?operation=op_" + "1" * 24},
+        {"operation_id": "op_" + "2" * 24, "label": "Space stories", "title": "Space stories", "state": "failed",
+         "phase": "watch", "percent": 30, "elapsed_seconds": 900, "studio_closed": True, "can_study_again": True,
+         "link": "/cr-style-clone?operation=op_" + "2" * 24}]
+    env.other_studies = 1
+    env.open("#styles")
+    page.locator(".crw-nav [data-nav=styles]").click()
+    page.wait_for_selector("#crw-styles-list .crw-study-card")
+    cards = page.locator("#crw-styles-list .crw-study-card")
+    assert cards.count() == 2
+    assert "Studying the channel… 34%" in cards.nth(0).inner_text()
+    assert "Keep Studio’s window open" in cards.nth(0).inner_text()
+    assert "Stopped: Studio was closed. Study again" in cards.nth(1).inner_text()
+    assert cards.nth(1).get_attribute("href") == "/cr-style-clone?operation=op_" + "2" * 24
+    assert "another ChannelRecipe connection" in page.locator("#crw-styles-list").inner_text()
+    assert page.locator("#crw-styles-empty").is_hidden()
+    allowance = page.locator("#crw-clone-allowance")
+    assert "1 of 3 style clones used on your plan" in allowance.inner_text()
+    assert "not a study's progress" in allowance.locator(".crw-clone-bar").get_attribute("aria-label")
+    # the library's My styles tab lists them too
+    page.locator("#crw-styles-browse").click()
+    page.locator('[data-family="custom"]').click()
+    assert page.locator("#crw-gallery-grid .crw-study-card").count() == 2
+    assert "2 style studies not finished" in page.locator("#crw-gallery-count").inner_text()
 
 
 def test_a_finished_video_is_deleted_into_the_trash_and_undo_brings_it_back(workspace):
