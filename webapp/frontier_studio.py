@@ -264,8 +264,11 @@ def style_clone_usage(user: dict) -> dict:
             "upgrade_url": UPGRADE_URL}
 
 
-def grant_style_clones(admin: dict, email: str, extra: int, reset: bool, note: str = "") -> dict:
-    """Support: give one account extra style clones and/or restart its count from now. Admins only."""
+def grant_style_clones(admin: dict, email: str, extra: int, reset: bool, note: str = "", give_back: int = 0) -> dict:
+    """Support: give one account extra style clones and/or restart its count from now. Admins only.
+
+    give_back adds that many clones to the account's current extras (a refund) instead of setting them to extra.
+    """
     if not is_admin(admin):
         raise HTTPException(403, "Only ChannelRecipe's team can change style clone allowances.")
     target = db.get_user_by_email((email or "").strip().lower())
@@ -274,9 +277,11 @@ def grant_style_clones(admin: dict, email: str, extra: int, reset: bool, note: s
     initialize()
     now = time.time()
     with db._conn() as conn:
-        old = conn.execute(db._q("SELECT counted_from FROM style_clone_grants WHERE user_id=?"),
+        old = conn.execute(db._q("SELECT extra, counted_from FROM style_clone_grants WHERE user_id=?"),
                            (target["id"],)).fetchone()
         since = now if reset else (float(old["counted_from"]) if old else 0.0)
+        if give_back:
+            extra = (int(old["extra"]) if old else 0) + int(give_back)
         conn.execute(db._q("DELETE FROM style_clone_grants WHERE user_id=?"), (target["id"],))
         conn.execute(db._q("""INSERT INTO style_clone_grants (user_id, extra, counted_from, note, updated_at)
             VALUES (?,?,?,?,?)"""), (target["id"], max(0, min(100, int(extra))), since,
@@ -289,6 +294,7 @@ class StyleCloneGrant(BaseModel):
     extra: int = 0
     reset: bool = False
     note: str = ""
+    give_back: int = 0
 
 
 def _require_style_clone_allowance(user: dict) -> None:
@@ -1388,7 +1394,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
 
     @router.post("/admin/style-clones")
     def post_style_clone_grant(req: StyleCloneGrant, user=Depends(access)):
-        return JSONResponse(grant_style_clones(user, req.email, req.extra, req.reset, req.note),
+        return JSONResponse(grant_style_clones(user, req.email, req.extra, req.reset, req.note, req.give_back),
                             headers={"Cache-Control": "private, no-store"})
 
     @router.get("/status")

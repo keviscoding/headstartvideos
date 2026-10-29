@@ -2063,6 +2063,16 @@
                     </div>
                 </div>
                 <div class="cr-surface" style="padding: 20px 24px; border-radius: var(--radius-card); border: 1px solid var(--app-border); margin-bottom: 28px;">
+                    <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700;">Give back style clones</h3>
+                    <p style="color: var(--app-ink-2); margin: 6px 0 14px; font-size: 14px;">Admin only: refund style clones to one account, on top of any it already got back. Use the email the customer signed up with.</p>
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <input id="clone-refund-email" type="email" placeholder="customer@example.com" class="setting-input" style="width: 260px;">
+                        <input id="clone-refund-count" type="number" min="1" max="10" value="1" class="setting-input" style="width: 70px;" aria-label="Clones to give back">
+                        <button id="clone-refund-send" class="btn-secondary" style="font-size: 14px;" onclick="giveBackStyleClones()">Give back</button>
+                        <span id="clone-refund-status" style="font-size: 14px; color: var(--app-ink-2);"></span>
+                    </div>
+                </div>
+                <div class="cr-surface" style="padding: 20px 24px; border-radius: var(--radius-card); border: 1px solid var(--app-border); margin-bottom: 28px;">
                     <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700;">Leads email: new breakout channels</h3>
                     <p style="color: var(--app-ink-2); margin: 6px 0 6px; font-size: 14px;">Admin only: email everyone who asked for niche emails (the money-niche quiz and the 3D harness page) the Niche Finder's new breakout channels in their niche. Leads whose niche had none this time are skipped. Each issue goes once; nothing is ever sent automatically.</p>
                     <p id="leads-stats" style="color: var(--app-ink-3); margin: 0 0 14px; font-size: 13px;"></p>
@@ -2423,7 +2433,7 @@
     <script src="/static/google-signin.js"></script>
     <script src="/static/ranking.js?v=20261014-v5"></script>
     <link rel="stylesheet" href="/static/local-studio.css?v=20261014-v5">
-    <script src="/static/app.js?v=20261014-v5"></script>
+    <script src="/static/app.js?v=20261029-v1"></script>
     <script src="/static/local-studio.js?v=20261023-v10"></script>
     <script src="/static/community.js?v=1" defer></script>
 </body>

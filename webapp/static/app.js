@@ -8991,6 +8991,33 @@ async function sendReleaseEmail() {
 }
 
 
+// Admin: refund style clones to one account (Settings → Give back style clones). The first press asks to confirm.
+async function giveBackStyleClones() {
+    const button = document.getElementById('clone-refund-send');
+    const status = document.getElementById('clone-refund-status');
+    const email = document.getElementById('clone-refund-email').value.trim();
+    const count = Number(document.getElementById('clone-refund-count').value);
+    if (!email.includes('@')) { status.textContent = 'Enter the email on the customer\'s account.'; return; }
+    if (!Number.isInteger(count) || count < 1 || count > 10) { status.textContent = 'Give back between 1 and 10 clones.'; return; }
+    const ask = `${email}|${count}`;
+    if (button.dataset.confirm !== ask) {
+        button.dataset.confirm = ask;
+        button.textContent = `Yes, give ${count} back to ${email}`;
+        status.textContent = 'Press again to confirm.';
+        return;
+    }
+    button.disabled = true;
+    try {
+        const res = await fetch('/api/studio/admin/style-clones', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email, give_back: count, note: 'refund from Settings'})});
+        const body = await res.json().catch(() => ({}));
+        status.textContent = res.ok
+            ? `Done: ${body.email} has used ${body.used} of ${body.limit ?? 'unlimited'} style clones (${body.remaining ?? 'unlimited'} left).`
+            : (body.detail || 'Could not give clones back.');
+    } catch (_) { status.textContent = 'Could not reach the server. Try again.'; }
+    finally { button.disabled = false; button.dataset.confirm = ''; button.textContent = 'Give back'; }
+}
+
 // Admin: the free tools' leads list (Settings → Leads email). Shows the list's size; the first press asks to confirm.
 async function loadLeadsStats() {
     const el = document.getElementById('leads-stats');
