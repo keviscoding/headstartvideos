@@ -545,6 +545,7 @@ def channel_numbers(entries: list, subs, *, today: dt.date, exact: dict | None =
         bonuses.append(f"hero outlier: {per_sub}× subscribers")
     out["bonuses"] = bonuses
     out["videos"] = [{"title": r["title"], "url": "https://youtu.be/" + r["id"], "views": r["views"],
+                      "views_per_sub": round(r["views"] / subs, 1) if subs else None,
                       "date": r["date"], "exact": r["exact"], "days_ago": r["age"],
                       "minutes": round(r["seconds"] / 60, 1) if r.get("seconds") else None} for r in rows[:12]]
     return out
@@ -629,14 +630,26 @@ def _one_channel(given: str, tab: str, th: dict, *, home, today, runner) -> dict
 
 # ── the look: newest thumbnails in one picture ─────────────────────────────────────────────────────────────────
 
-def _fetch(url: str, timeout: float = 20) -> bytes:
+def _ssl_context():
+    """This computer's certificates and certifi's, like Studio's own connections (cr_trust). Built for each fetch:
+    urllib's shared opener keeps the context of its first use (python.org's Python has no certificates of its own)."""
     try:
-        import cr_trust                                       # this computer's certificates, like the browser
+        import cr_trust
         cr_trust.install()
-    except Exception:                                         # noqa: BLE001 - Python's own certificates then
-        pass
+        return cr_trust.context()
+    except Exception:                                         # noqa: BLE001 - certifi, else Python's own
+        import ssl
+        try:
+            import certifi
+            return ssl.create_default_context(cafile=certifi.where())
+        except Exception:                                     # noqa: BLE001
+            return ssl.create_default_context()
+
+
+def _fetch(url: str, timeout: float = 20) -> bytes:
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=_ssl_context()))
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with opener.open(request, timeout=timeout) as response:
         return response.read(2_000_000)
 
 
@@ -660,17 +673,18 @@ def look_sheet(channel: str = "", video_ids=None, *, tab: str = "videos", home=N
         raise ValueError("Give a channel, or up to 6 video ids.")
     folder = _state(home) / "niche-looks"
     folder.mkdir(parents=True, exist_ok=True)
-    pictures = []
+    pictures, problem = [], ""
     for vid in ids:
         path = folder / f"{vid}.jpg"
         if not path.is_file():
             try:
                 path.write_bytes(fetch(f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"))
-            except Exception:                                 # noqa: BLE001 - one missing thumbnail is fine
+            except Exception as error:                        # noqa: BLE001 - one missing thumbnail is fine
+                problem = f"{type(error).__name__}: {str(error)[:160]}"
                 continue
         pictures.append(path)
     if not pictures:
-        raise YouTubeError("The thumbnails couldn't be downloaded.")
+        raise YouTubeError("The thumbnails couldn't be downloaded (" + (problem or "no answer") + ").")
     sheet = None
     try:
         from PIL import Image

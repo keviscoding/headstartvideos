@@ -54,7 +54,8 @@ changed since (with numbers).
 ## 3. Check every shortlisted channel (the outlier maths)
 
 `yt_channel_stats(channels=[…])`, up to 6 at a time. For each channel it gives the exact first upload, uploads in 30
-days, median and recent average views, banger:flop, the best video's views ÷ subscribers, the one-hit test, and
+days, median and recent average views, banger:flop, the best video's views ÷ subscribers (and each listed video's), the
+one-hit test, and
 `checks` against the rules (`passed`, `failed`, `bonuses`). Never compute or guess these yourself and never round them
 up; quote what the tool returned.
 
@@ -74,6 +75,8 @@ For every channel you'd show as proof: `yt_look(channel=…)`, then Read the pic
   "a style clone of <channel>" (/clone-style writes that look in code), or "needs your own recording / footage".
   Show any good faceless niche, but always say which of these applies.
 - **Kids, quiz or game-show look?** → thrown out (low RPM, the wrong buyer).
+- If `yt_look` can't download the thumbnails, say the look check wasn't done for that channel; never download them
+  with your own shell instead.
 
 ## 5. Group into niches and judge each one
 

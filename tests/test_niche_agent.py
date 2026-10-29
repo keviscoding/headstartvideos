@@ -316,3 +316,24 @@ def test_studio_routes_list_and_mark_ideas(tmp_path):
     assert client.get("/cr-ideas", base_url="http://127.0.0.1:7860").get_json()["ideas"] == []
     assert client.get("/cr-ideas", base_url="http://evil.example").status_code == 403
     assert client.post("/cr-ideas/id_bad", json={"status": "used"}, base_url="http://127.0.0.1:7860").status_code == 400
+
+
+def test_thumbnails_use_their_own_certificate_context(tmp_path, monkeypatch):
+    # urllib's shared opener keeps the context of its first use (a python.org Python has no certificates): each
+    # fetch builds its own opener with this computer's and certifi's certificates (the 2026-10-29 live run failed)
+    seen = []
+
+    class Opener:
+        def open(self, request, timeout):
+            seen.append(request.full_url)
+            return __import__("io").BytesIO(b"jpeg")
+    monkeypatch.setattr(agent.urllib.request, "build_opener", lambda *handlers: seen.append(handlers) or Opener())
+    assert agent._fetch("https://i.ytimg.com/vi/Xn1s4JvDKYY/mqdefault.jpg") == b"jpeg"
+    assert isinstance(seen[0][0], agent.urllib.request.HTTPSHandler) and seen[1].endswith("/mqdefault.jpg")
+    out = agent.look_sheet("", ["Xn1s4JvDKYY", "bad id"], home=tmp_path, fetch=lambda url: b"not a picture")
+    assert out["pictures"] and out["pictures"][0].endswith("Xn1s4JvDKYY.jpg")
+
+    def broken(url):
+        raise OSError("certificate verify failed")
+    with pytest.raises(agent.YouTubeError, match="certificate verify failed"):
+        agent.look_sheet("", ["Ktjk8s3xyGY"], home=tmp_path, fetch=broken)
