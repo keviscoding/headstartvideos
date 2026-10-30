@@ -55,11 +55,30 @@ def test_an_ordinary_story_never_gets_a_made_up_timer(tmp_path):
     assert len(prompts) == 2 and "states no such world rule" in prompts[1]
 
 
-def test_still_made_up_after_asking_again_means_nothing_is_worn(tmp_path):
+def test_still_unquoted_after_asking_again_means_nothing_is_worn(tmp_path):
     rb, prompts = roblox(tmp_path, "My best friend moved away",
-                         [plan(dict(TIMER)), plan({"kind": "billboard", "what": "a sign", "from_topic": "a sign above"})])
+                         [plan(dict(TIMER)), plan({"kind": "billboard", "what": "a sign"})])
     assert rb.director()["wear"] == {"kind": "none"}
     assert len(prompts) == 2
+
+
+def test_a_rule_quoted_again_after_asking_is_trusted(tmp_path):
+    """the topic may state its rule in other words than the quote; asked once, a quoted rule stays (a rule story that
+    loses its rule says "my counter hit 300" over nothing)"""
+    wear = {"kind": "billboard", "what": "price", "from_topic": "everyone wears a price"}
+    rb, prompts = roblox(tmp_path, "A world where every person has a cost", [plan(dict(wear)), plan(dict(wear))])
+    assert rb.director()["wear"] == wear and len(prompts) == 2
+
+
+def test_curly_and_straight_apostrophes_are_one_word(tmp_path):
+    rb, prompts = roblox(tmp_path, "In this town, you can\u2019t lie", [plan(dict(TIMER, kind="glow", from_topic="you can't lie"))])
+    assert rb.director()["wear"]["kind"] == "glow" and len(prompts) == 1
+
+
+def test_a_spanish_topic_quoted_in_spanish_keeps_its_rule(tmp_path):
+    topic = "En este pueblo, todos tienen solo 1.000.000 de pasos"
+    rb, prompts = roblox(tmp_path, topic, [plan(dict(TIMER, from_topic="todos tienen solo 1.000.000 de pasos"))])
+    assert rb.director()["wear"]["kind"] == "screen" and len(prompts) == 1
 
 
 def test_the_topics_own_rule_is_kept_on_the_first_answer(tmp_path):
@@ -87,4 +106,4 @@ def test_a_hindi_topics_rule_is_matched_in_its_own_words(tmp_path):
 
 def test_the_director_prompt_says_the_topic_decides(tmp_path):
     text = (ROBLOX_DIR / "director_roblox.md").read_text(encoding="utf-8")
-    assert "THE TOPIC DECIDES THE RULE" in text and '"from_topic"' in text
+    assert "THE TOPIC DECIDES THE RULE" in text and '"from_topic"' in text and "never translated" in text
