@@ -1,5 +1,14 @@
 [
   {
+    "build": 120,
+    "date": "2026-10-30",
+    "title": "Roblox Story Shorts up to 3 minutes",
+    "items": [
+      "New: Roblox Story Shorts run up to 3 minutes. Create offers 90 seconds, 2 minutes and 3 minutes for them and for styles cloned from them, and the cost shown goes with the length. On these channels the longest Shorts get the most views. The other Shorts stay at 15 to 60 seconds.",
+      "Fixed: Setup's FFmpeg download gives your antivirus time to check it. A new FFmpeg can take a while to start the first time while it's scanned, and Setup used to call that a failed download. If it still won't start, Setup now says why, for example Windows' Smart App Control blocking it."
+    ]
+  },
+  {
     "build": 119,
     "date": "2026-10-30",
     "title": "Cloned Shorts styles make their videos",
