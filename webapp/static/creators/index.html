@@ -46,6 +46,13 @@
       <div class="film" id="film">
         <video id="film-video" playsinline muted preload="none" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/film/creators-launch-poster-v1.jpg" data-hd="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/film/creators-launch-1080-v1.mp4" data-sd="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/film/creators-launch-720-v1.mp4" aria-label="The ChannelRecipe for creators launch film, 51 seconds"></video>
         <button class="film-play" type="button" id="film-play"><svg width="18" height="18"><use href="icons.svg#i-sound-on"/></svg><span>Watch with sound</span><small>0:51</small></button>
+        <button class="film-big" type="button" id="film-big" aria-label="Play" tabindex="-1"><svg width="26" height="26"><use href="icons.svg#i-play"/></svg></button>
+        <div class="film-ui" id="film-ui">
+          <button class="film-tog" type="button" aria-label="Pause"><svg width="18" height="18"><use href="icons.svg#i-pause"/></svg></button>
+          <div class="film-track" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="51" aria-valuenow="0"><i></i></div>
+          <span class="film-time">0:00<span> / 0:51</span></span>
+          <button class="film-mute" type="button" aria-label="Mute"><svg width="18" height="18"><use href="icons.svg#i-sound-on"/></svg></button>
+        </div>
       </div>
       <div class="hero-cta">
         <a class="btn btn-lg" href="app.html#signup">Edit your first video free <svg width="18" height="18"><use href="icons.svg#i-arrow"/></svg></a>

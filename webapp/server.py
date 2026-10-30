@@ -619,6 +619,10 @@ from webapp import cloud_wallet as _cloud_wallet
 app.include_router(_cloud_wallet.make_router(_studio_access(_current_user)))
 from webapp import cloud_jobs as _cloud_jobs
 app.include_router(_cloud_jobs.make_router(_studio_access(_current_user)))
+# Hosted edits for /creators: signed uploads, the creator_jobs row, one Fly Machine per edit (webapp/creators_jobs.py).
+from webapp import creators_jobs as _creators_jobs
+app.include_router(_creators_jobs.make_router(_current_user))
+app.include_router(_creators_jobs.make_review_router(_current_user))       # before the /creators static mount
 from webapp import studio_ranking as _studio_ranking
 app.include_router(_studio_ranking.make_router(_studio_access(_current_user)))
 # The niche agent's teaching and the niche database's breakouts for Studio (webapp/niche_agent.py): read-only.

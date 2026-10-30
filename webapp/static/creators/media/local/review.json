@@ -1,0 +1,80 @@
+{
+ "source": "Christine Choi's public Reel DdwyX1AuBY-, re-edited by our engine (creator-energy look) twice on 2026-10-29: the first cut, then a second cut after a watch-back's notes. Internal demo only.",
+ "duration": 51.47,
+ "v1": {
+  "label": "First cut",
+  "video": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/e_v1.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/e_v1.jpg",
+  "beats": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/beats_v1/"
+ },
+ "v2": {
+  "label": "Second cut",
+  "video": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.jpg",
+  "beats": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/beats/"
+ },
+ "diff_spans": [
+  [
+   18.6,
+   19.1
+  ],
+  [
+   19.5,
+   20.0
+  ],
+  [
+   22.1,
+   24.6
+  ],
+  [
+   26.8,
+   33.2
+  ],
+  [
+   42.7,
+   44.1
+  ],
+  [
+   45.8,
+   49.4
+  ]
+ ],
+ "changes": [
+  {
+   "from": 18.6,
+   "to": 20.0,
+   "op": "trim",
+   "what": "Back on your face sooner: the fast-food shot now ends at 0:19.5, not 0:20"
+  },
+  {
+   "from": 22.1,
+   "to": 24.6,
+   "op": "retime",
+   "what": "You stay on screen for “scrambling”; the line shot waits for “huge line behind us”"
+  },
+  {
+   "from": 26.8,
+   "to": 33.2,
+   "op": "move",
+   "what": "The order ticket moved to the top left, off your face"
+  },
+  {
+   "from": 42.7,
+   "to": 44.1,
+   "op": "trim",
+   "what": "The second line shot cut short: back on your reaction at “behind it”"
+  },
+  {
+   "from": 45.8,
+   "to": 49.4,
+   "op": "remove",
+   "what": "No speedometer: back on you for “And the people”, then the hallway in slow motion"
+  }
+ ],
+ "everywhere": [
+  {
+   "op": "music",
+   "what": "The music sits 2 dB lower under your voice"
+  }
+ ]
+}

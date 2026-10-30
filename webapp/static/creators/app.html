@@ -1,21 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta name="cr-backend" content="/api/creators">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>ChannelRecipe for creators</title>
   <meta name="robots" content="noindex">
   <meta name="theme-color" content="#F7F5F0">
   <link rel="icon" href="glyph.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://api.fontshare.com">
-  <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
-  <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800,900&f[]=general-sans@400,500,600,700&display=swap">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&family=Instrument+Serif:ital@0;1&display=swap">
   <link rel="stylesheet" href="creators.css">
   <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="review.css">
   <script defer src="reel-link.js"></script>
   <script defer src="plans.js"></script>
   <script defer src="cutline.js"></script>
+  <script defer src="hosted.js"></script>
   <script defer src="app.js"></script>
+  <script defer src="review.js"></script>
 </head>
 <body class="app">
 
@@ -136,13 +140,10 @@
       <!-- step 4 -->
       <div class="qwrap" data-step="4" hidden>
         <div class="qtop"><button type="button" class="btn-text" data-back><svg width="18" height="18"><use href="icons.svg#i-back"/></svg>Back</button><button type="button" class="btn-text muted" data-house>Skip, choose for me</button></div>
-        <h1 class="qtitle">Pick any look</h1>
-        <p class="qsub">Every look here is a real Reel. Or paste a creator you love and we learn theirs.</p>
+        <h1 class="qtitle">Pick a look</h1>
+        <p class="qsub">Each one is how creators you watch edit. Hover or tap one to see it play. Or paste a creator you love and we learn theirs.</p>
         <div class="qbody">
-          <div class="styles board" role="group" aria-label="Looks" id="styles">
-            <button type="button" class="style-tile" aria-pressed="false" data-style="story"><div class="vid"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_story.jpg" alt="" loading="lazy"><video muted playsinline loop preload="none" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_story.mp4"></video></div><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span><div class="cap2"><b>Cinematic story</b><span>Made here</span></div></button>
-            <button type="button" class="style-tile" aria-pressed="false" data-style="energy"><div class="vid"><img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.jpg" alt="" loading="lazy"><video muted playsinline loop preload="none" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.mp4"></video></div><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span><div class="cap2"><b>Creator energy</b><span>Made here</span></div></button>
-          </div>
+          <div class="styles looks" role="group" aria-label="Looks" id="styles"></div>
           <div class="divider">or paste a Reel you love</div>
           <form id="ref-form" novalidate>
             <label class="sr-only" for="ref-input">A TikTok, Reel or Short link</label>
@@ -172,6 +173,11 @@
             <span>MP4 or MOV from your phone, up to 5 minutes</span>
           </label>
           <div id="file-slot"></div>
+          <div class="own-clips" id="own-clips" hidden>
+            <label class="own-add"><input type="file" id="own-file" accept="video/*,.mov,.mp4,.m4v" multiple><svg width="18" height="18"><use href="icons.svg#i-film"/></svg><span><b>Add your own B-roll</b> (optional): clips of what you talk about, up to 10</span></label>
+            <div class="own-list" id="own-list"></div>
+          </div>
+          <div class="up-progress" id="up-progress" hidden role="status" aria-live="polite"><div class="meterbar light"><i></i></div><span id="up-text">Uploading…</span></div>
           <div class="alt-row">
             <button type="button" class="btn btn-ghost" data-open="qr"><svg width="18" height="18"><use href="icons.svg#i-phone"/></svg>From my phone</button>
             <button type="button" class="btn btn-ghost" data-open="drive"><svg width="18" height="18"><use href="icons.svg#i-drive"/></svg>Google Drive</button>
@@ -235,7 +241,7 @@
   <div class="res">
     <div class="player">
       <div class="phone"><div class="screen"><div class="notch"></div><span class="tag good" id="rs-tag"><span class="dot"></span><span id="rs-tag-t">Your Reel · v1</span></span>
-        <video id="rs-video" playsinline preload="auto" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.mp4"></video></div></div>
+        <video id="rs-video" playsinline preload="auto" poster="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/e_v1.jpg" src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/e_v1.mp4"></video></div></div>
       <div class="controls">
         <button type="button" class="pp" id="rs-pp" aria-label="Play"><svg><use href="icons.svg#i-play"/></svg></button>
         <div class="scrub" id="rs-scrub" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="7" aria-valuenow="0"><span class="rail"></span><span class="fill"></span><span class="knob"></span></div>
@@ -243,8 +249,10 @@
         <button type="button" class="snd" id="rs-snd" aria-label="Mute" aria-pressed="false"><svg><use href="icons.svg#i-sound-on"/></svg></button>
       </div>
       <div class="seg light" role="group" aria-label="Show before or after"><button type="button" aria-pressed="false" data-ba="before">Before</button><button type="button" aria-pressed="true" data-ba="after">After</button></div>
+      <a class="btn btn-block rs-review" id="rs-review" href="#review"><svg width="18" height="18"><use href="icons.svg#i-mic"/></svg>Review it: talk, type or draw</a>
       <div class="acts">
-        <a class="btn" id="rs-dl" href="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.mp4" download="my-reel.mp4"><svg width="18" height="18"><use href="icons.svg#i-download"/></svg>Download</a>
+        <a class="btn btn-ghost" id="rs-dl" href="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/e_v1.mp4" download="my-reel.mp4"><svg width="18" height="18"><use href="icons.svg#i-download"/></svg>Download</a>
+        <button type="button" class="btn btn-ghost" id="rs-share" hidden><svg width="18" height="18"><use href="icons.svg#i-link"/></svg>Share</button>
         <button type="button" class="btn btn-ghost" id="rs-again"><svg width="18" height="18"><use href="icons.svg#i-upload"/></svg>Edit another</button>
       </div>
     </div>
@@ -289,7 +297,7 @@
 
       <div class="panel chat" style="margin-top:14px">
         <h2>Tweak it <span class="vers" id="rs-vers" role="group" aria-label="Versions"><button type="button" aria-pressed="true" data-v="1">v1</button></span></h2>
-        <p class="sub2">Say what to change in plain words. Each change makes a new version, and v1 stays.</p>
+        <p class="sub2">Say what to change in plain words. Each change makes a new version, and v1 stays. Rather point at it? <a href="#review">Review it on the frame</a>.</p>
         <div class="msgs" id="rs-msgs" aria-live="polite"></div>
         <div class="chips" id="rs-chips">
           <button type="button" class="chip">More of my face, less B-roll</button>
@@ -304,6 +312,106 @@
 </section>
 
 <!-- heard-about sheet (after the first edit, never before) -->
+<!-- ================= REVIEW: watch it big, stop anywhere, talk, type or draw on the frame ================= -->
+<section class="screen-v rv" data-screen="review" aria-labelledby="rv-h">
+  <div class="bar rv-bar">
+    <a class="brand" href="index.html" aria-label="ChannelRecipe for creators, home"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span></a>
+    <div class="rv-title"><h1 id="rv-h">Review</h1><span class="rv-ver" id="rv-ver">First cut · v1</span></div>
+    <div class="grow"></div>
+    <button type="button" class="btn btn-sm btn-ghost rv-notes-btn" id="rv-notes-btn" aria-controls="rv-rail" aria-expanded="false"><svg width="17" height="17"><use href="icons.svg#i-note"/></svg><span class="lbl">Notes</span><b class="tnum" id="rv-count">0</b></button>
+    <button type="button" class="btn btn-sm rv-finish" id="rv-finish" hidden>Finish review</button>
+    <a class="btn btn-sm btn-ghost btn-icon rv-close" href="#result" aria-label="Back to your Reel"><svg width="18" height="18"><use href="icons.svg#i-x"/></svg></a>
+  </div>
+
+  <div class="rv-body">
+    <div class="rv-main">
+      <div class="rv-stage" id="rv-stage">
+        <div class="rv-frame" id="rv-frame">
+          <video id="rv-v1" class="rv-vid on" playsinline preload="auto" crossorigin="anonymous"></video>
+          <video id="rv-v2" class="rv-vid" playsinline preload="none" crossorigin="anonymous"></video>
+          <canvas id="rv-ink" class="rv-ink" aria-label="Draw on the frame"></canvas>
+          <div class="rv-surface" id="rv-surface" aria-live="polite"></div>
+          <div class="rv-listen" id="rv-listen" hidden><span class="rv-rec"></span><span class="rv-listen-t" id="rv-listen-t">Listening…</span></div>
+          <button type="button" class="rv-bigplay" id="rv-bigplay" aria-label="Play"><svg width="26" height="26"><use href="icons.svg#i-play"/></svg></button>
+          <div class="rv-applying" id="rv-applying" hidden>
+            <div class="rv-applying-in"><b id="rv-applying-h">Applying your notes</b><ol id="rv-applying-list"></ol></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rv-tl" id="rv-tl">
+        <div class="rv-pins" id="rv-pins"></div>
+        <div class="rv-track" id="rv-track" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="51" aria-valuenow="0" aria-valuetext="0:00">
+          <div class="rv-clip"><div class="rv-strip" id="rv-strip"></div><div class="rv-wash" id="rv-wash"></div><div class="rv-spans" id="rv-spans"></div></div>
+          <div class="rv-head" id="rv-head"></div>
+        </div>
+        <div class="rv-tip" id="rv-tip" hidden><canvas id="rv-tip-c" width="180" height="320"></canvas><span class="rv-tip-t tnum" id="rv-tip-t">0:00</span></div>
+        <div class="rv-card" id="rv-card" hidden></div>
+      </div>
+
+      <div class="rv-dock" id="rv-dock">
+        <div class="rv-ctl" id="rv-ctl">
+          <div class="rv-row">
+            <button type="button" class="rv-pp" id="rv-pp" aria-label="Play"><svg width="18" height="18"><use href="icons.svg#i-play"/></svg></button>
+            <span class="rv-time tnum" id="rv-time">0:00 / 0:51</span>
+            <div class="rv-acts">
+              <div class="rv-ab seg" id="rv-ab" role="group" aria-label="Before or after your notes" hidden><button type="button" data-ab="1" aria-pressed="false">Before · v1</button><button type="button" data-ab="2" aria-pressed="true">After · v2</button></div>
+              <button type="button" class="rv-talk" id="rv-talk" aria-label="Hold to talk"><span class="rv-mic"><svg width="19" height="19"><use href="icons.svg#i-mic"/></svg><span class="rv-lvl" aria-hidden="true"><i></i><i></i><i></i><i></i></span></span><span class="lbl">Hold to talk</span></button>
+              <button type="button" class="rv-act" id="rv-note" aria-label="Write or draw a note"><svg width="19" height="19"><use href="icons.svg#i-pen"/></svg><span class="lbl">Note</span></button>
+              <button type="button" class="rv-act rv-love" id="rv-love" aria-label="Love this moment"><svg width="19" height="19"><use href="icons.svg#i-heart"/></svg><span class="lbl">Love it</span></button>
+            </div>
+            <button type="button" class="rv-snd" id="rv-snd" aria-label="Mute" aria-pressed="false"><svg width="18" height="18"><use href="icons.svg#i-sound-on"/></svg></button>
+          </div>
+          <p class="rv-keys" id="rv-keys"><span><kbd>Space</kbd> play</span><span><kbd>N</kbd> note</span><span>hold <kbd>T</kbd> to talk</span><span><kbd>L</kbd> love it</span><span>or hold on the video</span></p>
+          <p class="rv-keys rv-keys-after"><span><kbd>Space</kbd> play</span><span><kbd>B</kbd> before or after</span><span><kbd>←</kbd> <kbd>→</kbd> a second</span></p>
+        </div>
+
+        <form class="rv-comp" id="rv-comp" hidden novalidate aria-label="Your note">
+          <div class="rv-row">
+            <div class="seg rv-kind" role="group" aria-label="Kind of note"><button type="button" data-kind="change" aria-pressed="true"><svg width="15" height="15"><use href="icons.svg#i-pen"/></svg>Change</button><button type="button" data-kind="like" aria-pressed="false"><svg width="15" height="15"><use href="icons.svg#i-heart"/></svg>Keep</button></div>
+            <div class="rv-tools" role="group" aria-label="Draw on the frame">
+              <button type="button" data-tool="point" aria-pressed="true" aria-label="Point"><svg width="18" height="18"><use href="icons.svg#i-point"/></svg></button>
+              <button type="button" data-tool="circle" aria-pressed="false" aria-label="Circle"><svg width="18" height="18"><use href="icons.svg#i-ellipse"/></svg></button>
+              <button type="button" data-tool="arrow" aria-pressed="false" aria-label="Arrow"><svg width="18" height="18"><use href="icons.svg#i-arrow-ne"/></svg></button>
+              <button type="button" data-tool="pen" aria-pressed="false" aria-label="Draw"><svg width="18" height="18"><use href="icons.svg#i-pen"/></svg></button>
+              <button type="button" id="rv-undo" aria-label="Undo the last mark" disabled><svg width="18" height="18"><use href="icons.svg#i-undo"/></svg></button>
+            </div>
+            <span class="rv-hint" id="rv-hint">Click the frame to point at it</span>
+            <button type="button" class="rv-x" id="rv-cancel" aria-label="Cancel this note"><svg width="16" height="16"><use href="icons.svg#i-x"/></svg></button>
+          </div>
+          <div class="rv-row rv-say">
+            <button type="button" class="rv-talk sm" id="rv-talk2" aria-label="Hold to talk"><span class="rv-mic"><svg width="19" height="19"><use href="icons.svg#i-mic"/></svg><span class="rv-lvl" aria-hidden="true"><i></i><i></i><i></i><i></i></span></span></button>
+            <div class="rv-input">
+              <label class="sr-only" for="rv-text">Your note</label>
+              <textarea id="rv-text" rows="1" placeholder="Say or type what to change"></textarea>
+              <div class="rv-voice" id="rv-voice" hidden><button type="button" class="rv-vplay" id="rv-vplay" aria-label="Play your voice note"><svg width="12" height="12"><use href="icons.svg#i-play"/></svg></button><span class="tnum" id="rv-vlen">0:00</span><span class="rv-vstate" id="rv-vstate"></span><button type="button" class="rv-vrm" id="rv-vrm" aria-label="Remove the voice note"><svg width="12" height="12"><use href="icons.svg#i-x"/></svg></button></div>
+            </div>
+            <button type="submit" class="btn rv-save" id="rv-save">Save<span class="rv-enter" aria-hidden="true">↵</span></button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <aside class="rv-rail" id="rv-rail" aria-label="Your notes">
+      <div class="rv-rail-h">
+        <h2 id="rv-rail-h">Notes</h2>
+        <span class="rv-tally" id="rv-tally"></span>
+        <button type="button" class="rv-x rv-rail-x" id="rv-rail-x" aria-label="Close notes"><svg width="16" height="16"><use href="icons.svg#i-x"/></svg></button>
+      </div>
+      <div class="rv-empty" id="rv-empty">
+        <p><b>Stop anywhere and say what you'd change.</b> Hold the mic and talk, type, or circle it on the frame. Loved a moment? Tap the heart and keep watching.</p>
+      </div>
+      <ol class="rv-list" id="rv-list"></ol>
+      <ol class="rv-list rv-changes" id="rv-changes" hidden></ol>
+      <div class="rv-rail-f" id="rv-rail-f">
+        <button type="button" class="btn btn-block" id="rv-apply" disabled>Apply notes</button>
+        <button type="button" class="btn-text muted rv-restart" id="rv-restart" hidden>Start over from the first cut</button>
+        <p class="rv-proto" id="rv-proto">Prototype: the after is our real second cut of this Reel. Nothing is uploaded.</p>
+      </div>
+    </aside>
+  </div>
+</section>
+
 <div class="sheet-wrap" id="heard" role="dialog" aria-modal="false" aria-labelledby="heard-h">
   <div class="sheet">
     <button type="button" class="modal-x" data-close-heard aria-label="Close"><svg width="18" height="18"><use href="icons.svg#i-x"/></svg></button>
@@ -338,6 +446,21 @@
     <div class="qr"><svg class="code" viewBox="0 0 29 29" id="qr-code" role="img" aria-label="QR code (prototype pattern)"></svg>
       <ol><li>Open your phone's camera and point it at the code</li><li>Tap the link, then pick your raw clip</li><li>It appears here when it's uploaded</li></ol></div>
     <p class="fine" style="text-align:left">Prototype: the live code opens a phone upload page made for this edit.</p>
+  </div>
+</template>
+<template id="tpl-phone">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ph-h">
+    <button type="button" class="modal-x" data-close aria-label="Close"><svg width="18" height="18"><use href="icons.svg#i-x"/></svg></button>
+    <h2 id="ph-h">One quick check before your free edits</h2>
+    <p class="sub">We text you a 6-digit code. One number per account keeps the free edits fair. We never call it or market to it.</p>
+    <form id="ph-form" novalidate style="display:grid;gap:10px;margin-top:20px">
+      <label class="sr-only" for="ph-num">Mobile number</label>
+      <input class="text-input" id="ph-num" type="tel" autocomplete="tel" inputmode="tel" placeholder="+1 415 555 0134">
+      <div class="code-row" id="ph-code-row" hidden><label class="sr-only" for="ph-code">Code</label><input class="text-input" id="ph-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456"><button type="button" class="btn" id="ph-check">Verify</button></div>
+      <div class="field-msg" id="ph-msg" role="status" aria-live="polite"></div>
+      <button type="submit" class="btn btn-lg btn-block" id="ph-send">Text me a code</button>
+    </form>
+    <p class="fine" style="text-align:left">We keep only a scrambled fingerprint of your number, never the number itself.</p>
   </div>
 </template>
 <template id="tpl-drive">
