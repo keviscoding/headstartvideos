@@ -235,7 +235,10 @@ def _stem(name: str) -> str:
 
 
 def _ref_style(refs: list) -> str:
-    """While an edit learns pasted Reels' style: whose ("@handle's style" from a TikTok link)."""
+    """While an edit learns pasted Reels' style: whose ("@handle's style" from a TikTok link or a profile)."""
+    prof = next((m for r in refs if isinstance(r, str) and (m := INSTAGRAM_PROFILE.match(r))), None)
+    if prof:
+        return f"@{prof.group(1)}'s style"
     m = next((re.search(r"/@([A-Za-z0-9._]{2,40})", r) for r in refs if isinstance(r, str) and "/@" in r), None)
     return f"@{m.group(1)}'s style" if m else "A pasted Reel's style" if refs else ""
 
@@ -475,6 +478,18 @@ def profile_kinds() -> list[str]:
     return ["tiktok", "instagram"] if scrape_key() else ["tiktok"]
 
 
+def ref_link(raw: str) -> str:
+    """A link whose style an edit learns: a Reel, a TikTok or a Short as pasted, or a creator's profile (their most
+    watched recent Reels are learned, creators.hosted.profile.top) in the form the edit machine opens."""
+    raw = (raw or "").strip()
+    if len(raw) <= 300 and REEL_LINK.match(raw):
+        return raw
+    if len(raw) <= 300 and (TIKTOK_PROFILE.match(raw) or INSTAGRAM_PROFILE.match(raw)):
+        return profile_link(raw)
+    raise HTTPException(400, "That isn't a link we can learn from. Paste a TikTok, a Reel or a Short, or the creator's "
+                             "TikTok or Instagram profile.")
+
+
 def profile_link(raw: str) -> str:
     """The creator's profile link as the edit machine opens it ("" for none). Raises a 400 the app shows as it is."""
     raw = (raw or "").strip()
@@ -710,9 +725,7 @@ def make_router(current_user) -> APIRouter:
     def post_job(req: JobRequest, user=Depends(need_user)):
         if req.look not in LOOK_NAMES:
             raise HTTPException(400, "Pick one of the looks.")
-        refs = [r.strip() for r in req.refs if r.strip()]
-        if any(len(r) > 300 or not REEL_LINK.match(r) for r in refs):
-            raise HTTPException(400, "That link isn't a TikTok, Reel or Short. Open the video, tap Share, then Copy link.")
+        refs = [ref_link(r) for r in req.refs if r.strip()]
         profile = profile_link(req.profile)
         take = _own_key(user["id"], req.take_key)
         clips = [_own_key(user["id"], k) for k in req.broll_keys]

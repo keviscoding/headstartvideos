@@ -454,23 +454,29 @@
     return !!((j.refs || []).length && !j.style_name && !j.style_error && ["queued", "starting", "running"].indexOf(j.status) >= 0 &&
               w.state !== "done" && (!w.state || w.state === "todo" || w.detail === "Learning their style"));
   }
+  function profileOf(url) {                         // a pasted profile, not a Reel: {handle, ...} or null
+    var p = url && window.CRReel && window.CRReel.parse(url);
+    return p && p.profile ? p : null;
+  }
   function drawRef(j) {
     var A = app(), box = $("#ed-ref"), url = (j.refs || [])[0];
     if (!url) { box.hidden = true; return; }
-    var r = refInfo(j) || {}, name = r.author || (r.handle ? r.handle.replace(/^@?/, "@") : "");
+    var prof = profileOf(url);
+    var r = refInfo(j) || {}, name = r.author || (r.handle ? r.handle.replace(/^@?/, "@") : "") || (prof ? prof.handle : "");
     var kind = /tiktok/.test(url) ? "tiktok" : /instagram/.test(url) ? "instagram" : "youtube";
     box.hidden = false;
     box.innerHTML = '<span class="rthumb ' + kind + '">' + (r.thumb ? '<img src="' + A.esc(r.thumb) + '" alt="" referrerpolicy="no-referrer">' : A.ICON("p-" + kind)) + "</span>" +
       '<span class="rtx"><b>' + A.esc(j.style_name || (name ? name + "'s style" : "The Reel you pasted")) + "</b>" +
       "<span>" + A.esc(j.style_name ? "Learned from " + (name || "the Reel you pasted") + (r.platform ? "'s " + r.platform : "") :
         j.style_error ? (/open/.test(j.style_error) ? "We couldn't open it" : "We couldn't learn it this time") + ", so this one is in " + j.look_name :
+        prof ? "From their most watched recent Reels: their cuts, captions and sound" :
         "From " + (r.platform ? "their " + r.platform : "the Reel you pasted") + ": its cuts, captions and sound") + "</span></span>";
-    if (!refInfo(j) && H.on) H.preview(url).then(function (d) { if (!d) return; H.previewed = H.previewed || {}; H.previewed[url] = d; if (H.job && H.job.id === j.id && A.current() === "editing") drawRef(H.job); });
+    if (!refInfo(j) && H.on && !prof) H.preview(url).then(function (d) { if (!d) return; H.previewed = H.previewed || {}; H.previewed[url] = d; if (H.job && H.job.id === j.id && A.current() === "editing") drawRef(H.job); });
   }
   function drawEditing(j) {
     var A = app();
-    var lead = $("#ed-lead"), refs = (j.refs || []).length, r = refInfo(j) || {};
-    var who = r.author || (r.handle ? r.handle.replace(/^@?/, "@") : "");
+    var lead = $("#ed-lead"), refs = (j.refs || []).length, r = refInfo(j) || {}, prof = profileOf((j.refs || [])[0]);
+    var who = r.author || (r.handle ? r.handle.replace(/^@?/, "@") : "") || (prof ? prof.handle : "");
     lead.innerHTML = refs && learning(j) ? "Learning " + (who ? "<b>" + A.esc(who) + "</b>'s style" : "the style of the Reel you pasted") + ", then cutting yours the same way."
       : refs && j.style_name ? "In <b>" + A.esc(j.style_name) + "</b>, learned from the Reel you pasted."
       : refs && j.style_error ? "In <b>" + A.esc(j.look_name) + "</b>: " + (/open/.test(j.style_error) ? "we couldn't open the Reel you pasted." : "we couldn't learn that style this time.")

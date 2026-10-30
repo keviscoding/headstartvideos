@@ -47,7 +47,7 @@
   }
   function previewRef(r) {
     var H = window.CRHosted;
-    if (!H || !H.on || !H.preview || r.previewed) return;
+    if (!H || !H.on || !H.preview || r.previewed || r.profile) return;     // a profile shows its handle; no Reel to preview
     r.loading = true;
     H.preview(r.url).then(function (d) {
       r.loading = false; r.previewed = true;
@@ -270,8 +270,8 @@
     var v = refInput.value.trim();
     if (!v) return refState("", "");
     var r = window.CRReel.parse(v);
-    if (r) refState("good", (r.handle ? r.handle + " · " : "") + r.platform + ". Press Add.");
-    else if (v.length > 12) refState("bad", "That isn't a TikTok, Reel or Short link. Open the video, tap Share, then Copy link.");
+    if (r) refState("good", (r.handle ? r.handle + " · " : "") + r.platform + (r.profile ? ": we learn from their most watched Reels" : "") + ". Press Add.");
+    else if (v.length > 12) refState("bad", "That isn't a link we can learn from. Paste a Reel, a TikTok or a Short, or the creator's profile.");
     else refState("", "");
   });
   function addRef(r, learned) {
@@ -280,7 +280,7 @@
     if (learned) r.learned = learned;
     S.refs.push(r); S.style = null; S.house = false; save();
     previewRef(r);
-    refInput.value = ""; refState("good", S.refs.length < 3 ? "Added. Add up to " + (3 - S.refs.length) + " more of theirs for a closer match." : "Added. That's the most we use.");
+    refInput.value = ""; refState("good", r.profile ? "Added. We'll learn from " + r.handle + "'s most watched recent Reels." : S.refs.length < 3 ? "Added. Add up to " + (3 - S.refs.length) + " more of theirs for a closer match." : "Added. That's the most we use.");
     drawRefs(); styleState(); preview(4);
   }
   $("#ref-form").addEventListener("submit", function (e) {
@@ -288,7 +288,7 @@
     var v = refInput.value.trim();
     if (!v) { refState("bad", "Paste a link first."); refInput.focus(); return; }
     var r = window.CRReel.parse(v);
-    if (!r) { refState("bad", "That isn't a TikTok, Reel or Short link. Open the video, tap Share, then Copy link."); refInput.focus(); return; }
+    if (!r) { refState("bad", "That isn't a link we can learn from. Paste a Reel, a TikTok or a Short, or the creator's profile."); refInput.focus(); return; }
     var why = window.CRHosted && window.CRHosted.refProblem && window.CRHosted.refProblem(r);
     if (why) { refState("bad", why); refInput.focus(); return; }
     addRef(r);
@@ -303,7 +303,7 @@
       return '<div class="ref">' + refThumb(r, "thumb " + r.kind) +
         '<span class="info"><b>' + esc(name) + "</b>" +
         "<span>" + esc(sub) + "</span>" +
-        '<span class="' + (r.learned ? "learned" : "") + '">' + esc(r.learned || "We'll learn its cuts, captions and sound when you start") + "</span></span>" +
+        '<span class="' + (r.learned ? "learned" : "") + '">' + esc(r.learned || (r.profile ? "We'll learn from their most watched recent Reels when you start" : "We'll learn its cuts, captions and sound when you start")) + "</span></span>" +
         '<button type="button" class="rm" data-rm="' + k + '" aria-label="Remove ' + esc(r.author || r.handle || r.platform) + ' link">' + ICON("i-x") + "</button></div>";
     }).join("");
     $$(".rm svg", box).forEach(function (s) { s.setAttribute("width", "16"); s.setAttribute("height", "16"); });
