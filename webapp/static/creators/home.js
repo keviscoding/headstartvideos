@@ -263,6 +263,7 @@
         '<img src="' + esc(l.poster) + '" alt="" loading="lazy"><video muted playsinline loop preload="none" src="' + esc(l.clip) + '"></video>' +
         '<span class="ltag" hidden>Last used</span><span class="lplay">' + icon("i-play") + "</span></button>" +
         "<b>" + esc(l.name) + '</b><span class="lline">' + esc(l.line) + "</span>" +
+        (l.needs ? '<span class="lneeds">' + esc(l.needs) + "</span>" : "") +
         '<button type="button" class="btn btn-sm btn-ghost btn-block" data-use="' + esc(l.key) + '">Use this look</button></article>';
     }).join("");
     $$(".lvid", root).forEach(function (b) {
