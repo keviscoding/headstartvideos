@@ -146,6 +146,8 @@ def install(studio, activity, *, token, home=None):
             shorts = info.get("shorts") if isinstance(info, dict) and info.get("format") == "short" else None
             row["short_seconds"] = int(shorts.get("seconds") or 25) if isinstance(shorts, dict) else None
             row["ranking"] = bool(isinstance(shorts, dict) and shorts.get("pipeline") == "ranking")
+            import cr_shorts
+            row["short_max"] = cr_shorts.max_seconds(info) if isinstance(shorts, dict) else None   # Create's longest
             # a Shorts recipe the creator's own narration recording can voice (Roblox Story Shorts): Create offers My
             # recording for it; the other Shorts write and voice their own (every long-video recipe takes one)
             import cr_shorts
