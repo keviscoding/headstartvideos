@@ -181,6 +181,22 @@ def test_a_deep_crash_keeps_its_whole_traceback_and_still_reads_as_a_crash(tmp_p
     assert "watching 0 of 150 watched" in log and "Traceback (most recent call last)" in log
 
 
+def test_a_helper_thread_failing_at_shutdown_never_hides_why_the_short_stopped(tmp_path, monkeypatch):
+    """A customer's Roblox Short stopped seven times on 2026-10-30 and each time said only "props failed: cannot
+    schedule new futures after interpreter shutdown": the props thread's line came after the real reason."""
+    pipeline(tmp_path, monkeypatch,
+             "print('12:00:01 voice...', flush=True)\n"
+             "import sys\n"
+             "print('Your Kie balance is empty. Top it up, then make the Short again.', file=sys.stderr, flush=True)\n"
+             "print('12:00:02   props failed: cannot schedule new futures after interpreter shutdown', flush=True)\n"
+             "sys.exit(1)\n")
+    with pytest.raises(RuntimeError) as stop:
+        run(tmp_path)
+    assert str(stop.value) == "Your Kie balance is empty. Top it up, then make the Short again."
+    log = (tmp_path / "job" / "short" / "stopped.log").read_text(encoding="utf-8")
+    assert "interpreter shutdown" in log, "support still sees everything it printed"
+
+
 def test_a_handled_traceback_earlier_does_not_hide_the_pipelines_own_message(tmp_path, monkeypatch):
     pipeline(tmp_path, monkeypatch,
              "import traceback\ntry:\n    1 / 0\nexcept ZeroDivisionError:\n    traceback.print_exc()\n"
