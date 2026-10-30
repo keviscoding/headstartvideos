@@ -1120,6 +1120,20 @@ def test_browser_a_channel_written_in_code_reads_plainly_from_the_look_to_the_sa
         aside = page.locator("aside").bounding_box()
         assert grid["x"] + grid["width"] <= aside["x"], "the shots stay out from under the sidebar"
         assert page.locator("#anchor-panel").is_hidden() and page.locator("#refine-controls").is_hidden()
+        assert page.inner_text("#caption-evidence").startswith("The study inspected actual frames")
+        # a Shorts clone whose references couldn't be downloaded (Lee, 2026-10-30): said plainly, nothing to choose
+        short = clone.renderer_verdict({"format": "short", "look": {"visuals": "cr_animated3d", "animated2d": {
+            "renderer": {"state": "failed", "why": "too few reference frames to build a renderer from"}}}})
+        monkeypatch.setattr(clone, "status", lambda home, op, bridge: {
+            **ready, "renderer": {**short, "shots": 0, "channel_frames": 0}, "frames_inspected": False})
+        page.evaluate("poll()")
+        page.wait_for_function("document.getElementById('renderer-title').textContent === 'How its videos are made'")
+        assert "recipe's own engine" in page.inner_text("#renderer-text")
+        assert page.locator("#use-pictures").is_hidden() and page.locator("#improve-panel").is_hidden()
+        assert page.inner_text("#caption-evidence").startswith("Studio couldn’t download the reference videos")
+        monkeypatch.setattr(clone, "status", lambda home, op, bridge: dict(ready))
+        page.evaluate("poll()")
+        page.wait_for_function("document.getElementById('renderer-title').textContent.startsWith('Claude')")
         if shots:
             page.wait_for_timeout(300)
             page.screenshot(path=os.path.join(shots, "4-saved.png"), full_page=True)

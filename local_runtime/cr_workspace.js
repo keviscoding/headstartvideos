@@ -194,7 +194,9 @@
   }
   function tags(id, values) {const n = $(id); n.replaceChildren(...(values || []).slice(0, 4).map(v => el('span', 'crw-tag', v)));}
   // Shorts recipes (family "Shorts"): a vertical Short of 15-60 seconds; the long-form options don't apply
-  const isShort = (r) => String(r?.family || '') === 'Shorts';
+  // a style cloned from a Shorts recipe is one too (its family says Animation or My styles): JP's Roblox clones showed
+  // the minutes picker and every Short came out at the recipe's own length (2026-10-30)
+  const isShort = (r) => String(r?.family || '') === 'Shorts' || Number.isFinite(r?.short_seconds);
   const isRanking = (r) => !!r?.ranking;   // Ranking Shorts: real clips counted down; their length comes from the clips
   // My recording: every long-video recipe, and the Shorts recipes a recording can narrate (Roblox Story Shorts, Primo
   // 2026-10-29: his own pitched take); the other Shorts write and voice their own narration (catalog own_recording)

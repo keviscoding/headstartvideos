@@ -140,6 +140,9 @@ def wanted(style) -> str:
     """"" when this style draws its pictures and can be checked, else why it is skipped."""
     if (style.get("cr_style_clone") or {}).get("visual_mode") == "reference_only":
         return "this style's videos are all motion graphics, with no drawn pictures"
+    if style.get("format") == "short":
+        # test pictures a Short never shows: JP's Roblox clones were scored 3-7/10 on them (2026-10-30)
+        return "a Shorts style is drawn by its recipe's own engine, not with pictures"
     look = style.get("look") or {}
     if _designed(style) is not None or _animated(style) is not None:
         return ""                                           # rendered by the 3D engine or the 2D kit, in code

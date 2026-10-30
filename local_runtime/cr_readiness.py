@@ -186,6 +186,14 @@ def saved_gb(studio, spec, titles) -> list:
     return out
 
 
+def drawn_by_renderer(info) -> bool:
+    """A style whose pictures its own renderer draws, so readiness checks that renderer. A Shorts style is drawn by its
+    recipe's engine (cr_shorts.run_short), never by one: a renderer a study couldn't write blocked a Roblox clone's
+    videos for nothing (Studio 119)."""
+    info = info if isinstance(info, dict) else {}
+    return (info.get("look") or {}).get("visuals") in ("cr_animated2d", "cr_animated3d") and info.get("format") != "short"
+
+
 def preset(studio, checks, spec, ahead=0.0):
     """ahead: GB the videos already in the queue (being made, waiting, on hold) still need on the disk, before this
     one's turn comes (cr_queue.Keeper.ahead_gb)."""
@@ -205,7 +213,7 @@ def preset(studio, checks, spec, ahead=0.0):
             results.append(item("reference_workflow", "Full reference animation workflow", True))
         except RuntimeError as error:
             results.append(item("reference_workflow", "Full reference animation workflow", False, str(error)))
-    if ((info or {}).get("look") or {}).get("visuals") in ("cr_animated2d", "cr_animated3d"):
+    if drawn_by_renderer(info):
         import cr_animated2d
         problem = cr_animated2d.renderer_problem(info)
         results.append(item("animated2d", "The channel's animation", not problem, problem))
