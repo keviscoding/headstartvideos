@@ -358,7 +358,7 @@
     var top = $(".res-head .pill"); if (top) top.lastChild.textContent = watched ? "Ready, and watched back" : "Ready";
     // what's in it
     $("#rs-sound-sub").textContent = s.music ? "Made for this video, mixed under your voice." : s.take_music ? "Your take's own music, kept." : "Your voice, levelled and mastered.";
-    $("#rs-sound").innerHTML = [s.music ? "An original music bed made for this edit. It dips every time you talk." : s.take_music ? "Your take already had music under your voice, so we kept it." : "No music this time.",
+    $("#rs-sound").innerHTML = [s.music ? "An original music bed made for this edit. It dips every time you talk." : s.take_music ? "Your take already had music under your voice, so we kept it. Want ours instead? Say so in a note." : "No music this time. Want some? Say so in a note.",
       loud.lufs !== undefined ? "Your voice, levelled and mastered to " + loud.lufs.toFixed(1).replace("-", "−") + " LUFS." : "Your voice, levelled and mastered."]
       .map(function (n) { return "<li>" + esc(n) + "</li>"; }).join("");
     var beats = s.beats || [];
