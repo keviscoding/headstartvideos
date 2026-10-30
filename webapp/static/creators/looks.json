@@ -8,6 +8,22 @@
   "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles3/story.jpg"
  },
  {
+  "key": "ui",
+  "name": "Split UI explainer",
+  "line": "You below, animated UI above, on your words",
+  "needs": "Works on any take",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles3/ui.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles3/ui.jpg"
+ },
+ {
+  "key": "motion",
+  "name": "Motion explainer",
+  "line": "Your voice over a designed animated film",
+  "needs": "Works on any take; your face stays off screen",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles3/motion.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles3/motion.jpg"
+ },
+ {
   "key": "montage",
   "name": "Montage",
   "line": "Your words over a stream of footage, cut on the beat",
