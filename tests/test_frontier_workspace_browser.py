@@ -232,6 +232,10 @@ def workspace(browser):
             return jsonify(scheduled=True, message="Studio carries this video on by itself after the reset.")
         return jsonify(approved={"approved_stages": ["cc_" + "a" * 64], "set_aside": []}, resumed=True,
                        message="Carrying on from where it stopped. Everything already made is reused.")
+
+    @app.post("/cr-workspace/threed-finish/<slug>")
+    def threed_finish(slug):
+        return jsonify(saved=True, finish=True, recovery=env.recovery)
     HELD = "Your Kie.ai balance ran out. Top it up, then Carry on."
 
     @app.get("/cr-queue")
@@ -1018,6 +1022,29 @@ def test_a_video_stopped_on_a_claude_step_offers_one_honest_yes_on_its_card(work
     assert [p for p in env.posts if p["path"].startswith("/cr-workspace/recovery")] == [
         {"path": "/cr-workspace/recovery/stage-film", "body": {"acknowledge_costs": True, "key": "k" * 12,
                                                                "when": "after_reset"}}]
+
+
+def test_a_3d_video_stopped_in_its_review_can_finish_with_the_review_so_far(workspace):
+    """Swapnil (Claude Pro, 2026-10-30): a long 3D video stopped at Claude's limit in round 3 of 3. Its card offers to
+    finish with the review so far; the click saves the choice and carries it on with nothing approved."""
+    env, page = workspace, workspace.page
+    env.mode = "claude_stage"
+    note = ("Review rounds 1-2 of 3 are finished and their fixes are kept. The shots Claude hasn't checked yet go to "
+            "the final render as they are, with no more Claude for the review. Only this video changes.")
+    env.recovery = dict(env.recovery, threed_finish={"available": True, "chosen": False, "note": note})
+    env.open("#projects")
+    page.locator('.crw-project-card[data-slug="stage-film"]').get_by_role("button", name="Review issue",
+                                                                         exact=True).click()
+    box = page.locator(".crw-recovery")
+    box.wait_for(state="visible")
+    assert "Review rounds 1-2 of 3 are finished" in box.inner_text()
+    finish = page.get_by_role("button", name="Finish with the review so far")
+    assert finish.is_enabled(), "no yes needed: it spends no more Claude on the review"
+    finish.click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('review so far')")
+    assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/threed-finish", "/cr-workspace/recovery"))] == [
+        {"path": "/cr-workspace/threed-finish/stage-film", "body": {"finish": True}},
+        {"path": "/cr-workspace/recovery/stage-film", "body": {"only_if_free": True}}]
 
 
 def test_create_offers_to_carry_on_a_stopped_video_of_the_same_title_first(workspace):

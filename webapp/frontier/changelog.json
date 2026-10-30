@@ -1,5 +1,13 @@
 [
   {
+    "build": 118,
+    "date": "2026-10-30",
+    "title": "Finish a stopped 3D video without waiting for Claude",
+    "items": [
+      "New: a 3D video stopped by your Claude limit can finish now. If a long 3D video stops in its picture review, its card offers Finish with the review so far: the review rounds already done keep their fixes, the shots Claude hasn't checked yet go to the final render as they are, and no more Claude goes on the review. Try again and carry on still works as before. It's your choice, for that video only."
+    ]
+  },
+  {
     "build": 117,
     "date": "2026-10-30",
     "title": "Roblox Story Shorts tell the story you asked for",

@@ -733,7 +733,7 @@
           if (saved.available_for_resume) {const resume=el('button','crw-text-button crw-resume-saved','Resume saved project'); resume.type='button'; resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/cr-submit-project',{method:'POST',body:{project_id:saved.project_id}});toast('Saved project submitted. Completed assets will be reused.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}finally{resume.disabled=false;}});$('crw-progress-actions').append(resume);}
           if (saved.available_for_resume) {try {const voice=await api(`/cr-workspace/voice/${encoded(state.openJob)}`); if ((voice.stopped_on_voice || /narration (task|service)/i.test(data.error || '')) && !voice.has_voice) voiceChoices(voice, saved);} catch (_) {/* Resume stays available */}}
           if (saved.available_for_resume) {try {const presenter=await api(`/cr-workspace/presenter-choice/${encoded(state.openJob)}`); if (presenter.stopped_on_presenter) presenterChoices(presenter, saved);} catch (_) {/* Resume stays available */}}
-          if (saved.available_for_resume) {try {const rec=await api(`/cr-workspace/recovery/${encoded(state.openJob)}`); if (rec.needs_approval || (rec.fix_first||[]).length || (rec.do_first||[]).length || rec.auto?.safe || (rec.carry_on_after_reset && rec.reset_label)) recoveryChoices(rec);} catch (_) {/* Resume stays available */}}
+          if (saved.available_for_resume) {try {const rec=await api(`/cr-workspace/recovery/${encoded(state.openJob)}`); if (rec.needs_approval || rec.threed_finish?.chosen || (rec.fix_first||[]).length || (rec.do_first||[]).length || rec.auto?.safe || (rec.carry_on_after_reset && rec.reset_label)) recoveryChoices(rec);} catch (_) {/* Resume stays available */}}
         }
       }
     } catch (e) {text('crw-progress-note',e.message);}
@@ -814,6 +814,30 @@
       go.addEventListener('click', () => send(ahead ? {added_usage: true} : {}, go));
       if (later) later.addEventListener('click', () => send({when: 'after_reset'}, later));
       row.append(go); if (later) row.append(later); box.append(row);
+    }
+    // A 3D video stopped in its picture review (Swapnil, Claude Pro, 2026-10-30): finish with the review so far, for
+    // this video only. The shots Claude hasn't checked go to the final render as they are (cr_threed_resume).
+    const fin = rec.threed_finish || {};
+    if (fin.chosen) box.append(el('p', 'crw-field-help', 'You chose to finish with the 3D review so far. Resume carries it on to the final render.'));
+    else if (fin.available) {
+      const row = el('div', 'crw-voice-choice'), button = el('button', 'crw-secondary-button', 'Finish with the review so far');
+      button.type = 'button'; row.append(button, el('span', 'crw-field-help', fin.note || ''));
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await api(`/cr-workspace/threed-finish/${encoded(slug)}`, {method: 'POST', body: {finish: true}});
+          try {
+            const r = await api(`/cr-workspace/recovery/${encoded(slug)}`, {method: 'POST', body: {only_if_free: true}});
+            toast(r.waiting ? 'It joins the queue and finishes with the review so far.' : 'Finishing with the 3D review so far. Everything already made is reused.');
+            $('crw-progress-actions').replaceChildren(); await refreshActivity();
+          } catch (e) {
+            // another stopped step still needs a yes: the card shows what is left (otherwise Resume stays)
+            if (e.details?.recovery) {$('crw-progress-actions').replaceChildren(); recoveryChoices(e.details.recovery);}
+            else {text('crw-progress-note', `Saved: it finishes with the review so far. ${e.message}`); box.remove(); const plain = $('crw-progress-actions').querySelector('.crw-resume-saved'); if (plain) plain.hidden = false;}
+          }
+        } catch (e) {text('crw-progress-note', e.message); button.disabled = false;}
+      });
+      box.append(row);
     }
     $('crw-progress-actions').append(box);
   }

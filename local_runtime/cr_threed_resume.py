@@ -49,6 +49,8 @@ SETTINGS = ("review_rounds", "preview_frac", "pass_score", "sheet_scenes", "lean
 # what is read off the pictures: never part of an answer's key (a re-render may differ in a pixel or a QA number)
 FROM_PICTURES = ("sheet_rows", "issues", "checks")
 LABELS = {"director": "3D shot planning", "review": "3D picture review"}
+REVIEW_ROUND = "3D picture review, round"          # every review call's name starts so ("3D picture review, round 2")
+REPAIR_LABEL = "3D clip repair"
 
 _lock = threading.RLock()
 _ctx: dict = {}                        # the review being made in this engine process (one video per process)
@@ -241,6 +243,40 @@ def calls_left(progress: dict) -> dict:
     return {"round": cur, "rounds": rounds, "left": left, "finished": False}
 
 
+# ── finishing with the review so far ──────────────────────────────────────────────────────────────────────────────
+# Swapnil (Claude Pro, 2026-10-30): a long 3D video stopped at Claude's limit again, in round 3 of 3, with rounds 1-2
+# done. The creator may finish with the review so far (FINISH in the video's folder, this video only): a section
+# Claude already answered is reused as always, one it hasn't is skipped (ReviewSkipped is an Exception: the engine's
+# own _safe keeps that section's shots as they are), and a round with nothing answered yet isn't previewed (the engine
+# takes the board to the final render as it is). Rounds and prompts are unchanged, so earlier rounds still replay from
+# their saved answers; capping review_rounds instead would change every prompt ("round 2/3") and pay them again.
+FINISH = "cr-threed-finish.json"
+
+
+class ReviewSkipped(RuntimeError):
+    """A review call or round the creator chose to finish without."""
+
+
+def finishing(job) -> bool:
+    return _read(Path(job) / FINISH).get("finish") is True
+
+
+def choose_finish(job, on=True) -> None:
+    path = Path(job) / FINISH
+    if on:
+        _write(path, {"finish": True, "at": time.time()})
+    else:
+        path.unlink(missing_ok=True)
+
+
+def review_so_far(job) -> dict:
+    """{"round", "rounds", "answered"}: where this video's 3D review stands (progress.json), for the stopped card."""
+    progress = _read(keep_dir(job) / "progress.json")
+    cur = int(progress.get("round") or 0)
+    return {"round": cur, "rounds": int(progress.get("rounds") or 0), "finished": bool(progress.get("finished")),
+            "answered": len((progress.get("answered") or {}).get(str(cur)) or [])}
+
+
 # ── the review ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def _wrap_review(threed, original):
@@ -280,6 +316,7 @@ def _wrap_review(threed, original):
                 _asked.clear()
         if rounds > 0:
             _progress(job, lambda data: data.update(finished=True))
+        choose_finish(job, False)                          # the choice was for this review only
         # the reviewed board is saved: its previews are no longer needed (the answers are small and stay)
         shutil.rmtree(keep_dir(job) / "previews", ignore_errors=True)
         return out
@@ -357,6 +394,13 @@ def _wrap_look(SB, original):
             asked = _asked.get(digest(base)) if isinstance(base, str) else None
             force = bool(_ctx.get("force"))
         if not asked or force:
+            with _lock:
+                in_review = bool(_ctx)
+            if not asked and not in_review and not _current_label():
+                # the clip repair after the final render (threed.repair_pass): never part of the review, so a creator
+                # who chose to finish with the review so far is asked before it's tried again (cr_recover)
+                with _labelled(REPAIR_LABEL):
+                    return original(*args, **kwargs)
             return original(*args, **kwargs)
         rn, job = asked["round"], Path(asked["job"])
         key = digest([asked["key"], str(model), _effort(model)])
@@ -366,7 +410,13 @@ def _wrap_look(SB, original):
             _log(engine, f"  3D review: round {rn}: a section Claude already reviewed in an earlier try is reused "
                          "(no new Claude call)")
             _answered(job, rn, key)
+            with _lock:
+                _ctx.setdefault("reused", set()).add(rn)
             return saved["raw"]
+        if finishing(job):
+            _log(engine, f"  3D review: round {rn}: a section Claude hasn't reviewed is kept as it is (you chose to "
+                         "finish with the review so far; no Claude call)")
+            raise ReviewSkipped("you chose to finish with the review so far")
         with _labelled(f"3D picture review, round {rn}" if rn else "3D picture review"):
             raw = original(*args, **kwargs)
         if _parses(SB, raw):
@@ -483,6 +533,13 @@ def _wrap_render(threed, original):
             _log(engine, f"3D: previews round {rn}: the {count} shots' pictures from an earlier try are kept "
                          "(nothing rendered again)")
             return rep
+        reused = ctx.get("reused") or set()
+        if finishing(job) and (not (_read(keep_dir(job) / "progress.json").get("answered") or {}).get(str(rn))
+                               or (rn > 1 and rn - 1 not in reused)):
+            # nothing of this round was answered, or the last round's answers no longer match (an updated engine):
+            # no previews, no review; the board goes on as it is
+            _log(engine, f"3D: review round {rn} is skipped: you chose to finish with the review so far")
+            raise ReviewSkipped(f"round {rn} skipped: you chose to finish with the review so far")
         rep = original(*args, **kwargs)
         if complete_round(rep, video):
             _save_previews(rep, keep)
