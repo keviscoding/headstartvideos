@@ -40,11 +40,12 @@ def initialize():
                 heartbeat_at {real}, ended_at {real}, kind TEXT NOT NULL DEFAULT 'edit',
                 parent TEXT NOT NULL DEFAULT '', root TEXT NOT NULL DEFAULT '', refs TEXT NOT NULL DEFAULT '[]')""")
             # a review round (kind "notes") is a child of the edit it revises; root is the first edit of the chain;
-            # refs: the Reel links whose style the edit learns first (creators.looks.clone)
+            # refs: the Reel links whose style the edit learns first (creators.looks.clone); profile: the creator's own
+            # TikTok profile, whose latest posts the B-roll finder may cut from (owner's Loom 2026-10-30, P1-23)
             have = {r["name"] for r in conn.execute("PRAGMA table_info(creator_jobs)").fetchall()} if not db.IS_PG \
                 else {r["column_name"] for r in conn.execute(
                     "SELECT column_name FROM information_schema.columns WHERE table_name='creator_jobs'").fetchall()}
-            for col in ("kind", "parent", "root", "refs"):
+            for col in ("kind", "parent", "root", "refs", "profile"):
                 if col not in have:
                     default = {"kind": "'edit'", "refs": "'[]'"}.get(col, "''")
                     conn.execute(f"ALTER TABLE creator_jobs ADD COLUMN {col} TEXT NOT NULL DEFAULT {default}")
@@ -68,26 +69,41 @@ def blank_stages(kind: str = "edit") -> list[dict]:
 # How much of the edit each stage is, for the progress bar (measured on the first hosted edits).
 WEIGHTS = {"words": 0.14, "deadair": 0.04, "music": 0.16, "broll": 0.06, "titles": 0.45, "watched": 0.15,
            "transcribing": 0.1, "planning": 0.2, "rendering": 0.6, "checking": 0.1}
+# How long each stage usually runs once active, in seconds (the owner's Loom edit, 2026-10-30: the render under
+# "Title cards that hit" took 3.5 min while the bar sat at 56%). An active stage's share of the bar fills over this
+# time, up to 90% of it, so a long render moves the bar instead of freezing it; done is what really completes it.
+EXPECT_S = {"words": 60, "deadair": 60, "music": 40, "broll": 40, "titles": 180, "watched": 120,
+            "transcribing": 20, "planning": 60, "rendering": 150, "checking": 15}
 
 
-def progress_of(stages: list[dict]) -> float:
+def progress_of(stages: list[dict], now: float | None = None) -> float:
+    """The bar: done stages count whole, an active one a third, and (with `now`, for a stage that recorded when it
+    started) up to 90% of its weight as its usual time passes."""
     p = 0.0
     for s in stages:
         w = WEIGHTS.get(s["key"], 0.0)
-        p += w if s["state"] == "done" else w * 0.35 if s["state"] == "active" else 0.0
+        if s["state"] == "done":
+            p += w
+        elif s["state"] == "active":
+            frac = 0.35
+            if now is not None and s.get("at"):
+                frac += 0.55 * min(1.0, max(0.0, now - float(s["at"])) / EXPECT_S.get(s["key"], 60))
+            p += w * frac
     return round(min(0.99, p), 3)
 
 
 def create(user_id: int, look: str, take_key: str, take_name: str, broll_keys: list[str], *, free: bool,
-           notify: bool, kind: str = "edit", parent: str = "", root: str = "", refs: list[str] | None = None) -> dict:
+           notify: bool, kind: str = "edit", parent: str = "", root: str = "", refs: list[str] | None = None,
+           profile: str = "") -> dict:
     initialize()
     job_id = "ce_" + secrets.token_hex(8)
     with db._conn() as conn:
         conn.execute(db._q("""INSERT INTO creator_jobs (id, user_id, look, status, stages, take_key, take_name,
-            broll_keys, free, notify, created_at, kind, parent, root, refs) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""),
+            broll_keys, free, notify, created_at, kind, parent, root, refs, profile)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""),
                      (job_id, int(user_id), look, "queued", json.dumps(blank_stages(kind)), take_key, take_name[:200],
                       json.dumps(broll_keys), 1 if free else 0, 1 if notify else 0, time.time(), kind, parent,
-                      root or job_id, json.dumps(refs or [])))
+                      root or job_id, json.dumps(refs or []), profile[:200]))
     return get(job_id)
 
 
@@ -151,6 +167,8 @@ def set_stage(job_id: str, key: str, state: str, detail: str = "") -> dict:
     stages = j["stages"] or blank_stages(j.get("kind") or "edit")
     for s in stages:
         if s["key"] == key:
+            if state == "active" and s["state"] != "active":
+                s["at"] = round(time.time(), 1)            # when it started: the bar and the step's clock use it
             s["state"] = state
             if detail:
                 s["detail"] = detail[:200]
@@ -162,6 +180,15 @@ def set_stage(job_id: str, key: str, state: str, detail: str = "") -> dict:
 
 def heartbeat(job_id: str) -> None:
     update(job_id, heartbeat_at=time.time())
+
+
+def set_style(job_id: str, style: dict) -> None:
+    """The style learned from the pasted Reels, as soon as the machine has it (before the edit is done), so the
+    editing screen can say "Your Dylan Mouzakki cut" instead of the fallback look. finish() replaces the whole result
+    later, and its summary carries the same style."""
+    keep = {k: str(v)[:80] for k, v in (style or {}).items() if k in ("name", "label", "error") and v}
+    if keep:
+        update(job_id, result={"style": keep})
 
 
 def finish(job_id: str, status: str, *, error: str = "", **fields) -> None:

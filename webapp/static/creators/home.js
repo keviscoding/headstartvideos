@@ -74,9 +74,10 @@
   function nowCard(p) {
     var pct = Math.round((p.progress || 0) * 100);
     var line = p.state === "queued" ? (p.in_line > 1 ? "In line: " + (p.in_line - 1) + " ahead of you" : "Next in line")
-      : pct + "%" + (p.minutes_left ? " · about " + p.minutes_left + " min left" : "");
+      : pct + "%" + (p.minutes_left ? " · about " + p.minutes_left + " min left" : p.eta_note === "late" ? " · taking a little longer than usual"
+        : p.eta_note === "almost" ? " · almost done" : "");
     var what = (p.state === "making" ? "Making v" + p.version + " · " : "") + p.look_name;
-    var note = p.notify ? "We'll email you when it's ready. You can close this tab." : "You can close this tab. It keeps going.";
+    var note = p.notify ? "Editing on our servers. We'll email you when it's ready." : "Editing on our servers. You can close this tab.";
     return '<article class="now-card" data-id="' + esc(p.id) + '">' + thumb(p, true) +
       '<div class="nbody"><h3 class="rt"><button type="button" class="ropen" data-open-job="' + esc(p.latest_id) + '" data-v="' + p.version + '">' + esc(p.title) + "</button></h3>" +
       '<p class="rmeta">' + esc(what) + "</p>" +

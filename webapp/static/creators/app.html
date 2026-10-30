@@ -237,10 +237,18 @@
             <span>MP4 or MOV from your phone, up to 5 minutes</span>
           </label>
           <div id="file-slot"></div>
-          <div class="own-clips" id="own-clips" hidden>
-            <label class="own-add"><input type="file" id="own-file" accept="video/*,.mov,.mp4,.m4v" multiple><svg width="18" height="18"><use href="icons.svg#i-film"/></svg><span><b>Add your own B-roll</b> (optional): clips of what you talk about, up to 10</span></label>
+          <section class="broll-box" id="own-clips" hidden aria-labelledby="bx-h">
+            <div class="bx-head"><span class="nic"><svg width="20" height="20"><use href="icons.svg#i-film"/></svg></span>
+              <div><h2 class="bx-h" id="bx-h">We find B-roll for you</h2><p>Free stock shots, cut in on the words you say. Add your profile and we use your own shots too.</p></div></div>
+            <label class="bx-label" for="profile-input">Your TikTok or Instagram profile <span>(optional)</span></label>
+            <div class="field" id="profile-field">
+              <svg class="lead"><use href="icons.svg#i-link"/></svg>
+              <input id="profile-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="tiktok.com/@yourname">
+            </div>
+            <div class="field-msg" id="profile-msg" role="status" aria-live="polite">TikTok works now: we cut shots from your latest posts. Instagram profiles are coming soon.</div>
+            <label class="own-add"><input type="file" id="own-file" accept="video/*,.mov,.mp4,.m4v" multiple><svg width="18" height="18"><use href="icons.svg#i-upload"/></svg><span><b>Add your own clips</b> (optional), up to 10</span></label>
             <div class="own-list" id="own-list"></div>
-          </div>
+          </section>
           <div class="up-progress" id="up-progress" hidden role="status" aria-live="polite"><div class="meterbar light"><i></i></div><span id="up-text">Uploading…</span></div>
           <div class="alt-row">
             <button type="button" class="btn btn-ghost" data-open="qr"><svg width="18" height="18"><use href="icons.svg#i-phone"/></svg>From my phone</button>
@@ -285,6 +293,8 @@
     <div>
       <h1 id="ed-h">Editing your Reel</h1>
       <p class="lead2" id="ed-lead">In the <b>Creator energy</b> look. You can close this tab: we'll email you.</p>
+      <div class="ed-ref" id="ed-ref" hidden></div>
+      <p class="ed-where" id="ed-where" hidden><svg width="18" height="18"><use href="icons.svg#i-cloud"/></svg><span>Editing on our servers. You can close this tab or your laptop.</span></p>
       <div class="stages" id="stages"></div>
       <div class="transcript" aria-label="Your transcript as we cut it"><div class="in" id="tx"></div></div>
       <div class="foot2">
@@ -329,10 +339,17 @@
         <p id="rs-meta"></p>
       </div>
 
+      <div class="honest" id="rs-honest" hidden>
+        <h2 id="rs-honest-h">Our watch-back scored this low</h2>
+        <p id="rs-honest-p"></p>
+        <div class="honest-acts"><a class="btn" href="#review" id="rs-notes-btn"><svg width="18" height="18"><use href="icons.svg#i-mic"/></svg>Give notes</a><button type="button" class="btn btn-ghost" id="rs-relook"><svg width="18" height="18"><use href="icons.svg#i-sparkles"/></svg>Try another look</button></div>
+      </div>
+
       <div class="panel">
         <h2>Watch-back check <span class="pill ok">Passed</span></h2>
         <p class="sub2">We listened to the finished Reel again and checked it against what you said.</p>
         <div class="checks" id="rs-checks"></div>
+        <div class="issues" id="rs-issues" hidden></div>
       </div>
 
       <div class="panel soundp" id="sound-panel">

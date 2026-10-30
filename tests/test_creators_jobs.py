@@ -99,8 +99,9 @@ def test_a_job_starts_one_machine_and_shows_the_workers_stages(api):
     store.set_stage(job["id"], "deadair", "active")
     seen = api.get(f"/api/creators/jobs/{job['id']}").json()
     assert seen["stage"] == "deadair" and 0.14 <= seen["progress"] < 0.2
-    assert seen["stages"][0] == {"key": "words", "label": "Every word, caught", "state": "done",
-                                 "detail": "212 words, each one timed"}
+    assert {k: v for k, v in seen["stages"][0].items() if k != "at"} == {
+        "key": "words", "label": "Every word, caught", "state": "done", "detail": "212 words, each one timed"}
+    assert seen["stages"][1]["at"] > time.time() - 5                  # an active stage says when it started
     store.finish(job["id"], "done", output_key=f"creators/u7/jobs/{job['id']}/reel.mp4",
                  poster_key=f"creators/u7/jobs/{job['id']}/poster.jpg", result={"seconds": 41.2})
     done = api.get(f"/api/creators/jobs/{job['id']}").json()
@@ -464,3 +465,195 @@ def test_a_project_learned_from_pasted_reels_says_whose_style(api):
     assert p["state"] == "editing" and p["look_name"] == "@minolee's style"          # while it learns
     store.finish(job["id"], "done", output_key="k", result={"summary": {"style": {"name": "Your Mino Lee cut"}}})
     assert api.get("/api/creators/projects").json()["projects"][0]["look_name"] == "Your Mino Lee cut"
+
+
+# ── the owner's Loom, 2026-10-30 (big-frontier/loom-2026-10-30/README.md, sections C, D, F) ──────────────────────
+
+def test_the_learned_style_is_named_while_the_edit_runs(api):
+    """P2-02: the editing screen said "In Cinematic story" while it learned the pasted Reel's style. The worker records
+    the style's name as soon as it has it; until then the job says it has links and no name yet."""
+    link = "https://www.instagram.com/reel/DeeFoOLirO1/"
+    job = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story", "refs": [link]}).json()
+    assert job["refs"] == [link] and job["style_name"] == "" and job["expected_s"] == 7 * 60 + cj.STYLE_S
+    store.claim(job["id"], "m1")
+    store.set_style(job["id"], {"key": "ref-91baa18e64cd", "name": "Your Dylan Mouzakki cut", "from": "noir",
+                                "label": "Dylan Mouzakki"})
+    seen = api.get(f"/api/creators/jobs/{job['id']}").json()
+    assert seen["style_name"] == seen["look_name"] == "Your Dylan Mouzakki cut"
+    assert seen["expected_s"] == 7 * 60 and seen["result"] is None          # learned: no extra minutes, still running
+    home = api.get("/api/creators/projects").json()["projects"][0]
+    assert home["look_name"] == "Your Dylan Mouzakki cut"
+    store.set_style(job["id"], {"error": "We couldn't open that link, so this edit is in the look you picked."})
+    seen = api.get(f"/api/creators/jobs/{job['id']}").json()
+    assert seen["style_name"] == "" and "couldn't open" in seen["style_error"] and seen["look_name"] == "Cinematic story"
+
+
+def test_minutes_left_never_climb_and_a_long_render_still_moves_the_bar(api):
+    """P2-04: the badge went 7, 6, 4, 5 … 10, 5, 2, 3, 4 minutes and the bar sat at 56% through a 3.5-minute render.
+    The estimate is the usual time left unless the job's pace says it's ahead; past the usual time it says "almost"
+    then "late", never more minutes. An active stage fills with its usual time."""
+    job = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story"}).json()
+    store.claim(job["id"], "m1")
+    now = time.time()
+    stages = store.get(job["id"])["stages"]
+    for s in stages[:4]:
+        s["state"] = "done"
+    stages[4].update(state="active", at=now - 150)                     # the render, 2.5 min in
+    store.update(job["id"], stages=stages, progress=store.progress_of(stages), started_at=now - 200)
+    seen = api.get(f"/api/creators/jobs/{job['id']}").json()
+    stalled = store.progress_of(stages)
+    assert stalled < 0.6 and seen["progress"] > stalled + 0.15          # the bar moved on its own
+    j = store.get(job["id"])
+    mins = []
+    for elapsed in (200, 260, 330, 400, 440):                           # a slow edit: never more minutes
+        j["started_at"] = now - elapsed
+        mins.append(cj.eta(j, 7))
+    numbers = [m for m, _ in mins if m is not None]
+    assert numbers == sorted(numbers, reverse=True) and numbers[0] <= 4
+    j["started_at"] = now - 7.2 * 60
+    assert cj.eta(j, 7) == (None, "almost")
+    j["started_at"] = now - 10 * 60
+    assert cj.eta(j, 7) == (None, "late")
+    home = api.get("/api/creators/projects").json()["projects"][0]
+    assert "eta_note" in home
+
+
+def test_a_tiktok_profile_rides_with_the_job_and_instagram_waits(api):
+    """P1-23 / P2-01: B-roll is the editor's job. A TikTok profile is stored on the job, normalised (our machines can
+    list and fetch it); an Instagram profile is refused plainly (Instagram turns our machines away), junk too."""
+    def start(profile):
+        return api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story", "profile": profile})
+
+    r = start("https://www.instagram.com/dylan.mouzakki/")
+    assert r.status_code == 400 and "coming soon" in r.json()["detail"]
+    r = start("https://example.com/@me")
+    assert r.status_code == 400 and "TikTok profile" in r.json()["detail"]
+    job = start("tiktok.com/@ahormozi?lang=en").json()
+    assert job["profile"] == "https://www.tiktok.com/@ahormozi" == store.get(job["id"])["profile"]
+    store.finish(job["id"], "done")
+    plain = start("").json()
+    assert plain["profile"] == "" and store.get(plain["id"])["profile"] == ""
+
+
+class _Resp:
+    def __init__(self, text="", status=200, body=None, ctype="text/html", data=b""):
+        self.text, self.status_code, self.ok, self._body = text, status, status < 400, body
+        self.content, self.headers = data, {"Content-Type": ctype}
+
+    def json(self):
+        return self._body
+
+
+def _jpeg(w, h):
+    import io
+    from PIL import Image
+    out = io.BytesIO()
+    Image.new("RGB", (w, h), (200, 40, 40)).save(out, "JPEG")
+    return out.getvalue()
+
+
+def test_a_pasted_reel_shows_its_picture_and_creator(api, monkeypatch):
+    """P1-21 / P1-22: the pasted link showed a gradient tile. The preview reads each platform with one short request
+    (TikTok and Instagram from the Reel's page, YouTube from its oEmbed) and returns the picture inline, cropped to a
+    portrait; a platform that says nothing gives the plain card. Signed-in only, Reel links only."""
+    import requests
+    cj._previews.clear()
+    tt_page = ('<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">' + json.dumps(
+        {"__DEFAULT_SCOPE__": {"webapp.video-detail": {"itemInfo": {"itemStruct": {
+            "desc": "Can your business afford   someone good?", "author": {"nickname": "Alex Hormozi", "uniqueId": "ahormozi"},
+            "video": {"cover": "https://p16-sign.tiktokcdn-us.com/cover.jpeg"}}}}}}) + "</script>")
+    ig_page = ('<meta property="og:title" content="Dylan Mouzakki on Instagram: &quot;I&#x2019;ve lost. I&#x2019;ve '
+               'failed.&quot;" /><meta property="og:image" content="https://scontent.cdninstagram.com/v/x.jpg" />'
+               '<meta property="og:url" content="https://www.instagram.com/dylan.mouzakki/reel/DeeFoOLirO1/" />')
+    calls = []
+
+    def get(url, params=None, headers=None, timeout=None, **kw):
+        calls.append((url, timeout))
+        if "tiktok.com/@" in url:
+            return _Resp(tt_page)
+        if "instagram.com/reel/" in url:
+            return _Resp(ig_page)
+        if "youtube.com/oembed" in url:
+            return _Resp(body={"author_name": "Mino Lee", "author_url": "https://www.youtube.com/@mino.mp4",
+                               "title": "this HOOK strategy", "thumbnail_url": "https://i.ytimg.com/vi/x/hqdefault.jpg"})
+        if url.endswith(".jpg") or url.endswith(".jpeg"):
+            return _Resp(ctype="image/jpeg", data=_jpeg(480, 360))
+        return _Resp(status=404)
+    monkeypatch.setattr(requests, "get", get)
+
+    q = "/api/creators/reel-preview?url="
+    tt = api.get(q + "https://www.tiktok.com/@ahormozi/video/7702450963327487246").json()
+    assert tt["author"] == "Alex Hormozi" and tt["handle"] == "ahormozi" and tt["platform"] == "TikTok"
+    assert tt["title"] == "Can your business afford someone good?" and tt["thumb"].startswith("data:image/jpeg;base64,")
+    ig = api.get(q + "https://www.instagram.com/reel/DeeFoOLirO1/?utm_source=ig_web_copy_link").json()
+    assert ig["author"] == "Dylan Mouzakki" and ig["handle"] == "dylan.mouzakki" and ig["title"].startswith("I’ve lost")
+    yt = api.get(q + "https://www.youtube.com/shorts/aXwgg5Tj5Nc").json()
+    assert yt["author"] == "Mino Lee" and yt["handle"] == "mino.mp4" and yt["thumb"]
+    import base64
+    import io
+    from PIL import Image
+    im = Image.open(io.BytesIO(base64.b64decode(yt["thumb"].split(",", 1)[1])))
+    assert im.size[1] > im.size[0]                                       # a landscape thumbnail comes back portrait
+    assert all(t and t[1] <= 3 for _, t in calls)                       # short requests only
+    n = len(calls)
+    api.get(q + "https://www.youtube.com/shorts/aXwgg5Tj5Nc")
+    assert len(calls) == n                                               # asked once
+    # the platform said nothing (blocked, private): the plain card, never an error
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp(status=429))
+    blank = api.get(q + "https://www.instagram.com/reel/C1kzUmsRcEl/")
+    assert blank.status_code == 200 and blank.json()["thumb"] == "" and blank.json()["platform"] == "Instagram Reel"
+    assert api.get(q + "https://example.com/x").status_code == 400
+    api.who["user"] = None
+    assert api.get(q + "https://www.youtube.com/shorts/aXwgg5Tj5Nc").status_code == 401
+
+
+def test_titles_end_on_a_whole_thought():
+    """Section H: the result page's title read "This 12 -minute video costs about $12 to make and"."""
+    w = pytest.importorskip("webapp.creators_worker")   # the edit machines' image only: not in the public repo
+    assert w.tidy_line("This 12 -minute video costs about $12 to make and") == \
+        "This 12-minute video costs about $12 to make"
+    assert w.tidy_line("I quit my job , and") == "I quit my job"
+    assert w.tidy_line("Stop scrolling. If you") == "Stop scrolling."
+    assert w.tidy_line("you need to see this") == "you need to see this"
+    plan = {"hook": {"t": [0, 2], "text": "This 12 -minute video costs about $12 to make and"}, "title": "Why and"}
+    s = w.summary({}, plan, 50.0, {"words": []})
+    assert s["hook"] == "This 12-minute video costs about $12 to make" and s["beats"][0]["text"] == s["hook"]
+
+
+def test_with_the_scrape_creators_key_instagram_profiles_open_and_previews_fall_back(api, monkeypatch):
+    """Scrape Creators (the owner's key) lists an Instagram profile's posts on the machines, so the server takes
+    Instagram profiles once SCRAPECREATORS_API_KEY is set, passes the key to the machine, and asks it for a Reel's
+    preview only when Instagram's own page turned us away (a credit a call, the key only in the header)."""
+    import requests
+    monkeypatch.setenv("SCRAPECREATORS_API_KEY", "sk-test")
+    assert api.get("/api/creators/config").json()["profiles"] == ["tiktok", "instagram"]
+    job = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story",
+                                               "profile": "https://www.instagram.com/dylan.mouzakki/?hl=en"}).json()
+    assert job["profile"] == "https://www.instagram.com/dylan.mouzakki"
+    monkeypatch.setenv("DATABASE_URL", "postgres://x")
+    monkeypatch.setenv("SPACES_KEY", "k")
+    assert cj.machine_env(job["id"])["SCRAPECREATORS_API_KEY"] == "sk-test"
+    cj._previews.clear()
+    calls = []
+
+    def get(url, params=None, headers=None, timeout=None, **kw):
+        calls.append((url, params, headers))
+        if "instagram.com/reel/" in url:
+            return _Resp(status=429)
+        if url.endswith("/v1/instagram/post"):
+            return _Resp(body={"data": {"xdt_shortcode_media": {
+                "owner": {"username": "dylan.mouzakki", "full_name": "Dylan Mouzakki"},
+                "thumbnail_src": "https://scontent.cdninstagram.com/v/t.heic",
+                "display_url": "https://scontent.cdninstagram.com/v/d.jpg",
+                "edge_media_to_caption": {"edges": [{"node": {"text": "I've lost."}}]}}}})
+        if url.endswith(".heic"):
+            return _Resp(ctype="image/heic", data=b"not a jpeg")
+        return _Resp(ctype="image/jpeg", data=_jpeg(640, 640))
+    monkeypatch.setattr(requests, "get", get)
+    d = api.get("/api/creators/reel-preview?url=https://www.instagram.com/reel/DeeFoOLirO1/").json()
+    assert d["author"] == "Dylan Mouzakki" and d["handle"] == "dylan.mouzakki" and d["thumb"].startswith("data:image/jpeg")
+    sc = [c for c in calls if "scrapecreators" in c[0]]
+    assert len(sc) == 1 and sc[0][1] == {"url": "https://www.instagram.com/reel/DeeFoOLirO1/"}
+    assert sc[0][2] == {"x-api-key": "sk-test"}
+    api.get("/api/creators/reel-preview?url=https://www.instagram.com/reel/DeeFoOLirO1/")
+    assert len([c for c in calls if "scrapecreators" in c[0]]) == 1                # cached: one credit
