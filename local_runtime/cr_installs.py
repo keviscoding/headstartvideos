@@ -191,26 +191,45 @@ def use_studio_tools(home: Path = HOME, environ=None, windows: bool | None = Non
 # ── checks (setup's rows) ──────────────────────────────────────────────────────────────────────────────────────
 
 def runs(name: str, flag: str = "-version", *, which=None, run=None) -> bool:
+    return not start_problem(name, flag, which=which, run=run)
+
+
+# Windows' own refusals to start a program (OSError.winerror), in plain words
+WINDOWS_BLOCKS = {225: "your antivirus blocked it as unsafe", 4551: "Windows' Smart App Control blocked it",
+                  4556: "Windows' Smart App Control blocked it", 1260: "a Windows policy on this computer blocked it"}
+
+
+def start_problem(name: str, flag: str = "-version", *, which=None, run=None, timeout: float = 5) -> str:
+    """'' when the program starts and answers `flag`; else why not, in plain words (shown in Setup and diagnostics)."""
     which, run = which or shutil.which, run or subprocess.run       # looked up now: tests replace them
     executable = which(name)
     if not executable:
-        return False
+        return "it isn't installed"
     try:
-        return run([executable, flag], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+        code = run([executable, flag], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout).returncode
+    except subprocess.TimeoutExpired:
+        return f"it didn't answer within {timeout:g} seconds (an antivirus may still be scanning it)"
+    except OSError as e:
+        return WINDOWS_BLOCKS.get(getattr(e, "winerror", None)) or f"it won't start ({type(e).__name__}: {str(e)[:160]})"
+    except subprocess.SubprocessError as e:
+        return f"it won't start ({type(e).__name__})"
+    return f"it stopped with error code {code}" if code else ""
 
 
 VIDEO_NEEDS = (("-filters", {"subtitles": "burn captions", "ass": "burn captions"}),
                ("-encoders", {"libx264": "make H.264 video", "aac": "make AAC sound", "libmp3lame": "make MP3s"}))
 
 
-def video_tools_problem(ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", *, which=None, run=None) -> str:
+def video_tools_problem(ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", *, which=None, run=None,
+                        timeout: float = 5) -> str:
     """'' when FFmpeg and ffprobe work and FFmpeg can burn captions (libass: the subtitles and ass filters) and make
     H.264, AAC and MP3; else what is wrong, in plain words."""
     which, run = which or shutil.which, run or subprocess.run
-    if not runs(ffprobe, which=which, run=run):
+    why = start_problem(ffprobe, which=which, run=run, timeout=timeout)
+    if why == "it isn't installed":
         return "FFmpeg's ffprobe isn't installed or won't start."
+    if why:
+        return f"FFmpeg's ffprobe won't start: {why}."
     executable = which(ffmpeg)
     if not executable:
         return "FFmpeg isn't installed."
@@ -219,7 +238,7 @@ def video_tools_problem(ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", *, whi
         for flag, wanted in VIDEO_NEEDS:
             # a minimal Homebrew build passes -version but can't burn captions
             result = run([executable, "-hide_banner", flag], capture_output=True, text=True, encoding="utf-8",
-                         errors="replace", timeout=10)
+                         errors="replace", timeout=max(10, timeout))
             if result.returncode:
                 return "FFmpeg is installed but won't start."
             names = {line.split()[1] for line in (result.stdout or "").splitlines() if len(line.split()) > 1}
@@ -532,6 +551,16 @@ def _swap(stage: Path, final: Path, *, patience: float = SWAP_PATIENCE, sleep=No
 
 # ── FFmpeg ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+# A program just downloaded is scanned by Windows Defender (or another antivirus) the first time it runs, which can take
+# far longer than the everyday 5 seconds for a 100 MB ffprobe.exe (a customer's fresh download failed its check, 2026-10-30).
+FRESH_TIMEOUT = 120
+
+
+def fresh_check(ffmpeg: str, ffprobe: str) -> str:
+    """video_tools_problem for a fresh download, with time for its first antivirus scan."""
+    return video_tools_problem(ffmpeg, ffprobe, timeout=FRESH_TIMEOUT)
+
+
 VIDEO_RUNNING = ("A video is being made right now, and Studio never switches its {what} in the middle of one. Press "
                  "Fix it again when it's done.")
 
@@ -570,9 +599,9 @@ def fix_ffmpeg(*, home: Path = HOME, key: str | None = None, get=None, check=Non
                 archive = fetch(item, archives, fix, get=get, what=f"FFmpeg {FFMPEG_VERSION}")
                 take(archive, item["take"], files)
                 archive.unlink(missing_ok=True)                # an archive is up to 115 MB: not kept
-            fix.update(state="checking", message="Checking FFmpeg can burn captions and make H.264, AAC and MP3…")
-            problem = (check or video_tools_problem)(str(files / _exe("ffmpeg", windows)),
-                                                     str(files / _exe("ffprobe", windows)))
+            fix.update(state="checking", message="Checking FFmpeg can burn captions and make H.264, AAC and MP3 (its "
+                                                 "first start can take a minute while your antivirus scans it)…")
+            problem = (check or fresh_check)(str(files / _exe("ffmpeg", windows)), str(files / _exe("ffprobe", windows)))
             if problem:
                 raise Stop(f"The downloaded FFmpeg didn't pass Studio's check ({problem.rstrip('.')}), so it wasn't "
                            "installed. Press Copy diagnostics and paste it in Discord #help.")

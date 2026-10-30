@@ -359,6 +359,39 @@ def test_video_tools_problem_names_what_this_ffmpeg_cant_do():
                                            run=fake_ffmpeg()) == "FFmpeg isn't installed."
 
 
+def test_a_program_that_wont_start_says_why():
+    which = lambda name: "/bin/" + name
+
+    def raising(error):
+        def run(command, **kw):
+            raise error
+        return run
+    slow = raising(subprocess.TimeoutExpired(["ffprobe"], 5))
+    assert cr_installs.start_problem("ffprobe", which=which, run=slow) == \
+        "it didn't answer within 5 seconds (an antivirus may still be scanning it)"
+    blocked = OSError(22, "An Application Control policy has blocked this file")
+    blocked.winerror = 4551
+    assert cr_installs.start_problem("ffprobe", which=which, run=raising(blocked)) == \
+        "Windows' Smart App Control blocked it"
+    assert cr_installs.start_problem("ffprobe", which=which, run=fake_ffmpeg(code=3)) == "it stopped with error code 3"
+    assert cr_installs.video_tools_problem(which=which, run=slow) == \
+        "FFmpeg's ffprobe won't start: it didn't answer within 5 seconds (an antivirus may still be scanning it)."
+    assert cr_installs.runs("ffprobe", which=which, run=fake_ffmpeg()) and not cr_installs.runs("ffprobe", which=which,
+                                                                                               run=slow)
+
+
+def test_a_fresh_ffmpeg_download_gets_time_for_its_first_antivirus_scan(monkeypatch):
+    seen = []
+
+    def run(command, **kw):
+        seen.append(kw["timeout"])
+        return fake_ffmpeg()(command, **kw)
+    monkeypatch.setattr(cr_installs.shutil, "which", lambda name: name)
+    monkeypatch.setattr(cr_installs.subprocess, "run", run)
+    assert cr_installs.fresh_check("/new/ffmpeg", "/new/ffprobe") == ""
+    assert seen and min(seen) >= 60, "a first start under an antivirus scan takes far longer than 5 seconds"
+
+
 @pytest.mark.parametrize("output,ready,words", [("v24.22.1\n", True, ""), ("v22.0.0", True, ""),
                                                 ("v20.11.1", False, "Node.js 20.11.1 is too old"),
                                                 ("", False, "won't start")])
