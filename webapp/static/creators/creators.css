@@ -157,12 +157,6 @@ h1, h2, h3, h4, p, ul, ol, figure { margin: 0; }
 .dark .field-msg.bad { color: #FF8A8E; }
 .dark .field-msg.good { color: #4FD69A; }
 
-/* ---------- prototype note ---------- */
-.proto { position: fixed; left: 12px; bottom: 12px; z-index: 90; pointer-events: none; display: inline-flex; align-items: center; gap: 8px; max-width: calc(100vw - 24px);
-  padding: 6px 12px; border-radius: 999px; background: rgba(11, 11, 15, .86); color: #EDEDF2; font-size: 12px; font-weight: 550; box-shadow: var(--sh-2); }
-.proto span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.proto i { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); flex: none; }
-
 /* ---------- modal, sheet, toast ---------- */
 .overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px; background: rgba(11, 11, 15, .45); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); opacity: 0; transition: opacity .2s; }
 .overlay.open { opacity: 1; }

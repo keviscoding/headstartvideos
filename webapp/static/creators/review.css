@@ -3,7 +3,6 @@
    the notes become a bottom sheet and everything works by touch. Change notes use the accent, "keep" notes green. */
 
 .rv { height: 100dvh; overflow: hidden; --keep: var(--green); --keep-soft: var(--green-soft); --pad: 20px; }
-body.rv-on .proto { display: none; }
 
 /* bar */
 .rv-bar { height: 60px; gap: 12px; border-bottom: 1px solid var(--line); background: var(--bg); }

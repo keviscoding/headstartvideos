@@ -311,8 +311,6 @@ body.app { min-height: 100dvh; background: var(--bg); }
 .qr ol { margin: 0; padding-left: 20px; color: var(--ink-2); display: grid; gap: 8px; font-size: 15px; }
 @media (max-width: 480px) { .qr { grid-template-columns: minmax(0, 1fr); justify-items: center; } }
 
-body.app .proto { left: auto; right: 12px; }
-
 /* v3: two looks side by side, and real frames beside what the edit added */
 .styles.two { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 440px; }
 .rlist .th { flex: none; width: 34px; height: 60px; border-radius: 7px; overflow: hidden; background: var(--dark); box-shadow: 0 0 0 1px var(--line); }
