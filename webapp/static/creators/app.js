@@ -32,8 +32,28 @@
   // The example link is one we really learned (creators.learn, 2026-10-29): these are its measured numbers.
   var EXAMPLE = { url: "https://www.youtube.com/watch?v=aXwgg5Tj5Nc", learned: "Learned: 3.2 cuts per 10 s · 4.6 words/s · punch-ins up to 2.45×" };
   function styleLabel() {
-    if (S.refs.length) { var r = S.refs[0]; return (r.handle ? r.handle + "'s style" : r.title ? "the example Short's style" : "your " + r.platform + "'s style") + (S.refs.length > 1 ? " + " + (S.refs.length - 1) + " more" : ""); }
+    if (S.refs.length) {
+      var r = S.refs[0], who = r.author || r.handle;
+      return (who ? who + "'s style" : r.title ? "the example Short's style" : "the " + r.platform + "'s style") + (S.refs.length > 1 ? " + " + (S.refs.length - 1) + " more" : "");
+    }
     return (STYLES[S.style] || STYLES.house).name;
+  }
+  // A pasted Reel's real picture and creator, from the server (owner's Loom 2026-10-30, P1-21: "I would like if the
+  // preview comes up here, rather than a basic color gradient thing"). Without the backend, the plain card.
+  function refThumb(r, cls) {
+    var glyph = { tiktok: "p-tiktok", instagram: "p-instagram", youtube: "p-youtube" }[r.kind] || "i-link";
+    return '<span class="' + cls + (r.thumb ? "" : r.loading ? " loading" : " plain") + '">' +
+      (r.thumb ? '<img src="' + esc(r.thumb) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : r.loading ? "" : ICON(glyph)) + "</span>";
+  }
+  function previewRef(r) {
+    var H = window.CRHosted;
+    if (!H || !H.on || !H.preview || r.previewed) return;
+    r.loading = true;
+    H.preview(r.url).then(function (d) {
+      r.loading = false; r.previewed = true;
+      if (d) { if (d.thumb) r.thumb = d.thumb; r.author = d.author || r.author; r.title = r.title || d.title; if (!r.handle && d.handle) r.handle = "@" + d.handle; }
+      save(); drawRefs(); if (stepNow === 5) startState();
+    });
   }
 
   // ---------- toast + modals ----------
@@ -144,6 +164,7 @@
     if (S.freeLeft <= 0) return openPlans("You've used your 2 free Reels. Every plan keeps everything you've seen.");
     if (S.clip && S.clip.url && !S.clip.sample) URL.revokeObjectURL(S.clip.url);
     S.flow = "new"; S.refs = []; S.house = false; S.clip = null; CRApp.file = null;
+    if (o.reuse) S.clip = { name: o.reuse.name || "Your take", url: o.reuse.url, reuse: o.reuse.key, dur: o.reuse.seconds || 0 };
     S.style = o.paste ? null : o.look || lastLook() || null;
     save(); rv.pause(); refState("", "");
     go(o.step === 5 && S.style ? "step-5" : "step-4");
@@ -258,6 +279,7 @@
     if (S.refs.length >= 3) { refState("bad", "Three is plenty. Remove one to add another."); return; }
     if (learned) r.learned = learned;
     S.refs.push(r); S.style = null; S.house = false; save();
+    previewRef(r);
     refInput.value = ""; refState("good", S.refs.length < 3 ? "Added. Add up to " + (3 - S.refs.length) + " more of theirs for a closer match." : "Added. That's the most we use.");
     drawRefs(); styleState(); preview(4);
   }
@@ -274,13 +296,15 @@
   $("#ref-example").addEventListener("click", function () { var r = window.CRReel.parse(EXAMPLE.url); r.title = "Fast talking-head Short (example)"; addRef(r, EXAMPLE.learned); });
   function drawRefs() {
     var box = $("#refs");
+    S.refs.forEach(previewRef);                       // links added before a reload, or on the landing page
     box.innerHTML = S.refs.map(function (r, k) {
-      var th = r.thumb ? '<img src="' + esc(r.thumb) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : (r.kind === "tiktok" ? "" : "");
-      return '<div class="ref"><span class="thumb ' + r.kind + '">' + th + "</span>" +
-        '<span class="info"><b>' + esc(r.title || r.handle || r.platform) + "</b>" +
-        "<span>" + esc(r.platform + " · " + r.url.replace(/^https?:\/\/(www\.)?/, "")) + "</span>" +
+      var name = r.author || r.handle || (r.loading ? "Getting its preview…" : r.platform);
+      var sub = r.author || r.handle ? r.platform + (r.title && !r.learned ? " · “" + r.title + "”" : "") : r.platform + " · " + r.url.replace(/^https?:\/\/(www\.)?/, "");
+      return '<div class="ref">' + refThumb(r, "thumb " + r.kind) +
+        '<span class="info"><b>' + esc(name) + "</b>" +
+        "<span>" + esc(sub) + "</span>" +
         '<span class="' + (r.learned ? "learned" : "") + '">' + esc(r.learned || "We'll learn its cuts, captions and sound when you start") + "</span></span>" +
-        '<button type="button" class="rm" data-rm="' + k + '" aria-label="Remove ' + esc(r.handle || r.platform) + ' link">' + ICON("i-x") + "</button></div>";
+        '<button type="button" class="rm" data-rm="' + k + '" aria-label="Remove ' + esc(r.author || r.handle || r.platform) + ' link">' + ICON("i-x") + "</button></div>";
     }).join("");
     $$(".rm svg", box).forEach(function (s) { s.setAttribute("width", "16"); s.setAttribute("height", "16"); });
     $("#ref-count").textContent = S.refs.length ? S.refs.length + " of 3 links" : "";
@@ -338,9 +362,9 @@
     $("#drop").hidden = !!c;
     if (!c) { slot.innerHTML = ""; return; }
     var cls = c.error ? "bad" : c.warn ? "warn" : "";
-    var note = c.error || c.warn || (c.sample ? "Our sample: one take, straight to camera" : "Ready to edit");
+    var note = c.error || c.warn || (c.sample ? "Our sample: one take, straight to camera" : c.reuse ? "Your take from before: no upload needed" : "Ready to edit");
     slot.innerHTML = '<div class="file-card ' + cls + '"><span class="fthumb">' +
-      (c.sample ? '<img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.jpg" alt="">' : '<video muted playsinline preload="metadata" src="' + esc(c.url) + '#t=0.5"></video>') + "</span>" +
+      (c.sample ? '<img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.jpg" alt="">' : c.url ? '<video muted playsinline preload="metadata" src="' + esc(c.url) + '#t=0.5"></video>' : ICON("i-film")) + "</span>" +
       '<span class="fi"><b>' + esc(c.name) + "</b><span>" + [c.dur ? fmt(c.dur) : null, c.w ? c.w + "×" + c.h : null, c.size ? (c.size / 1048576).toFixed(c.size > 1e8 ? 0 : 1) + " MB" : null].filter(Boolean).join(" · ") + "</span>" +
       '<span class="note">' + esc(note) + "</span></span>" +
       '<button type="button" class="btn btn-sm btn-ghost" id="file-change">Change</button></div>';
@@ -356,7 +380,8 @@
     var st = !S.refs.length && STYLES[S.style];
     $("#look-chip").hidden = !(S.refs.length || S.style || S.house);
     $("#look-chip-t").textContent = styleLabel();
-    $("#look-chip-th").innerHTML = st && st.poster ? '<img src="' + esc(st.poster) + '" alt="">' : ICON(S.refs.length ? "i-link" : "i-sparkles");
+    $("#look-chip-th").innerHTML = S.refs.length ? refThumb(S.refs[0], "rthumb") : st && st.poster ? '<img src="' + esc(st.poster) + '" alt="">' : ICON("i-sparkles");
+    $("#look-chip").classList.toggle("is-ref", !!S.refs.length);
     var eta = window.CRHosted && window.CRHosted.on && window.CRHosted.eta ? window.CRHosted.eta() : "About 2 minutes"; // real edits: measured
     $("#start-hint").textContent = ok ? eta + " · in " + styleLabel() : eta;
   }
@@ -594,6 +619,10 @@
   $$("[data-ba]").forEach(function (b) { b.addEventListener("click", function () { if (b.dataset.ba !== mode) setMode(b.dataset.ba); }); });
   $("#rs-dl").addEventListener("click", function () { toast(window.CRHosted && window.CRHosted.on ? "Downloading your Reel." : "Downloading your Reel (prototype: a 720p preview file)."); if (!S.heard) { clearTimeout(heardTimer); heardTimer = setTimeout(openHeard, 1500); } });
   $("#rs-again").addEventListener("click", function () { newReel(); });   // straight to the look, then the upload
+  $("#rs-relook").addEventListener("click", function () {                 // the same take, in another look
+    var H = window.CRHosted, j = H && H.on && H.job, r = j && j.result;
+    newReel(j && j.take_key ? { reuse: { key: j.take_key, name: j.take_name, url: r && r.take_url, seconds: r && r.summary && r.summary.take_seconds } } : {});
+  });
   // tweak chat
   var msgs = $("#rs-msgs");
   function say(who, html) { var m = document.createElement("div"); m.className = "msg " + who; m.innerHTML = html; msgs.appendChild(m); msgs.scrollTop = msgs.scrollHeight; return m; }

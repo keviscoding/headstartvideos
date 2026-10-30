@@ -39,8 +39,16 @@ FREE_EDITS = 2
 MAX_TAKE_BYTES = 2 * 1024 ** 3            # 5 min of 4K phone video is ~1.9 GB
 MAX_CLIP_BYTES = 500 * 1024 ** 2
 MAX_CLIPS = 10
-REEL_LINK = re.compile(r"https?://((www|m|vm|vt)\.)?(tiktok\.com/|instagram\.com/(reel|reels|p)/|youtube\.com/(shorts/|watch\?)"
+REEL_LINK = re.compile(r"https?://((www|m|vm|vt)\.)?(tiktok\.com/|instagram\.com/([A-Za-z0-9._]{1,30}/)?(reel|reels|p)/"
+                       r"|youtube\.com/(shorts/|watch\?)"
                        r"|youtu\.be/)\S+$")              # what creators.learn.fetch (yt-dlp) can open
+# The creator's own profile, for B-roll from their latest posts (owner's Loom 2026-10-30, P1-23 / P2-01). TikTok
+# profiles list and download from our Fly machines with yt-dlp; Instagram answers them 429 / "require_login" (tested
+# from sjc, 2026-10-30), so Instagram profiles go through Scrape Creators (SCRAPECREATORS_API_KEY, the owner's key:
+# listed in 14 s, files fetched on the machine) and are refused plainly when that key isn't set.
+TIKTOK_PROFILE = re.compile(r"(?:https?://)?(?:(?:www|m)\.)?tiktok\.com/@([A-Za-z0-9._]{2,40})/?(?:\?\S*)?$", re.I)
+INSTAGRAM_PROFILE = re.compile(r"(?:https?://)?(?:www\.)?instagram\.com/(?!reels?/|p/|tv/|stories/)([A-Za-z0-9._]{1,30})/?"
+                               r"(?:\?\S*)?$", re.I)
 UPLOAD_TYPES = {"video/mp4": ".mp4", "video/quicktime": ".mov", "video/x-m4v": ".m4v", "video/webm": ".webm"}
 LINK_SECONDS = 7 * 86400                  # the Reel's download link
 # A review round's files (creators/web/REVIEW.md): frames and drawings as PNG, voice notes as webm/m4a.
@@ -128,15 +136,28 @@ def view(j: dict) -> dict:
                   "take_url": signed_get(j["take_key"], 6 * 3600),
                   "seconds": r.get("seconds"), "review": r.get("review"), "summary": r.get("summary") or {},
                   "changes": r.get("changes"), "rendered": r.get("rendered", True)}
-    style = ((j.get("result") or {}).get("summary") or {}).get("style") or {}     # a style learned from Reel links
+    style = learned_style(j)
+    progress = 1.0 if j["status"] == "done" else float(j.get("progress") or 0)
+    if j["status"] in LIVE and j.get("started_at"):                 # an active stage fills with its usual time
+        progress = max(progress, store.progress_of(j.get("stages") or [], time.time()))
     return {"id": j["id"], "look": j["look"], "look_name": style.get("name") or LOOK_NAMES.get(j["look"], j["look"]),
-            "refs": j.get("refs") or [], "status": j["status"],
-            "stage": j["stage"], "stages": j["stages"], "progress": j["progress"] if j["status"] != "done" else 1.0,
-            "take_name": j.get("take_name") or "", "free": bool(j.get("free")), "result": result,
+            "style_name": style.get("name") or "", "style_error": style.get("error") or "",
+            "refs": j.get("refs") or [], "profile": j.get("profile") or "", "status": j["status"],
+            "expected_s": expected_s(j, typical_minutes()),
+            "stage": j["stage"], "stages": j["stages"], "progress": round(progress, 3),
+            "take_name": j.get("take_name") or "", "take_key": j.get("take_key") or "",    # theirs: "Try another look"
+            "free": bool(j.get("free")), "result": result,
             "kind": j.get("kind") or "edit", "parent": j.get("parent") or "",
             "in_line": store.ahead_of(j) + 1 if j["status"] == "queued" and not j.get("machine_id") else 0,
             "error": j.get("error") or "", "created_at": j["created_at"], "started_at": j.get("started_at"),
             "ended_at": j.get("ended_at")}
+
+
+def learned_style(j: dict) -> dict:
+    """The style learned from the job's pasted Reels: in the finished summary, or recorded by the worker as soon as it
+    learned it (store.set_style), so the editing screen names it while the edit runs."""
+    r = j.get("result") or {}
+    return (r.get("summary") or {}).get("style") or r.get("style") or {}
 
 
 def check_alive(j: dict) -> dict:
@@ -172,16 +193,41 @@ def typical_minutes() -> int:
     return int(_env("CREATORS_TYPICAL_MINUTES", "7") or 7)
 
 
-def minutes_left(j: dict, typical: int) -> int | None:
-    """The same estimate the editing screen shows: from the job's own pace once it's far enough in."""
+STYLE_S = 90                              # learning a pasted Reel's style first (Fly: 1-3 min; cached ones are instant)
+# The stages' weights don't track time early on (music and B-roll finish fast, the render is half the wait), so an
+# early pace promises too little time; it's trusted only from here (the render well under way).
+PACE_FROM = 0.6
+
+
+def expected_s(j: dict, typical: int) -> float:
+    """How long this edit usually takes on our machines: the typical edit, plus learning a style when it has Reel
+    links whose style isn't learned yet."""
+    learning = bool(j.get("refs")) and (j.get("kind") or "edit") == "edit" and not learned_style(j).get("name")
+    return typical * 60 + (STYLE_S if learning else 0)
+
+
+def eta(j: dict, typical: int) -> tuple[int | None, str]:
+    """(minutes left, note) for a running edit, as the editing screen and the home say it. The usual time left,
+    unless the job's own pace (late in the edit) says it's ahead; past the usual time it never adds minutes back:
+    "almost" (done soon),
+    then "late" (taking a little longer than usual). The page also holds the lowest minutes it showed."""
     if j["status"] not in LIVE:
-        return None
+        return None, ""
+    total = expected_s(j, typical)
     if not j.get("started_at"):
-        return typical
+        return max(1, round(total / 60)), ""
     elapsed = max(0.0, time.time() - float(j["started_at"]))
-    p = float(j.get("progress") or 0)
-    left = elapsed / p - elapsed if p > 0.12 else typical * 60 - elapsed
-    return max(1, round(left / 60))
+    p = max(float(j.get("progress") or 0), store.progress_of(j.get("stages") or [], time.time()))
+    left = total - elapsed
+    if p >= PACE_FROM:                        # the job's own pace, once the render is under way and it's ahead
+        left = min(left, elapsed / p - elapsed)
+    if left > 50:
+        return max(1, round(left / 60)), ""
+    return None, "almost" if elapsed < total * 1.25 else "late"
+
+
+def minutes_left(j: dict, typical: int) -> int | None:
+    return eta(j, typical)[0]
 
 
 def _stem(name: str) -> str:
@@ -209,7 +255,8 @@ def project_view(chain: list[dict], typical: int) -> dict:
         or _stem(first.get("take_name") or "") or "Your Reel"
     learned = next((s for s in (((j.get("result") or {}).get("summary") or {}).get("style") for j in reversed(done))
                     if s and s.get("name")), {})                 # a style learned from Reel links (view() says it too)
-    look_name = learned.get("name") or (not done and _ref_style(latest.get("refs") or [])) \
+    look_name = learned.get("name") or (not done and (learned_style(latest).get("name")
+                                                      or _ref_style(latest.get("refs") or []))) \
         or LOOK_NAMES.get(latest["look"], latest["look"])
     live = latest["status"] in LIVE
     in_line = store.ahead_of(latest) + 1 if latest["status"] == "queued" and not latest.get("machine_id") else 0
@@ -222,7 +269,8 @@ def project_view(chain: list[dict], typical: int) -> dict:
            "look": latest["look"], "look_name": look_name,
            "state": state, "status": latest["status"], "kind": latest.get("kind") or "edit",
            "progress": 1.0 if latest["status"] == "done" else float(latest.get("progress") or 0),
-           "in_line": in_line, "minutes_left": minutes_left(latest, typical), "notify": bool(latest.get("notify")),
+           "in_line": in_line, "minutes_left": minutes_left(latest, typical), "eta_note": eta(latest, typical)[1],
+           "notify": bool(latest.get("notify")),
            "error": (latest.get("error") or "") if state == "failed" else "",
            "version": version, "ready_version": number[shown["id"]] if shown else 0,
            "versions": [{"id": j["id"], "n": number[j["id"]], "status": j["status"], "kind": j.get("kind") or "edit",
@@ -300,7 +348,8 @@ def _dispatch_loop():
 INJECT = ("DATABASE_URL", "SPACES_KEY", "SPACES_SECRET", "SPACES_BUCKET", "SPACES_REGION", "SPACES_ENDPOINT",
           "SPACES_CDN_ENDPOINT", "GEMINI_API_KEY", "GEMINI_STYLE_MODEL", "RESEND_KEY", "FROM_EMAIL", "SENTRY_DSN",
           "CREATORS_PREFIX", "CR_PUBLIC_URL", "ADMIN_EMAILS", "CREATORS_RENDER_WORKERS", "CREATORS_FLY_CPU_KIND",
-          "CREATORS_FLY_CPUS", "CREATORS_FLY_MEMORY_MB")
+          "CREATORS_FLY_CPUS", "CREATORS_FLY_MEMORY_MB",
+          "SCRAPECREATORS_API_KEY", "SCRAPECREATORS_CREDIT_USD")   # Instagram profiles' posts (creators.hosted.profile)
 
 
 def machine_env(job_id: str) -> dict[str, str]:
@@ -400,6 +449,7 @@ class JobRequest(BaseModel):
     look: str = Field(max_length=40)
     broll_keys: list[str] = Field(default_factory=list, max_length=MAX_CLIPS)
     refs: list[str] = Field(default_factory=list, max_length=3)      # Reel links: the edit learns their style first
+    profile: str = Field(default="", max_length=300)                  # their TikTok profile, for B-roll from their posts
     email: bool = True
 
 
@@ -414,6 +464,194 @@ class NotifyRequest(BaseModel):
 
 class RenameRequest(BaseModel):
     title: str = Field(default="", max_length=200)
+
+
+def scrape_key() -> str:
+    return _env("SCRAPECREATORS_API_KEY")
+
+
+def profile_kinds() -> list[str]:
+    """The profile links our edit machines can open for B-roll."""
+    return ["tiktok", "instagram"] if scrape_key() else ["tiktok"]
+
+
+def profile_link(raw: str) -> str:
+    """The creator's profile link as the edit machine opens it ("" for none). Raises a 400 the app shows as it is."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    m = TIKTOK_PROFILE.match(raw)
+    if m:
+        return f"https://www.tiktok.com/@{m.group(1)}"
+    m = INSTAGRAM_PROFILE.match(raw)
+    if m and "instagram" in profile_kinds():
+        return f"https://www.instagram.com/{m.group(1)}"
+    if m:
+        raise HTTPException(400, "Instagram profiles are coming soon: Instagram doesn't let our edit machines open "
+                                 "them yet. Paste your TikTok profile, or add your own clips.")
+    raise HTTPException(400, "That isn't a TikTok or Instagram profile link. It looks like tiktok.com/@yourname or "
+                             "instagram.com/yourname." if scrape_key() else
+                        "That isn't a TikTok profile link. It looks like tiktok.com/@yourname.")
+
+
+# ── a pasted Reel's preview: its picture and whose it is (owner's Loom 2026-10-30, P1-21 / P1-22) ────────────────
+# One short request to the platform (3 s at most), never yt-dlp or a download on this server. TikTok's oEmbed no
+# longer carries the cover or the author (2026-10-30), so TikTok and Instagram are read from the Reel's own page;
+# YouTube from its oEmbed. The picture comes back small and inline, so the page never hotlinks a signed CDN URL that
+# expires or refuses other sites. Anything that fails gives the plain card ("thumb": "").
+
+PREVIEW_TIMEOUT = (2.0, 3.0)
+PREVIEW_IMG_HOSTS = ("tiktokcdn.com", "tiktokcdn-us.com", "tiktokcdn-eu.com", "ibyteimg.com", "ytimg.com",
+                     "cdninstagram.com", "fbcdn.net")
+BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 "
+              "Safari/537.36")
+SHARE_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+_previews: dict[str, tuple[float, dict]] = {}      # a small per-process cache; nothing relies on it (2 web instances)
+
+
+def _meta(html: str, name: str) -> str:
+    import html as H
+    m = re.search(r'<meta[^>]+(?:property|name)="' + re.escape(name) + r'"[^>]+content="([^"]*)"', html) or \
+        re.search(r'<meta[^>]+content="([^"]*)"[^>]+(?:property|name)="' + re.escape(name) + r'"', html)
+    return H.unescape(m.group(1)).strip() if m else ""
+
+
+def _thumb(url: str) -> str:
+    """The picture as a small portrait JPEG data URL (a landscape card is cropped to its middle), or ""."""
+    import base64
+    import io
+    from urllib.parse import urlparse
+
+    import requests
+    from PIL import Image
+
+    host = (urlparse(url).hostname or "").lower()
+    if not url.startswith("https://") or not any(host == h or host.endswith("." + h) for h in PREVIEW_IMG_HOSTS):
+        return ""
+    r = requests.get(url, timeout=PREVIEW_TIMEOUT, headers={"User-Agent": BROWSER_UA})
+    data = r.content if r.ok and r.headers.get("Content-Type", "image/").startswith("image/") else b""
+    if not data or len(data) > 3 * 1024 ** 2:
+        return ""
+    im = Image.open(io.BytesIO(data)).convert("RGB")
+    w, h = im.size
+    if w > h * 0.8:                                       # landscape or square: the middle, 3:4
+        cw = int(h * 0.75)
+        im = im.crop(((w - cw) // 2, 0, (w - cw) // 2 + cw, h))
+    im.thumbnail((240, 320))
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=78)
+    return "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
+
+
+SCRAPE_CALLS = [0]                                # Scrape Creators calls this process made (a credit each)
+
+
+def _scrape_preview(kind: str, url: str, out: dict) -> list[str]:
+    """Fill the author, handle and title from Scrape Creators when the Reel's own page gave nothing (Instagram rate-
+    limits datacenter addresses). Returns candidate pictures. Only on a miss, so it costs few credits."""
+    import requests
+    path = "/v1/instagram/post" if kind == "instagram" else "/v2/tiktok/video"
+    try:
+        SCRAPE_CALLS[0] += 1
+        r = requests.get("https://api.scrapecreators.com" + path, params={"url": url}, timeout=(2.0, 6.0),
+                         headers={"x-api-key": scrape_key()})
+        d = r.json() if r.status_code == 200 else {}
+    except Exception as e:                                # noqa: BLE001
+        print(f"[creators] reel preview via Scrape Creators ({kind}): {type(e).__name__}")
+        return []
+    if kind == "instagram":
+        m = ((d.get("data") or {}).get("xdt_shortcode_media")) or {}
+        owner = m.get("owner") or {}
+        cap = (((m.get("edge_media_to_caption") or {}).get("edges") or [{}])[0].get("node") or {}).get("text") or ""
+        out.update(author=out["author"] or str(owner.get("full_name") or owner.get("username") or ""),
+                   handle=out["handle"] or str(owner.get("username") or ""), title=out["title"] or str(cap))
+        return [x for x in (m.get("thumbnail_src"), m.get("display_url")) if x]
+    a = d.get("aweme_detail") or {}
+    au, v = a.get("author") or {}, a.get("video") or {}
+    out.update(author=out["author"] or str(au.get("nickname") or ""), handle=out["handle"] or str(au.get("unique_id") or ""),
+               title=out["title"] or str(a.get("desc") or ""))
+    return [u for f in ("cover", "origin_cover") for u in ((v.get(f) or {}).get("url_list") or [])][:4]
+
+
+def reel_preview(url: str) -> dict:
+    """{"url", "platform", "author", "handle", "title", "thumb"} for a pasted Reel link; empty fields when the
+    platform didn't say."""
+    import json as J
+
+    import requests
+
+    url = (url or "").strip()
+    hit = _previews.get(url)
+    if hit and time.time() - hit[0] < 6 * 3600:
+        return hit[1]
+    kind = "tiktok" if "tiktok.com" in url else "instagram" if "instagram.com" in url else "youtube"
+    out = {"url": url, "platform": {"tiktok": "TikTok", "instagram": "Instagram Reel"}.get(kind, "YouTube Short"),
+           "author": "", "handle": "", "title": "", "thumb": ""}
+    pic = ""
+    try:
+        if kind == "youtube":
+            vid = re.search(r"(?:shorts/|v=|youtu\.be/)([A-Za-z0-9_-]{6,20})", url)
+            if vid:
+                r = requests.get("https://www.youtube.com/oembed", timeout=PREVIEW_TIMEOUT,
+                                 params={"url": f"https://www.youtube.com/watch?v={vid.group(1)}", "format": "json"})
+                d = r.json() if r.ok else {}
+                out.update(author=str(d.get("author_name") or ""), title=str(d.get("title") or ""))
+                h = re.search(r"/@([A-Za-z0-9._-]+)", str(d.get("author_url") or ""))
+                out["handle"] = h.group(1) if h else ""
+                pic = str(d.get("thumbnail_url") or "")
+        elif kind == "tiktok":
+            r = requests.get(url, timeout=PREVIEW_TIMEOUT, headers={"User-Agent": BROWSER_UA})
+            m = re.search(r'<script[^>]*id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>', r.text, re.S) \
+                if r.ok else None
+            item = {}
+            if m:
+                scope = J.loads(m.group(1)).get("__DEFAULT_SCOPE__") or {}
+                item = ((scope.get("webapp.video-detail") or {}).get("itemInfo") or {}).get("itemStruct") or {}
+            if item:
+                a, v = item.get("author") or {}, item.get("video") or {}
+                out.update(author=str(a.get("nickname") or ""), handle=str(a.get("uniqueId") or ""),
+                           title=str(item.get("desc") or ""))
+                pic = str(v.get("cover") or v.get("originCover") or "")
+            else:                                         # the share card a link preview gets
+                r = requests.get(url, timeout=PREVIEW_TIMEOUT, headers={"User-Agent": SHARE_UA})
+                page = r.text if r.ok else ""
+                out["author"] = _meta(page, "og:title").replace("TikTok · ", "").replace("TikTok", "").strip(" ·")
+                pic = _meta(page, "og:image")
+            h = re.search(r"/@([A-Za-z0-9._]+)", url)
+            out["handle"] = out["handle"] or (h.group(1) if h else "")
+        else:
+            code = re.search(r"instagram\.com/(?:[A-Za-z0-9._]+/)?(?:reel|reels|p)/([A-Za-z0-9_-]{5,40})", url)
+            if code:
+                r = requests.get(f"https://www.instagram.com/reel/{code.group(1)}/", timeout=PREVIEW_TIMEOUT,
+                                 headers={"User-Agent": SHARE_UA})
+                page = r.text if r.ok else ""
+                title = _meta(page, "og:title")                    # 'Dylan Mouzakki on Instagram: "…"'
+                out["author"] = title.split(" on Instagram", 1)[0].strip() if " on Instagram" in title else ""
+                h = re.search(r"instagram\.com/([A-Za-z0-9._]+)/(?:reel|p)/", _meta(page, "og:url")) or \
+                    re.search(r" - ([A-Za-z0-9._]+) on ", _meta(page, "og:description"))
+                out["handle"] = h.group(1) if h else ""
+                cap = re.search(r':\s*"(.*)', title, re.S)
+                out["title"] = cap.group(1).rstrip('"').strip() if cap else ""
+                pic = _meta(page, "og:image")
+    except Exception as e:                                # noqa: BLE001 - a preview is a nicety: the plain card
+        print(f"[creators] reel preview ({kind}): {type(e).__name__}")
+    pics = [pic] if pic else []
+    if kind != "youtube" and not (out["author"] and pic) and scrape_key():
+        pics += _scrape_preview(kind, url, out)       # the platform turned us away: Scrape Creators (a credit)
+    for candidate in pics:
+        try:
+            out["thumb"] = _thumb(candidate)
+        except Exception as e:                            # noqa: BLE001 - a format we can't read (HEIC): the next
+            print(f"[creators] reel preview picture ({kind}): {type(e).__name__}")
+        if out["thumb"]:
+            break
+    out["title"] = re.sub(r"\s+", " ", out["title"]).strip()[:120]
+    out["author"], out["handle"] = out["author"][:60], out["handle"][:40]
+    if out["author"] or out["thumb"]:
+        if len(_previews) > 500:
+            _previews.clear()
+        _previews[url] = (time.time(), out)
+    return out
 
 
 def make_router(current_user) -> APIRouter:
@@ -439,7 +677,7 @@ def make_router(current_user) -> APIRouter:
     def get_config():
         return {"hosted": hosted_on(), "google_client_id": _env("GOOGLE_CLIENT_ID"), "max_seconds": MAX_SECONDS,
                 "looks": [{"key": k, "name": v} for k, v in LOOK_NAMES.items()], "free_edits": FREE_EDITS,
-                "phone_required": phone_required(), "max_clips": MAX_CLIPS,
+                "phone_required": phone_required(), "max_clips": MAX_CLIPS, "profiles": profile_kinds(),
                 # what the app promises at "Start": measured on the edit machines (handoffs/creators-hosted.md)
                 "typical_minutes": typical_minutes()}
 
@@ -475,6 +713,7 @@ def make_router(current_user) -> APIRouter:
         refs = [r.strip() for r in req.refs if r.strip()]
         if any(len(r) > 300 or not REEL_LINK.match(r) for r in refs):
             raise HTTPException(400, "That link isn't a TikTok, Reel or Short. Open the video, tap Share, then Copy link.")
+        profile = profile_link(req.profile)
         take = _own_key(user["id"], req.take_key)
         clips = [_own_key(user["id"], k) for k in req.broll_keys]
         head = _head(take)
@@ -496,13 +735,25 @@ def make_router(current_user) -> APIRouter:
         if not admin and _today_count() >= cap:
             raise HTTPException(503, "We're at today's limit for free edits. Try again tomorrow.")
         name = req.take_name or take.rsplit("/", 1)[-1]
-        j = store.create(user["id"], req.look, take, name, clips, free=not admin, notify=req.email, refs=refs)
+        j = store.create(user["id"], req.look, take, name, clips, free=not admin, notify=req.email, refs=refs,
+                         profile=profile)
         if store.running_count() < max_running() and store.take_slot(j["id"]):
             launch(j["id"])                          # a free slot: its machine starts now; else it waits in line
         j = store.get(j["id"])
         if j["status"] == "failed":
             raise HTTPException(503, "We couldn't start an edit machine. Try again in a minute.")
         return view(j)
+
+    @router.get("/reel-preview")
+    def get_reel_preview(url: str = "", user=Depends(current_user)):
+        """A pasted Reel's picture and creator, for the link's row and the upload's "Editing in" row. Signed-in
+        only; a plain `def`, so its one short request runs in a worker thread, never on the event loop."""
+        if not user:
+            raise HTTPException(401, "Sign in to continue.")
+        url = url.strip()
+        if len(url) > 300 or not REEL_LINK.match(url):
+            raise HTTPException(400, "That isn't a TikTok, Reel or Short link.")
+        return reel_preview(url)
 
     @router.get("/jobs")
     def get_jobs(user=Depends(need_user)):

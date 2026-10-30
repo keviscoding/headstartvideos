@@ -107,6 +107,7 @@
   }
   function showHostedBits() {
     $("#own-clips").hidden = false;
+    restoreProfile();
     var home = $("#ed-home"); if (home) home.hidden = false;
     $$('a.brand[href="index.html"]').forEach(function (a) { a.setAttribute("href", "#home"); });   // signed in: the logo is home
     ["#use-sample", '[data-open="qr"]', '[data-open="drive"]'].forEach(function (s) { var el = $(s); if (el) el.hidden = true; });
@@ -144,36 +145,144 @@
     toast("Sign in with your email below."); $("#email").focus();
     return true;
   };
+  // The emailed code (owner's Loom 2026-10-30, P1-01/02: the big purple button was "Send a new code", he tapped it
+  // and the code he was typing stopped working). Once a code is out: the email is fixed, ONE primary full-width
+  // "Sign in" (Enter, or the sixth digit, submits too), and "Send a new code" is a quiet link that waits out a
+  // cooldown and asks before it replaces a code that's being typed (a new code ends the old one).
+  var sent = null, cool = null;
+  var RESEND_S = window.CR_RESEND_S || 30;
+  function codeMsg(t, kind) { var m = $("#email-msg"); m.className = "field-msg" + (kind ? " " + kind : ""); m.textContent = t; }
+  function sendCode(email) {
+    var btn = $("#email-btn");
+    btn.disabled = true;
+    return api("/api/auth/send-code", { method: "POST", body: { email: email } }).then(function () {
+      sent = email; showCodeStep(email); return true;
+    }).catch(function (e) { codeMsg(e.message, "bad"); return false; })
+      .then(function (ok) { btn.disabled = false; return ok; });
+  }
+  function cooldown() {
+    var link = $("#code-resend"), left = RESEND_S;
+    clearInterval(cool);
+    var tick = function () {
+      if (!link.isConnected) return clearInterval(cool);
+      link.disabled = left > 0; delete link.dataset.armed;
+      link.textContent = left > 0 ? "Send a new code in 0:" + String(left).padStart(2, "0") : "Send a new code";
+      if (left-- <= 0) clearInterval(cool);
+    };
+    tick(); cool = setInterval(tick, 1000);
+  }
+  function showCodeStep(email) {
+    var input = $("#email"), form = $("#email-form");
+    input.readOnly = true; input.classList.add("is-sent");
+    $("#email-btn").hidden = true;
+    codeMsg("We sent a 6-digit code to " + email + ".", "good");
+    var box = $("#code-box");
+    if (!box) {
+      box = document.createElement("div"); box.className = "code-box"; box.id = "code-box";
+      box.innerHTML = '<label class="sr-only" for="code">The 6-digit code from the email</label>' +
+        '<input class="text-input code-input" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" enterkeyhint="go">' +
+        '<button type="button" class="btn btn-lg btn-block" id="code-btn">Sign in</button>' +
+        '<div class="code-links"><button type="button" class="btn-text muted" id="code-resend" disabled>Send a new code</button>' +
+        '<button type="button" class="btn-text muted" id="code-change">Use another email</button></div>';
+      form.appendChild(box);
+      var code = $("#code");
+      code.addEventListener("input", function () {
+        var v = code.value.replace(/\D/g, "").slice(0, 6);
+        if (v !== code.value) code.value = v;
+        if (v.length === 6 && !$("#code-btn").disabled) verify();     // the sixth digit signs in, as on every phone
+      });
+      code.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); verify(); } });
+      $("#code-btn").addEventListener("click", verify);
+      $("#code-resend").addEventListener("click", function () {
+        var link = this;
+        if ($("#code").value && !link.dataset.armed) {               // a code is being typed: ask first
+          link.dataset.armed = "1"; link.textContent = "Tap again to send a new code";
+          codeMsg("A new code replaces the one in your email. Tap again to send it.", "");
+          setTimeout(function () { if (link.dataset.armed && !link.disabled) { delete link.dataset.armed; link.textContent = "Send a new code"; } }, 6000);
+          return;
+        }
+        link.disabled = true;
+        sendCode(sent).then(function (ok) {
+          if (!ok) { link.disabled = false; return; }
+          $("#code").value = ""; codeMsg("We sent a new code to " + sent + ". Use the newest one.", "good");
+          $("#code").focus(); cooldown();
+        });
+      });
+      $("#code-change").addEventListener("click", function () {
+        sent = null; clearInterval(cool); box.remove();
+        input.readOnly = false; input.classList.remove("is-sent"); $("#email-btn").hidden = false;
+        codeMsg("", ""); input.focus(); input.select();
+      });
+    }
+    cooldown();
+    $("#code").focus();
+  }
+  function verify() {
+    var code = $("#code").value.trim(), btn = $("#code-btn");
+    if (!/^\d{4,8}$/.test(code)) { codeMsg("Enter the 6-digit code from the email.", "bad"); $("#code").focus(); return; }
+    if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = "Signing in…";
+    api("/api/auth/verify", { method: "POST", body: { email: sent, code: code } }).then(signedIn).catch(function (e) {
+      codeMsg(e.status === 400 ? "That code didn't work. Check the newest email from us and try again." : e.message, "bad");
+      $("#code").select();
+    }).then(function () { btn.disabled = false; btn.textContent = "Sign in"; });
+  }
   H.email = function (email) {
     if (!H.hosted) return false;
-    var msg = $("#email-msg"), btn = $("#email-btn");
-    btn.disabled = true;
-    api("/api/auth/send-code", { method: "POST", body: { email: email } }).then(function () {
-      msg.className = "field-msg good"; msg.textContent = "We sent a 6-digit code to " + email + ".";
-      var row = $("#code-row");
-      if (!row) {
-        row = document.createElement("div"); row.className = "code-row"; row.id = "code-row";
-        row.innerHTML = '<label class="sr-only" for="code">Code</label><input class="text-input" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"><button type="button" class="btn" id="code-btn">Sign in</button>';
-        msg.parentNode.insertBefore(row, msg.nextSibling);
-        var go = function () {
-          var code = $("#code").value.trim();
-          if (!/^\d{4,8}$/.test(code)) { msg.className = "field-msg bad"; msg.textContent = "Enter the code from the email."; return; }
-          $("#code-btn").disabled = true;
-          api("/api/auth/verify", { method: "POST", body: { email: email, code: code } }).then(signedIn).catch(function (e) {
-            msg.className = "field-msg bad"; msg.textContent = e.status === 400 ? "That code didn't work. Check it, or send a new one." : e.message;
-          }).then(function () { $("#code-btn").disabled = false; });
-        };
-        $("#code-btn").addEventListener("click", go);
-        $("#code").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); go(); } });
-      }
-      $("#code").focus();
-      btn.textContent = "Send a new code";
-    }).catch(function (e) { msg.className = "field-msg bad"; msg.textContent = e.message; })
-      .then(function () { btn.disabled = false; });
+    if (sent && sent === email && $("#code")) { verify(); return true; }   // Enter in the (fixed) email field signs in
+    sendCode(email);
     return true;
   };
 
-  // ---------- step 5: your own B-roll ----------
+  // ---------- step 5: B-roll is our job (owner's Loom 2026-10-30, P1-23 / P2-01) ----------
+  // We find it (stock on their words); their profile adds shots from their latest posts; their own clips stay
+  // optional. Our edit machines open TikTok profiles themselves; Instagram turns them away (tested 2026-10-30), so
+  // Instagram profiles work only through Scrape Creators (config.profiles says whether it's switched on), and the
+  // field says so instead of taking a link that would quietly do nothing.
+  var PROFILE_KEY = "cr-creators-profile";
+  function profileOf(raw) {
+    var v = String(raw || "").trim();
+    if (!v) return { kind: "" };
+    var m = v.match(/^(?:https?:\/\/)?(?:(?:www|m)\.)?tiktok\.com\/@([A-Za-z0-9._]{2,40})\/?(?:\?\S*)?$/i);
+    if (m) return { kind: "tiktok", url: "https://www.tiktok.com/@" + m[1], handle: "@" + m[1] };
+    if (/tiktok\.com\/@[\w.]+\/(video|photo)\//i.test(v) || /instagram\.com\/(?:[\w.]+\/)?(reel|reels|p)\//i.test(v)) return { kind: "video" };
+    m = v.match(/^(?:https?:\/\/)?(?:www\.)?instagram\.com\/([A-Za-z0-9._]{1,30})\/?(?:\?\S*)?$/i);
+    if (m) return { kind: "instagram", url: "https://www.instagram.com/" + m[1], handle: "@" + m[1] };
+    if (/^@?[A-Za-z0-9._]{2,30}$/.test(v)) return { kind: "handle" };
+    return { kind: "bad" };
+  }
+  function profileState() {
+    var input = $("#profile-input"); if (!input) return { kind: "" };
+    var r = profileOf(input.value), msg = $("#profile-msg"), field = $("#profile-field"), ig = igOn();
+    if (r.kind === "instagram" && ig) r.ok = true;
+    if (r.kind === "tiktok") r.ok = true;
+    input.placeholder = ig ? "tiktok.com/@you or instagram.com/you" : "tiktok.com/@yourname";
+    var looking = ["good", "We'll look through " + (r.handle || "your") + "'s latest posts for shots that fit your words."];
+    var say = {
+      "": ["", ig ? "We cut in shots from your latest TikTok or Instagram posts where they fit." : "TikTok works now: we cut shots from your latest posts. Instagram profiles are coming soon."],
+      tiktok: looking,
+      instagram: ig ? looking : ["warn", "Instagram profiles are coming soon: Instagram doesn't let our edit machines open them yet. Paste your TikTok, or add clips below."],
+      video: ["bad", "That's one video. Paste your profile instead, like tiktok.com/@yourname."],
+      handle: ["bad", ig ? "Paste the whole link, like tiktok.com/@yourname or instagram.com/yourname." : "Paste the whole link, like tiktok.com/@yourname, so we know it's your TikTok."],
+      bad: ["bad", ig ? "That isn't a TikTok or Instagram profile link." : "That isn't a TikTok profile link. It looks like tiktok.com/@yourname."]
+    }[r.kind];
+    msg.className = "field-msg" + (say[0] ? " " + say[0] : ""); msg.textContent = say[1];
+    field.classList.toggle("good", !!r.ok); field.classList.toggle("bad", ["video", "handle", "bad"].indexOf(r.kind) >= 0);
+    return r;
+  }
+  document.addEventListener("input", function (e) { if (e.target.id === "profile-input") profileState(); });
+  document.addEventListener("change", function (e) {
+    if (e.target.id !== "profile-input") return;
+    var r = profileState();
+    try { if (r.ok) localStorage.setItem(PROFILE_KEY, r.url); else if (!e.target.value.trim()) localStorage.removeItem(PROFILE_KEY); } catch (err) {}
+  });
+  function igOn() { return !!(H.config && (H.config.profiles || []).indexOf("instagram") >= 0); }
+  function restoreProfile() {
+    var input = $("#profile-input"); if (!input || input.value) return;
+    try { input.value = localStorage.getItem(PROFILE_KEY) || ""; } catch (e) {}
+    profileState();
+  }
+
   function drawOwn() {
     var A = app();
     $("#own-list").innerHTML = own.map(function (f, k) {
@@ -231,7 +340,18 @@
     return energetic[S.topic] ? "energy" : "story";
   }
   // how long a real edit takes, measured on our machines (the server's typical_minutes), never the prototype's guess
-  H.eta = function () { var m = (H.config && H.config.typical_minutes) || 7; return "About " + m + " minutes"; };
+  H.eta = function () {
+    var m = (H.config && H.config.typical_minutes) || 7, S = app() && app().S;
+    if (S && S.refs && S.refs.length && !(S.refs[0].url === app().example)) m += 1.5;   // learning their style first
+    return "About " + Math.round(m) + " minutes";
+  };
+  // ---------- a pasted Reel's picture and creator (GET /api/creators/reel-preview), asked once per link ----------
+  var previews = {};
+  H.preview = function (url) {
+    if (!H.on || !url) return Promise.resolve(null);
+    if (!previews[url]) previews[url] = api("/api/creators/reel-preview?url=" + encodeURIComponent(url)).catch(function () { delete previews[url]; return null; });
+    return previews[url];
+  };
   function lookName(key) { var l = (H.config.looks || []).filter(function (x) { return x.key === key; })[0]; return l ? l.name : key; }
   function putFile(file, kind, onProgress) {
     return api("/api/creators/uploads", { method: "POST", body: { kind: kind, name: file.name, size: file.size, type: file.type || "video/mp4" } })
@@ -259,28 +379,32 @@
     if (!H.me || !H.me.user) { toast("Create your free account first: it takes a few seconds."); A.go("signup"); return true; }
     if (!H.me.allowed) { toast("Real edits open soon. We'll email you when they do."); return true; }
     if (uploading) return true;
-    var file = A.file;
-    if (!file || S.clip.sample) { toast("Pick your own clip to edit."); return true; }
+    var file = A.file, reuse = S.clip && S.clip.reuse;            // reuse: "Try another look" on a take already up
+    if (!reuse && (!file || S.clip.sample)) { toast("Pick your own clip to edit."); return true; }
     if (S.freeLeft <= 0) { A.openPlans("You've used your 2 free edits. Every plan keeps everything you've seen."); return true; }
     if (H.config.phone_required && !H.me.phone_verified && S.freeLeft > 0 && S.freeLeft < 99) { askPhone(); return true; }
+    var prof = profileState();
+    if (["video", "handle", "bad"].indexOf(prof.kind) >= 0) { toast("Fix the profile link, or clear it: it's optional."); $("#profile-input").focus(); return true; }
     var look = lookFor(S);
     if (S.style && S.style !== look) toast("That look isn't ready for real edits yet, so this one is in " + lookName(look) + ".");
     uploading = true;
     var btn = $("#start-edit"); btn.disabled = true;
-    var total = file.size + own.reduce(function (a, f) { return a + f.size; }, 0), done = 0;
-    H.upload = { name: file.name, frac: 0 };
+    var total = Math.max(1, (reuse ? 0 : file.size) + own.reduce(function (a, f) { return a + f.size; }, 0)), done = 0;
+    var takeName = reuse ? S.clip.name : file.name;
+    H.upload = { name: takeName, frac: 0 };
     function homeTick() { if (window.CRHome) window.CRHome.upload(); }
     function prog(base) { return function (loaded) { var p = (base + loaded) / total; upState("Uploading… " + Math.round(p * 100) + "%", p); if (H.upload) { H.upload.frac = p; homeTick(); } }; }
     upState("Uploading… 0%", 0);
-    putFile(file, "take", prog(0)).then(function (takeKey) {
-      done += file.size;
+    (reuse ? Promise.resolve(reuse) : putFile(file, "take", prog(0))).then(function (takeKey) {
+      done += reuse ? 0 : file.size;
       var keys = [];
       return own.reduce(function (chain, f) {
         return chain.then(function () { return putFile(f, "broll", prog(done)).then(function (k) { keys.push(k); done += f.size; }); });
       }, Promise.resolve()).then(function () {
         upState("Starting your edit…", 1);
         var refs = (S.refs || []).map(function (r) { return r.url; }).slice(0, 3);
-        return api("/api/creators/jobs", { method: "POST", body: { take_key: takeKey, take_name: file.name, look: look, broll_keys: keys, refs: refs, email: true } });
+        return api("/api/creators/jobs", { method: "POST", body: { take_key: takeKey, take_name: takeName, look: look, broll_keys: keys, refs: refs,
+          profile: prof.ok ? prof.url : "", email: true } });
       });
     }).then(function (job) {
       H.job = job; saveJob(job.id); own = []; drawOwn();
@@ -299,20 +423,73 @@
   };
 
   // ---------- editing: the job's real stages ----------
+  // Honest progress (owner's Loom 2026-10-30, P2-03/04: the badge went 7 … 10 … 2, 3, 4 min and he asked whether it
+  // was rendering on his laptop). The minutes come from the usual time on our machines (plus learning a style), the
+  // job's own pace only when it's ahead, and they never go back up: past the usual time it says "Almost done", then
+  // "Taking a little longer than usual". The page says plainly that it runs on our servers.
+  var etaHeld = { id: null, min: Infinity, note: "" };
   function etaText(j) {
     if (j.in_line) return j.in_line > 1 ? "In line: " + (j.in_line - 1) + " ahead of you" : "Next in line";
     if (!j.started_at) return j.status === "queued" || j.status === "starting" ? "Starting an edit machine" : "Working";
-    var elapsed = Date.now() / 1000 - j.started_at, p = j.progress || 0;
-    var left = p > 0.12 ? elapsed / p - elapsed : ((H.config && H.config.typical_minutes) || 7) * 60 - elapsed;
-    return left > 50 ? "About " + Math.max(1, Math.round(left / 60)) + " min left" : "Almost done";
+    if (etaHeld.id !== j.id) etaHeld = { id: j.id, min: Infinity, note: "" };
+    var total = j.expected_s || ((H.config && H.config.typical_minutes) || 7) * 60;
+    var elapsed = Math.max(0, Date.now() / 1000 - j.started_at), p = j.progress || 0;
+    var left = total - elapsed;
+    if (p >= 0.6) left = Math.min(left, elapsed / p - elapsed);   // the pace, only once the render is well under way
+    var note = left > 50 ? "" : elapsed < total * 1.25 ? "almost" : "late";
+    if (etaHeld.note === "late" || (etaHeld.note === "almost" && note === "")) note = etaHeld.note === "late" ? "late" : "almost";
+    if (note) { etaHeld.note = note; return note === "late" ? "Taking a little longer than usual" : "Almost done"; }
+    etaHeld.min = Math.min(etaHeld.min, Math.max(1, Math.round(left / 60)));   // never more minutes than we said
+    return "About " + etaHeld.min + " min left";
+  }
+  function clock(sec) { sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0"); }
+  // The style this edit is in (P2-02: it said "In Cinematic story" while it learned the pasted Reel's style).
+  function refInfo(j) {
+    var A = app(), url = (j.refs || [])[0];
+    var mine = url && ((A.S.refs || []).filter(function (r) { return r.url === url; })[0]);
+    return mine && (mine.author || mine.thumb) ? mine : (url && H.previewed && H.previewed[url]) || null;
+  }
+  function learning(j) {
+    var w = (j.stages || [])[0] || {};
+    return !!((j.refs || []).length && !j.style_name && !j.style_error && ["queued", "starting", "running"].indexOf(j.status) >= 0 &&
+              w.state !== "done" && (!w.state || w.state === "todo" || w.detail === "Learning their style"));
+  }
+  function drawRef(j) {
+    var A = app(), box = $("#ed-ref"), url = (j.refs || [])[0];
+    if (!url) { box.hidden = true; return; }
+    var r = refInfo(j) || {}, name = r.author || (r.handle ? r.handle.replace(/^@?/, "@") : "");
+    var kind = /tiktok/.test(url) ? "tiktok" : /instagram/.test(url) ? "instagram" : "youtube";
+    box.hidden = false;
+    box.innerHTML = '<span class="rthumb ' + kind + '">' + (r.thumb ? '<img src="' + A.esc(r.thumb) + '" alt="" referrerpolicy="no-referrer">' : A.ICON("p-" + kind)) + "</span>" +
+      '<span class="rtx"><b>' + A.esc(j.style_name || (name ? name + "'s style" : "The Reel you pasted")) + "</b>" +
+      "<span>" + A.esc(j.style_name ? "Learned from " + (name || "the Reel you pasted") + (r.platform ? "'s " + r.platform : "") :
+        j.style_error ? "We couldn't open it, so this one is in " + j.look_name :
+        "From " + (r.platform ? "their " + r.platform : "the Reel you pasted") + ": its cuts, captions and sound") + "</span></span>";
+    if (!refInfo(j) && H.on) H.preview(url).then(function (d) { if (!d) return; H.previewed = H.previewed || {}; H.previewed[url] = d; if (H.job && H.job.id === j.id && A.current() === "editing") drawRef(H.job); });
   }
   function drawEditing(j) {
     var A = app();
-    var lead = $("#ed-lead");
-    lead.innerHTML = "In <b>" + A.esc(j.look_name) + "</b>. You can close this tab: we'll email you.";
-    $("#stages").innerHTML = (j.stages || []).map(function (s) {
-      return '<div class="stg ' + (s.state === "done" ? "done" : s.state === "active" ? "active" : "") + '"><span class="st">' + A.ICON("i-check") +
-        "</span><div><b>" + A.esc(s.label) + '</b><div class="d">' + A.esc(s.detail || (s.state === "active" ? "Working on it…" : "")) + "</div></div></div>";
+    var lead = $("#ed-lead"), refs = (j.refs || []).length, r = refInfo(j) || {};
+    var who = r.author || (r.handle ? r.handle.replace(/^@?/, "@") : "");
+    lead.innerHTML = refs && learning(j) ? "Learning " + (who ? "<b>" + A.esc(who) + "</b>'s style" : "the style of the Reel you pasted") + ", then cutting yours the same way."
+      : refs && j.style_name ? "In <b>" + A.esc(j.style_name) + "</b>, learned from the Reel you pasted."
+      : refs && j.style_error ? "In <b>" + A.esc(j.look_name) + "</b>: we couldn't open the Reel you pasted."
+      : "In <b>" + A.esc(j.look_name) + "</b>.";
+    drawRef(j);
+    var now = Date.now() / 1000, stages = (j.stages || []).slice();
+    if (refs) {                                     // learning their style is a step of its own, first
+      var lrn = learning(j), started = !!j.started_at;
+      stages = stages.map(function (s, k) { return k === 0 && lrn ? Object.assign({}, s, { state: "todo", detail: "" }) : s; });
+      stages.unshift({ key: "style", label: "Learning their style",
+        state: lrn ? (started ? "active" : "todo") : "done", at: lrn ? (stages[0] && stages[0].at) || j.started_at : null,
+        detail: lrn ? (who ? "From " + who + "'s Reel: its cuts, captions and sound" : "Its cuts, captions and sound")
+          : j.style_name ? "Learned: " + j.style_name : j.style_error ? "Couldn't open it: editing in " + j.look_name : "Learned" });
+    }
+    $("#stages").innerHTML = stages.map(function (s) {
+      var active = s.state === "active", d = s.detail || (active ? "Working on it…" : "");
+      var t = active && s.at && now - s.at > 15 ? '<span class="clk tnum"> · ' + clock(now - s.at) + "</span>" : "";
+      return '<div class="stg ' + (s.state === "done" ? "done" : active ? "active" : "") + '" data-key="' + A.esc(s.key || "") + '"><span class="st">' + A.ICON("i-check") +
+        "</span><div><b>" + A.esc(s.label) + '</b><div class="d">' + A.esc(d) + t + "</div></div></div>";
     }).join("");
     var pct = Math.round((j.progress || 0) * 100);
     $("#ed-bar i").style.width = pct + "%"; $("#ed-bar").setAttribute("aria-valuenow", pct); $("#ed-pct").textContent = pct + "%";
@@ -333,6 +510,7 @@
     if (A.S.clip && A.S.clip.url && !A.S.clip.sample) { v.removeAttribute("poster"); if (v.getAttribute("src") !== A.S.clip.url) v.src = A.S.clip.url; }
     else if (H.job && H.job.take_url) { v.removeAttribute("poster"); if (v.getAttribute("src") !== H.job.take_url) v.src = H.job.take_url; }
     $("#ed-tag").textContent = "Your raw take";
+    var where = $("#ed-where"); if (where) where.hidden = false;
     A.play(v);
     var id = (H.job && H.job.id) || savedJob();
     if (!id) { A.go("step-5"); return; }
@@ -370,6 +548,20 @@
     try { return !!(navigator.canShare && navigator.canShare({ files: [new File([new Blob()], "reel.mp4", { type: "video/mp4" })] })); }
     catch (e) { return false; }
   }
+  // A transcript span as a title (section H: "This 12 -minute video costs about $12 to make and"): whisper's split
+  // words joined, a dangling fragment after the last full stop dropped, and no trailing "and", "to", "the"…
+  // (webapp/creators_worker.py tidy_line does the same for new edits; this covers the ones made before it.)
+  var DANGLING = { and: 1, or: 1, but: 1, so: 1, because: 1, the: 1, a: 1, an: 1, of: 1, to: 1, "with": 1, my: 1, your: 1, our: 1, their: 1, his: 1, her: 1, its: 1, "if": 1, than: 1 };
+  H.tidy = function (text) {
+    var t = String(text || "").replace(/\s+/g, " ").trim().replace(/(\w) -([A-Za-z])/g, "$1-$2").replace(/\s+([,.!?;:])/g, "$1");
+    var m, last = -1, re = /[.!?](?=\s)/g;
+    while ((m = re.exec(t))) last = m.index + 1;
+    if (last > 0 && !/[.!?]$/.test(t) && t.slice(last).trim().split(" ").length < 4 && t.slice(0, last).split(" ").length >= 2) t = t.slice(0, last);
+    var w = t.split(" ");
+    while (w.length > 3 && DANGLING[w[w.length - 1].toLowerCase().replace(/[,;:—-]+$/, "")]) w.pop();
+    return w.join(" ").replace(/[,;:—\- ]+$/, "");
+  };
+  function secs(t) { var p = String(t || "0").split(":"); return p.length > 1 ? (+p[0] || 0) * 60 + (+p[1] || 0) : +p[0] || 0; }
   H.result = function () {
     var A = app(), id = (H.job && H.job.id) || savedJob();
     if (!H.job || H.job.status !== "done") {
@@ -380,7 +572,8 @@
     }
     var j = H.job, r = j.result, s = r.summary || {}, rev = r.review || {}, fmt = A.fmt, esc = A.esc;
     $("#rs-free").textContent = A.S.freeLeft >= 99 ? "Team account" : A.S.freeLeft > 0 ? A.S.freeLeft + " of 2 free edits left" : "Free edits used";
-    $("#rs-h").textContent = s.hook ? "“" + s.hook + "”" : s.title || "Your Reel is ready";
+    var hook = H.tidy(s.hook), title = H.tidy(s.title);
+    $("#rs-h").textContent = hook && hook.split(" ").length >= 3 ? "“" + hook + "”" : title || (hook ? "“" + hook + "”" : "Your Reel is ready");
     $("#rs-meta").textContent = fmt(r.seconds || 0) + " Reel" + (s.take_seconds ? " from a " + fmt(s.take_seconds) + " raw take" : "") + " · 1080×1920 · " + j.look_name;
     var rv = $("#rs-video");
     rv.poster = r.poster_url || ""; rv.src = r.video_url; rv.currentTime = 0;
@@ -388,28 +581,56 @@
     $("#rs-tag-t").textContent = "Your Reel · v" + (A.S.version || 1); $("#rs-tag").classList.add("good");
     var dl = $("#rs-dl"); dl.href = r.download_url || r.video_url; dl.removeAttribute("download");
     var sh = $("#rs-share"); sh.hidden = !shareable();
-    // the checks: loudness, and what Gemini said when it watched it back
-    var loud = s.loudness || {}, checks = [];
-    if (loud.lufs !== undefined) checks.push([loud.lufs.toFixed(1).replace("-", "−"), "LUFS, in range for TikTok and Reels"]);
-    if (loud.true_peak !== undefined) checks.push([loud.true_peak.toFixed(1).replace("-", "−") + " dB", "peak, so phones never distort it"]);
-    if (rev.score !== undefined) checks.push([rev.score + "/10", "when we watched it back" + (rev.verdict ? ": " + rev.verdict : "")]);
-    checks.push([String(s.fixed || 0), (s.fixed === 1 ? "note" : "notes") + " fixed before you saw it"]);
-    $("#rs-checks").innerHTML = checks.map(function (x) { return '<div class="ck"><b class="tnum"><i>' + A.ICON("i-check") + "</i>" + esc(x[0]) + "</b><span>" + esc(x[1]) + "</span></div>"; }).join("");
-    // "Passed" only when the watch-back watched it and says it's ready to post; otherwise say what happened, plainly
-    var watched = rev.score !== undefined && rev.score !== null;
+    // The checks, and an honest head (owner's Loom 2026-10-30, section H: "Ready, and watched back ✓" with green
+    // ticks sat over a 4/10 watch-back). Green only when the watch-back says it's ready to post; under 7 (or "redo")
+    // the page says the score, what it noticed, and offers notes or another look.
+    // The watch-back scores the first cut; when it had notes, one fix pass re-cut the Reel and nobody watched that
+    // version again. So the score is said as the first cut's, with how many things were changed since.
+    var watched = rev.score !== undefined && rev.score !== null, fixedN = s.fixed || 0;
     var ready = watched && (/^post$/i.test(rev.verdict || "") || rev.score >= 8);
+    var low = watched && (rev.score < 7 || /redo/i.test(rev.verdict || ""));
+    var loud = s.loudness || {}, checks = [];
+    if (loud.lufs !== undefined) checks.push([loud.lufs.toFixed(1).replace("-", "−"), "LUFS, in range for TikTok and Reels", "ok"]);
+    if (loud.true_peak !== undefined) checks.push([loud.true_peak.toFixed(1).replace("-", "−") + " dB", "peak, so phones never distort it", "ok"]);
+    if (watched) checks.push([rev.score + "/10", (fixedN && !ready ? "the first cut, " : "") + "when we watched it back" + (rev.verdict ? ": " + rev.verdict : ""), ready ? "ok" : low ? "bad" : "warn"]);
+    checks.push([String(s.fixed || 0), (s.fixed === 1 ? "note" : "notes") + " fixed before you saw it", "ok"]);
+    $("#rs-checks").innerHTML = checks.map(function (x) {
+      return '<div class="ck ' + x[2] + '"><b class="tnum"><i>' + A.ICON(x[2] === "ok" ? "i-check" : "i-alert") + "</i>" + esc(x[0]) + "</b><span>" + esc(x[1]) + "</span></div>";
+    }).join("");
     var panel = $("#rs-checks").closest(".panel"), head = panel.querySelector("h2 .pill");
-    if (head) { head.textContent = !watched ? "Checked" : ready ? (s.fixed ? "Fixed and passed" : "Passed") : "Notes below"; head.classList.toggle("ok", ready || !watched); }
+    if (head) { head.textContent = !watched ? "Checked" : ready ? (s.fixed ? "Fixed and passed" : "Passed") : low ? "Needs work" : "Worth a look"; head.className = "pill " + (ready || !watched ? "ok" : low ? "bad" : "warn"); }
     var sub = panel.querySelector(".sub2");
     if (sub) sub.textContent = watched ? "We watched the finished Reel back next to what you said." : "We checked its sound and length. The watch-back didn't answer in time on this one.";
-    var top = $(".res-head .pill"); if (top) top.lastChild.textContent = watched ? "Ready, and watched back" : "Ready";
+    var issues = ready ? [] : (rev.issues || []).filter(function (i) { return i && i.what; });
+    var il = $("#rs-issues");
+    il.hidden = !issues.length;
+    il.innerHTML = issues.length ? "<h3>" + (fixedN ? "What it pointed at in the first cut" : "What it noticed") + '</h3><ul class="notes">' + issues.slice(0, 4).map(function (i) {
+      return '<li><button type="button" class="tlink" data-seek="' + secs(i.t) + '"><span class="tchip">' + esc(i.t || "") + "</span>" + esc(i.what) + "</button></li>";
+    }).join("") + "</ul>" : "";
+    var top = $(".res-head .pill");
+    if (top) {
+      top.className = "pill " + (low && !fixedN ? "bad" : watched && !ready ? "warn" : "ok");
+      top.innerHTML = A.ICON(watched && !ready ? "i-alert" : "i-check") + "<span>" +
+        esc(!watched ? "Ready" : ready ? "Ready, and watched back" : low && fixedN ? "First cut scored " + rev.score + "/10 · " + fixedN + " fixed since"
+          : low ? "Watched back: " + rev.score + "/10, it needs work" : "Ready, with notes from the watch-back") + "</span>";
+      var ic = top.querySelector("svg"); if (ic) { ic.setAttribute("width", "14"); ic.setAttribute("height", "14"); }
+    }
+    var honest = $("#rs-honest");
+    honest.hidden = !low;
+    honest.classList.toggle("warn", !!fixedN);
+    if (low) {
+      $("#rs-honest-h").textContent = fixedN ? "Our watch-back scored the first cut " + rev.score + "/10" : "Our watch-back scored this " + rev.score + "/10";
+      $("#rs-honest-p").textContent = fixedN
+        ? "We changed " + fixedN + " thing" + (fixedN === 1 ? "" : "s") + " it pointed at before you saw this version, but we haven't watched it again. Check it before you post: if it isn't right, give notes or try another look."
+        : "It's yours to download, but we wouldn't post it as it is." + (issues.length ? " " + (issues.length > 1 ? "The biggest things it noticed are below." : "Here's what it noticed.") : "");
+    }
     // what's in it
     $("#rs-sound-sub").textContent = s.music ? "Made for this video, mixed under your voice." : s.take_music ? "Your take's own music, kept." : "Your voice, levelled and mastered.";
     $("#rs-sound").innerHTML = [s.music ? "An original music bed made for this edit. It dips every time you talk." : s.take_music ? "Your take already had music under your voice, so we kept it. Want ours instead? Say so in a note." : "No music this time. Want some? Say so in a note.",
       loud.lufs !== undefined ? "Your voice, levelled and mastered to " + loud.lufs.toFixed(1).replace("-", "−") + " LUFS." : "Your voice, levelled and mastered."]
       .map(function (n) { return "<li>" + esc(n) + "</li>"; }).join("");
     var beats = s.beats || [];
-    $("#rs-added").innerHTML = beats.map(function (b) { return '<li><button type="button" data-seek="' + b.t + '"><span class="tchip">' + fmt(b.t) + '</span><span class="kind">' + esc(b.kind) + '</span><span class="txt">' + esc(b.text) + "</span></button></li>"; }).join("");
+    $("#rs-added").innerHTML = beats.map(function (b) { return '<li><button type="button" data-seek="' + b.t + '"><span class="tchip">' + fmt(b.t) + '</span><span class="kind">' + esc(b.kind) + '</span><span class="txt">' + esc(b.kind === "Hook" ? H.tidy(b.text) : b.text) + "</span></button></li>"; }).join("");
     $("#rs-acount").textContent = beats.length;
     var sc = $("#rs-scrub"); $$(".mk", sc).forEach(function (m) { m.remove(); });
     beats.forEach(function (b) { if (!r.seconds) return; var m = document.createElement("span"); m.className = "mk"; m.style.left = (b.t / r.seconds * 100) + "%"; sc.appendChild(m); });
@@ -418,8 +639,7 @@
     if (s.punch_ins) notes.push(s.punch_ins + " punch-ins on the lines that land.");
     var by = (s.broll && s.broll.by_source) || {}, kinds = Object.keys(by);
     if (kinds.length) notes.push("B-roll on the words it shows: " + kinds.map(function (k) { return by[k] + " " + k; }).join(", ") + ".");
-    (rev.best || []).slice(0, 3).forEach(function (b) { notes.push("Works: " + b); });
-    if (!ready) (rev.issues || []).slice(0, 4).forEach(function (i) { notes.push("Noticed at " + i.t + ": " + i.what); });
+    (rev.best || []).slice(0, 3).forEach(function (b) { notes.push("Works: " + b); });   // what it noticed is in the check above
     $("#rs-notes").innerHTML = notes.map(function (n) { return "<li>" + esc(n) + "</li>"; }).join("");
     // prototype-only panels: the cutline needs the demo's word data, and the tweak chat isn't real yet
     [$("#rs-cutline"), $("#rs-form")].forEach(function (el) { var p = el && el.closest(".panel"); if (p) p.hidden = true; });
