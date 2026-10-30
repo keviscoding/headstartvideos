@@ -463,7 +463,7 @@
     box.innerHTML = '<span class="rthumb ' + kind + '">' + (r.thumb ? '<img src="' + A.esc(r.thumb) + '" alt="" referrerpolicy="no-referrer">' : A.ICON("p-" + kind)) + "</span>" +
       '<span class="rtx"><b>' + A.esc(j.style_name || (name ? name + "'s style" : "The Reel you pasted")) + "</b>" +
       "<span>" + A.esc(j.style_name ? "Learned from " + (name || "the Reel you pasted") + (r.platform ? "'s " + r.platform : "") :
-        j.style_error ? "We couldn't open it, so this one is in " + j.look_name :
+        j.style_error ? (/open/.test(j.style_error) ? "We couldn't open it" : "We couldn't learn it this time") + ", so this one is in " + j.look_name :
         "From " + (r.platform ? "their " + r.platform : "the Reel you pasted") + ": its cuts, captions and sound") + "</span></span>";
     if (!refInfo(j) && H.on) H.preview(url).then(function (d) { if (!d) return; H.previewed = H.previewed || {}; H.previewed[url] = d; if (H.job && H.job.id === j.id && A.current() === "editing") drawRef(H.job); });
   }
@@ -473,7 +473,7 @@
     var who = r.author || (r.handle ? r.handle.replace(/^@?/, "@") : "");
     lead.innerHTML = refs && learning(j) ? "Learning " + (who ? "<b>" + A.esc(who) + "</b>'s style" : "the style of the Reel you pasted") + ", then cutting yours the same way."
       : refs && j.style_name ? "In <b>" + A.esc(j.style_name) + "</b>, learned from the Reel you pasted."
-      : refs && j.style_error ? "In <b>" + A.esc(j.look_name) + "</b>: we couldn't open the Reel you pasted."
+      : refs && j.style_error ? "In <b>" + A.esc(j.look_name) + "</b>: " + (/open/.test(j.style_error) ? "we couldn't open the Reel you pasted." : "we couldn't learn that style this time.")
       : "In <b>" + A.esc(j.look_name) + "</b>.";
     drawRef(j);
     var now = Date.now() / 1000, stages = (j.stages || []).slice();
@@ -501,14 +501,20 @@
       $("#ed-retry").addEventListener("click", function () { saveJob(""); A.newReel({ look: j.look, step: 5 }); });
     } else if (err) err.remove();
   }
+  // the creator's own take under "Your raw take": the file they just picked, else the job's copy once it loads. After a
+  // reload the job comes a moment later, and until then the page's sample clip (someone else's Reel) must not play there.
+  function showTake(v) {
+    var A = app(), url = A.S.clip && A.S.clip.url && !A.S.clip.sample ? A.S.clip.url : H.job && H.job.take_url;
+    if (url) { v.removeAttribute("poster"); if (v.getAttribute("src") !== url) { v.src = url; A.play(v); } }
+    else if (/e_raw/.test(v.getAttribute("src") || "")) { v.removeAttribute("poster"); v.removeAttribute("src"); v.load(); }
+  }
   H.editing = function () {
     var A = app();
     clearTimeout(pollTimer);
     var t = $(".transcript"); if (t) t.hidden = true;
     var demo = $("#ed-demo"); if (demo) demo.hidden = true;
     var v = $("#ed-video");
-    if (A.S.clip && A.S.clip.url && !A.S.clip.sample) { v.removeAttribute("poster"); if (v.getAttribute("src") !== A.S.clip.url) v.src = A.S.clip.url; }
-    else if (H.job && H.job.take_url) { v.removeAttribute("poster"); if (v.getAttribute("src") !== H.job.take_url) v.src = H.job.take_url; }
+    showTake(v);
     $("#ed-tag").textContent = "Your raw take";
     var where = $("#ed-where"); if (where) where.hidden = false;
     A.play(v);
@@ -520,6 +526,7 @@
         H.job = j;
         if (A.current() !== "editing") return;
         drawEditing(j);
+        showTake($("#ed-video"));
         if (j.status === "done") { setTimeout(function () { if (A.current() === "editing") A.go("result"); }, 900); return; }
         if (j.status === "failed" || j.status === "cancelled") return;
         pollTimer = setTimeout(poll, 2500);
