@@ -102,15 +102,24 @@
     var h = (location.hash || "#signup").slice(1);
     var m = h.match(/^step-([1-5])$/);
     if (h === "start") h = "step-1", m = ["", "1"];
-    var name = m ? "onboard" : (screens[h] ? h : h === "signin" ? "signup" : "signup");
-    // a real edit's screens wait for hosted.js to know who's signed in (else the demo would flash in first)
-    if ((name === "result" || name === "editing" || name === "review") && window.CRHosted && window.CRHosted.ready && !window.CRHosted.settled) { window.CRHosted.ready.then(route); return; }
+    var dashView = h === "home" || h === "styles" ? h : null;   // the home (home.js): your Reels, and Styles
+    var name = m ? "onboard" : dashView ? "dash" : (screens[h] ? h : "signup");
+    var H = window.CRHosted;
+    // a real edit's screens, the sign-up and the home wait for hosted.js to know who's signed in (else the demo, or
+    // "Create your free account", would flash in first)
+    if (/^(result|editing|review|signup|dash)$/.test(name) && H && H.ready && !H.settled) { H.ready.then(route); return; }
+    if (H && H.hosted && H.me && H.me.user) {
+      // signed in: never the sign-up (Back from onboarding used to land on "Welcome back, log in"); the home once
+      // they've made a Reel, else onboarding
+      if (name === "signup" || (name === "dash" && !H.on)) { replace(H.on && H.hasReels() ? "home" : "step-1"); return; }
+    } else if (H && H.hosted && name === "dash") { replace("signup"); return; }
     if (name === "result" && !demo && !(window.CRHosted && window.CRHosted.on)) { loadDemo().then(route); return; }
     if (name === "review" && !demo) { loadDemo().then(route); return; }   // the review player reads the demo's data too
     if (current !== name) {
       Object.keys(screens).forEach(function (k) { screens[k].classList.toggle("on", k === name); });
       $$("video").forEach(function (v) { if (!screens[name].contains(v)) v.pause(); });
       if (current === "review" && window.CRReview) window.CRReview.leave();
+      if (current === "dash" && window.CRHome) window.CRHome.leave();
       current = name;
       window.scrollTo(0, 0);
     }
@@ -119,10 +128,27 @@
     if (name === "editing") startEditing();
     if (name === "result") enterResult();
     if (name === "review" && window.CRReview) window.CRReview.enter(demo);
+    if (name === "dash" && window.CRHome) window.CRHome.enter(dashView);
     $$("[data-screen].on video[data-auto]").forEach(play);
   }
   window.addEventListener("hashchange", route);
   function go(h) { if (location.hash === "#" + h) route(); else location.hash = h; }
+  function replace(h) { if (location.hash === "#" + h) route(); else location.replace("#" + h); }
+
+  // ---------- New Reel: from the home, the result or Styles, straight to the look then the upload ----------
+  // The profile questions (steps 1-3) are for the first Reel only. The last-used look comes pre-picked; Styles' "Use
+  // this look" and "Try again" skip to the upload with theirs.
+  function lastLook() { var H = window.CRHosted, l = H && H.list && H.list[0]; return (l && l.look) || S.lastLook || null; }
+  function newReel(o) {
+    o = o || {};
+    if (S.freeLeft <= 0) return openPlans("You've used your 2 free Reels. Every plan keeps everything you've seen.");
+    if (S.clip && S.clip.url && !S.clip.sample) URL.revokeObjectURL(S.clip.url);
+    S.flow = "new"; S.refs = []; S.house = false; S.clip = null; CRApp.file = null;
+    S.style = o.paste ? null : o.look || lastLook() || null;
+    save(); rv.pause(); refState("", "");
+    go(o.step === 5 && S.style ? "step-5" : "step-4");
+    if (o.paste) setTimeout(function () { refInput.focus({ preventScroll: true }); refInput.scrollIntoView({ block: "center" }); }, 80);
+  }
 
   // ---------- sign up ----------
   var signin = false;
@@ -156,21 +182,24 @@
   function setPressed(group, values) { $$(".tile, .style-tile", group).forEach(function (t) { t.setAttribute("aria-pressed", String(values.indexOf(t.dataset.v || t.dataset.style) >= 0)); }); }
   function showStep(n) {
     stepNow = n;
+    if (S.flow === "new" && n < 4) { S.flow = null; save(); }   // back into the questions: that's onboarding again
+    var nm = S.flow === "new";
     $$("[data-step]").forEach(function (s) { s.hidden = +s.dataset.step !== n; });
-    $("#ob-label").textContent = "Step " + n + " of 5";
+    $("#ob-split").classList.toggle("newflow", nm);
+    $("#ob-label").textContent = nm ? "New Reel · " + (n - 3) + " of 2" : "Step " + n + " of 5";
     $$("#ob-progress i").forEach(function (i, k) { i.classList.toggle("done", k < n); });
     setPressed($('[data-single="make"]'), [S.make]);
     setPressed($('[data-single="topic"]'), [S.topic]);
     setPressed($('[data-multi="platforms"]'), S.platforms);
     $("#faceless-note").hidden = S.make !== "faceless";
     if (n === 3) platState();
-    if (n === 4) { drawRefs(); styleState(); }
+    if (n === 4) { drawRefs(); styleState(); if (nm) showPicked(); }
     if (n === 5) { drawFile(); startState(); }
     preview(n);
     var h = $('[data-step="' + n + '"] .qtitle'); if (h) { h.setAttribute("tabindex", "-1"); h.focus({ preventScroll: true }); }
   }
   function next() { if (stepNow < 5) go("step-" + (stepNow + 1)); }
-  $$("[data-back]").forEach(function (b) { b.addEventListener("click", function () { history.length > 1 ? history.back() : go("step-" + Math.max(1, stepNow - 1)); }); });
+  $$("[data-back]").forEach(function (b) { b.addEventListener("click", function () { history.length > 1 ? history.back() : go(S.flow === "new" && stepNow === 4 ? "home" : "step-" + Math.max(1, stepNow - 1)); }); });
   $$("[data-skip]").forEach(function (b) { b.addEventListener("click", next); });
   $$("[data-next]").forEach(function (b) { b.addEventListener("click", next); });
 
@@ -238,6 +267,8 @@
     if (!v) { refState("bad", "Paste a link first."); refInput.focus(); return; }
     var r = window.CRReel.parse(v);
     if (!r) { refState("bad", "That isn't a TikTok, Reel or Short link. Open the video, tap Share, then Copy link."); refInput.focus(); return; }
+    var why = window.CRHosted && window.CRHosted.refProblem && window.CRHosted.refProblem(r);
+    if (why) { refState("bad", why); refInput.focus(); return; }
     addRef(r);
   });
   $("#ref-example").addEventListener("click", function () { var r = window.CRReel.parse(EXAMPLE.url); r.title = "Fast talking-head Short (example)"; addRef(r, EXAMPLE.learned); });
@@ -284,13 +315,17 @@
       stylesEl.appendChild(t); bindTile(t);
     });
     if (S.style && !STYLES[S.style]) { S.style = null; save(); }
-    styleState(); if (location.hash === "#step-4") preview(4);
+    styleState(); if (location.hash === "#step-4") { preview(4); if (S.flow === "new") showPicked(); }
   }).catch(function () {});
+  function showPicked() {   // the pre-picked look, scrolled into view inside the look board
+    var t = $('.style-tile[aria-pressed="true"]', stylesEl);
+    if (t) stylesEl.scrollTop += t.getBoundingClientRect().top - stylesEl.getBoundingClientRect().top - 8;
+  }
   function styleState() {
     $$(".style-tile", stylesEl).forEach(function (t) { t.setAttribute("aria-pressed", String(S.style === t.dataset.style)); });
     var b = $("#style-next"), ok = S.refs.length || S.style;
     b.disabled = !ok;
-    b.innerHTML = S.refs.length ? "Learn this style " + ICON("i-arrow") : S.style ? "Use " + esc(STYLES[S.style].name) + " " + ICON("i-arrow") : "Pick a look or paste a link";
+    b.innerHTML = S.refs.length ? "Learn this style " + ICON("i-arrow") : S.style ? "Use " + esc((STYLES[S.style] || { name: "this look" }).name) + " " + ICON("i-arrow") : "Pick a look or paste a link";
     var s = b.querySelector("svg"); if (s) { s.setAttribute("width", "18"); s.setAttribute("height", "18"); }
   }
   $("#style-next").addEventListener("click", next);
@@ -317,6 +352,11 @@
     b.disabled = !ok;
     b.innerHTML = !c ? "Choose a clip first" : c.error ? "Pick another clip" : (S.freeLeft > 0 ? "Start my free edit " : "Start my edit ") + ICON("i-arrow");
     var s = b.querySelector("svg"); if (s) { s.setAttribute("width", "18"); s.setAttribute("height", "18"); }
+    // the look this edit is in, with a way to change it (Submagic's upload shows its template the same way)
+    var st = !S.refs.length && STYLES[S.style];
+    $("#look-chip").hidden = !(S.refs.length || S.style || S.house);
+    $("#look-chip-t").textContent = styleLabel();
+    $("#look-chip-th").innerHTML = st && st.poster ? '<img src="' + esc(st.poster) + '" alt="">' : ICON(S.refs.length ? "i-link" : "i-sparkles");
     var eta = window.CRHosted && window.CRHosted.on && window.CRHosted.eta ? window.CRHosted.eta() : "About 2 minutes"; // real edits: measured
     $("#start-hint").textContent = ok ? eta + " · in " + styleLabel() : eta;
   }
@@ -339,6 +379,7 @@
     drawFile(); startState(); preview(5);
   }
   $("#file").addEventListener("change", function (e) { takeFile(e.target.files[0]); e.target.value = ""; });
+  $("#look-chip-change").addEventListener("click", function () { go("step-4"); });
   var drop = $("#drop");
   ["dragenter", "dragover"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); }); });
   ["dragleave", "drop"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); }); });
@@ -348,7 +389,7 @@
     if (!S.clip || S.clip.error) return;
     if (window.CRHosted && window.CRHosted.start()) return; // signed in: upload and start a real edit
     if (S.freeLeft <= 0) return openPlans("You've used your 2 free edits. Every plan keeps everything you've seen.");
-    S.freeLeft -= 1; S.version = 1; save();
+    S.freeLeft -= 1; S.version = 1; S.cut = 1; S.flow = null; S.lastLook = S.style || S.lastLook; S.demoAt = Date.now() / 1000; save();
     go("editing");
   });
 
@@ -552,7 +593,7 @@
   }
   $$("[data-ba]").forEach(function (b) { b.addEventListener("click", function () { if (b.dataset.ba !== mode) setMode(b.dataset.ba); }); });
   $("#rs-dl").addEventListener("click", function () { toast(window.CRHosted && window.CRHosted.on ? "Downloading your Reel." : "Downloading your Reel (prototype: a 720p preview file)."); if (!S.heard) { clearTimeout(heardTimer); heardTimer = setTimeout(openHeard, 1500); } });
-  $("#rs-again").addEventListener("click", function () { S.clip = null; save(); rv.pause(); go("step-5"); });
+  $("#rs-again").addEventListener("click", function () { newReel(); });   // straight to the look, then the upload
   // tweak chat
   var msgs = $("#rs-msgs");
   function say(who, html) { var m = document.createElement("div"); m.className = "msg " + who; m.innerHTML = html; msgs.appendChild(m); msgs.scrollTop = msgs.scrollHeight; return m; }
@@ -603,7 +644,7 @@
   });
 
   // what hosted.js (the real backend) needs from the prototype
-  var CRApp = window.CRApp = { S: S, save: save, go: go, toast: toast, openPlans: openPlans, styleLabel: styleLabel, STYLES: STYLES,
-    fmt: fmt, esc: esc, ICON: ICON, play: play, startState: startState, drawFile: drawFile, openModal: openModal, closeModal: closeModal, preview: function () { if (current === "onboard") preview(stepNow); }, current: function () { return current; }, file: null, cuts: CUTS, cut: cut };
+  var CRApp = window.CRApp = { S: S, save: save, go: go, replace: replace, newReel: newReel, toast: toast, openPlans: openPlans, styleLabel: styleLabel, STYLES: STYLES,
+    fmt: fmt, esc: esc, ICON: ICON, play: play, startState: startState, drawFile: drawFile, openModal: openModal, closeModal: closeModal, example: EXAMPLE.url, preview: function () { if (current === "onboard") preview(stepNow); }, current: function () { return current; }, file: null, cuts: CUTS, cut: cut };
   route();
 })();

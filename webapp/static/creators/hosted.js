@@ -41,9 +41,40 @@
       H.on = !!(me.user && me.allowed);
       var A = app();
       if (A && H.on) { A.S.freeLeft = me.free_left === null || me.free_left === undefined ? 99 : me.free_left; A.save(); }
+      if (H.on) H.loadProjects().catch(function () {});   // the home's list, fetched while the rest of the page loads
       return me;
     });
   }
+  H.refreshMe = loadMe;
+  // ---------- the home's projects (home.js): one per take, its notes rounds as versions ----------
+  var listing = null;
+  H.loadProjects = function () {
+    if (!H.on) return Promise.resolve([]);
+    if (!listing) listing = api("/api/creators/projects").then(function (d) { listing = null; H.list = d.projects || []; return H.list; },
+      function (e) { listing = null; throw e; });
+    return listing;
+  };
+  // has this creator made a Reel? (then they land on the home; first-timers go through onboarding)
+  H.hasReels = function () { return !!((H.me && H.me.jobs && H.me.jobs.length) || (H.list && H.list.length)); };
+  H.api = api;
+  // open one version of a project on a screen ("result", "review" or "editing"), as the creator's current edit
+  H.openJob = function (id, screen, version) {
+    var A = app();
+    return api("/api/creators/jobs/" + id).then(function (j) {
+      H.job = j; saveJob(j.id);
+      A.S.version = version || 1; A.S.cut = 1; A.save();
+      A.go(screen);
+    }).catch(function (e) { toast(e.message); });
+  };
+  H.forget = function (ids) { if (ids.indexOf(savedJob()) >= 0) { saveJob(""); H.job = null; } };
+  H.logout = function () {
+    return api("/api/auth/logout", { method: "POST" }).catch(function () {}).then(function () {
+      saveJob("");
+      try { sessionStorage.clear(); } catch (e) {}
+      location.hash = "signin";
+      location.reload();
+    });
+  };
   // only pages the site serves carry <meta name="cr-backend"> (publish.py adds it): the static preview never asks
   var backend = document.querySelector('meta[name="cr-backend"]');
   H.ready = (backend ? api("/api/creators/config") : Promise.reject(new Error("no backend"))).then(function (cfg) {
@@ -59,16 +90,16 @@
     if (!H.on || !id || H.job) return null;
     return api("/api/creators/jobs/" + id).then(function (j) { H.job = j; }).catch(function (e) { if (e.status === 404) saveJob(""); });
   }
+  // A signed-in creator is routed by app.js once this settles: the home when they've made a Reel (a running edit
+  // shows there, as "Now editing"), else onboarding. Never the sign-up.
   function setup() {
     mountGoogle();
     var A = app();
     if (!A) return;
     var running = (H.me.jobs || []).filter(function (j) { return ["queued", "starting", "running"].indexOf(j.status) >= 0; })[0];
-    var scr = A.current();
     if (H.on) {
       showHostedBits();
-      if (running) { H.job = running; saveJob(running.id); if (scr !== "editing") A.go("editing"); else H.editing(); return; }
-      if (scr === "signup") A.go(A.S.make ? "step-5" : "step-1");
+      if (running && location.hash === "#editing") { H.job = running; saveJob(running.id); }
       A.startState();
     } else if (H.me.user && !H.me.allowed) {
       toast("Real edits open soon. You can look around in the meantime.");
@@ -76,6 +107,8 @@
   }
   function showHostedBits() {
     $("#own-clips").hidden = false;
+    var home = $("#ed-home"); if (home) home.hidden = false;
+    $$('a.brand[href="index.html"]').forEach(function (a) { a.setAttribute("href", "#home"); });   // signed in: the logo is home
     ["#use-sample", '[data-open="qr"]', '[data-open="drive"]'].forEach(function (s) { var el = $(s); if (el) el.hidden = true; });
     var alt = $(".alt-row"); if (alt) alt.hidden = true;
     if (app()) app().preview();
@@ -102,7 +135,8 @@
       if (!me.allowed) { toast("You're signed in. Real edits open soon: we'll email you."); A.go("step-1"); return; }
       showHostedBits();
       toast("Signed in as " + me.user.email + ".");
-      A.go(A.S.make ? "step-5" : "step-1");
+      if (H.hasReels()) return A.replace("home");          // replace: Back never returns to the sign-in
+      A.replace(A.S.make ? "step-5" : "step-1");
     });
   }
   H.google = function () {
@@ -183,6 +217,13 @@
   }
 
   // ---------- start a real edit ----------
+  // Pasted Reels: the edit machine learns their style first. It can open TikTok and Instagram links; YouTube turns
+  // cloud machines away (tested 2026-10-30), so from YouTube only the example Short works (learned once, cached).
+  H.refProblem = function (r) {
+    var A = app();
+    return H.on && r && r.kind === "youtube" && !(A && r.url === A.example)
+      ? "YouTube doesn't let our editors open Shorts yet. Paste a TikTok or an Instagram Reel of theirs instead." : "";
+  };
   function lookFor(S) {
     var keys = (H.config.looks || []).map(function (l) { return l.key; });
     if (keys.indexOf(S.style) >= 0) return S.style;
@@ -227,7 +268,9 @@
     uploading = true;
     var btn = $("#start-edit"); btn.disabled = true;
     var total = file.size + own.reduce(function (a, f) { return a + f.size; }, 0), done = 0;
-    function prog(base) { return function (loaded) { var p = (base + loaded) / total; upState("Uploading… " + Math.round(p * 100) + "%", p); }; }
+    H.upload = { name: file.name, frac: 0 };
+    function homeTick() { if (window.CRHome) window.CRHome.upload(); }
+    function prog(base) { return function (loaded) { var p = (base + loaded) / total; upState("Uploading… " + Math.round(p * 100) + "%", p); if (H.upload) { H.upload.frac = p; homeTick(); } }; }
     upState("Uploading… 0%", 0);
     putFile(file, "take", prog(0)).then(function (takeKey) {
       done += file.size;
@@ -236,16 +279,20 @@
         return chain.then(function () { return putFile(f, "broll", prog(done)).then(function (k) { keys.push(k); done += f.size; }); });
       }, Promise.resolve()).then(function () {
         upState("Starting your edit…", 1);
-        return api("/api/creators/jobs", { method: "POST", body: { take_key: takeKey, take_name: file.name, look: look, broll_keys: keys, email: true } });
+        var refs = (S.refs || []).map(function (r) { return r.url; }).slice(0, 3);
+        return api("/api/creators/jobs", { method: "POST", body: { take_key: takeKey, take_name: file.name, look: look, broll_keys: keys, refs: refs, email: true } });
       });
     }).then(function (job) {
       H.job = job; saveJob(job.id); own = []; drawOwn();
-      upState("", 0);
+      upState("", 0); H.upload = null;
       if (job.free && S.freeLeft < 99) { S.freeLeft = Math.max(0, S.freeLeft - 1); A.save(); }
-      S.version = 1; A.save();
-      A.go("editing");
+      if (H.me && typeof H.me.free_left === "number" && job.free) H.me.free_left = Math.max(0, H.me.free_left - 1);
+      if (H.me && H.me.jobs) H.me.jobs.unshift(job);
+      S.version = 1; S.flow = null; S.lastLook = look; A.save();
+      if (A.current() === "onboard") A.go("editing");     // left for the home while it uploaded: stay there
+      else if (window.CRHome) window.CRHome.refresh();
     }).catch(function (e) {
-      upState("", 0); toast(e.message);
+      upState("", 0); H.upload = null; homeTick(); toast(e.message);
       if (e.status === 402) A.openPlans("You've used your 2 free edits. Every plan keeps everything you've seen.");
     }).then(function () { uploading = false; btn.disabled = false; A.startState(); });
     return true;
@@ -274,7 +321,7 @@
     if (j.status === "failed" || j.status === "cancelled") {
       if (!err) { err = document.createElement("div"); err.id = "ed-err"; err.className = "ed-err"; $("#stages").parentNode.insertBefore(err, $("#stages").nextSibling); }
       err.innerHTML = A.esc(j.error || "This edit stopped.") + '<br><button type="button" class="btn btn-sm" id="ed-retry">Try again</button>';
-      $("#ed-retry").addEventListener("click", function () { saveJob(""); A.go("step-5"); });
+      $("#ed-retry").addEventListener("click", function () { saveJob(""); A.newReel({ look: j.look, step: 5 }); });
     } else if (err) err.remove();
   }
   H.editing = function () {
@@ -338,7 +385,7 @@
     var rv = $("#rs-video");
     rv.poster = r.poster_url || ""; rv.src = r.video_url; rv.currentTime = 0;
     $$("[data-ba]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.ba === "after")); });
-    $("#rs-tag-t").textContent = "Your Reel · v1"; $("#rs-tag").classList.add("good");
+    $("#rs-tag-t").textContent = "Your Reel · v" + (A.S.version || 1); $("#rs-tag").classList.add("good");
     var dl = $("#rs-dl"); dl.href = r.download_url || r.video_url; dl.removeAttribute("download");
     var sh = $("#rs-share"); sh.hidden = !shareable();
     // the checks: loudness, and what Gemini said when it watched it back

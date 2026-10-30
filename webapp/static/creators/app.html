@@ -14,11 +14,13 @@
   <link rel="stylesheet" href="creators.css">
   <link rel="stylesheet" href="app.css">
   <link rel="stylesheet" href="review.css">
+  <link rel="stylesheet" href="home.css">
   <script defer src="reel-link.js"></script>
   <script defer src="plans.js"></script>
   <script defer src="cutline.js"></script>
   <script defer src="hosted.js"></script>
   <script defer src="app.js"></script>
+  <script defer src="home.js"></script>
   <script defer src="review.js"></script>
 </head>
 <body class="app">
@@ -62,6 +64,67 @@
         <p class="preview-caption"><b>Raw take to Reel in minutes.</b> Every edit gets its own music, B-roll on your words, designed type and a clean voice.</p>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- ================= HOME: your Reels, and Styles (home.js; big-frontier/dashboard-research.md) ================= -->
+<section class="screen-v" data-screen="dash" aria-label="Your Reels">
+  <div class="dash" id="dash" data-view="home">
+    <aside class="dash-side" aria-label="Menu">
+      <a class="brand" href="#home"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span></a>
+      <button type="button" class="btn btn-block side-new" data-new><svg width="18" height="18"><use href="icons.svg#i-plus"/></svg>New Reel</button>
+      <nav class="side-nav" aria-label="Main">
+        <a href="#home" data-nav="home"><svg width="20" height="20"><use href="icons.svg#i-house"/></svg>Home</a>
+        <a href="#styles" data-nav="styles"><svg width="20" height="20"><use href="icons.svg#i-sparkles"/></svg>Styles</a>
+      </nav>
+      <div class="side-foot">
+        <button type="button" class="left-pill side-left" data-left hidden><span data-left-t>2 free Reels left</span><b>Upgrade</b></button>
+        <button type="button" class="acct-btn" data-acct aria-haspopup="menu" aria-label="Account"><span class="avatar" data-avatar>C</span><span class="acct-mail" data-mail></span></button>
+      </div>
+    </aside>
+
+    <div class="dash-main">
+      <header class="dash-top">
+        <a class="brand" href="#home" aria-label="ChannelRecipe, your Reels"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span></a>
+        <div class="grow"></div>
+        <button type="button" class="left-pill" data-left hidden><span data-left-t>2 free Reels left</span></button>
+        <button type="button" class="avatar-btn" data-acct aria-haspopup="menu" aria-label="Account"><span class="avatar" data-avatar>C</span></button>
+      </header>
+
+      <div class="dash-view" data-view="home">
+        <section class="now" id="now" hidden aria-labelledby="now-h">
+          <h2 class="sec-h" id="now-h">Now editing</h2>
+          <div id="now-list"></div>
+        </section>
+        <section class="reels-sec" id="reels-sec" aria-labelledby="reels-h">
+          <h1 class="dash-h" id="reels-h">Your Reels</h1>
+          <div id="reels" aria-live="polite"></div>
+        </section>
+        <div class="empty" id="empty" hidden>
+          <span class="empty-ic"><svg width="26" height="26"><use href="icons.svg#i-film"/></svg></span>
+          <p>Your Reels will show up here.</p>
+          <button type="button" class="btn btn-lg" data-new><svg width="18" height="18"><use href="icons.svg#i-plus"/></svg>New Reel</button>
+        </div>
+      </div>
+
+      <div class="dash-view" data-view="styles" hidden>
+        <h1 class="dash-h">Styles</h1>
+        <p class="dash-sub">Pick a look for your next Reel. Each one is the same raw take, edited that way.</p>
+        <button type="button" class="learn-card" id="learn-card">
+          <span class="nic"><svg width="20" height="20"><use href="icons.svg#i-link"/></svg></span>
+          <span class="lc-tx"><b>Learn a style from a link</b><span>Paste a TikTok, Reel or Short you love. We cut your next Reel the same way.</span></span>
+          <svg class="lc-go" width="18" height="18"><use href="icons.svg#i-arrow"/></svg>
+        </button>
+        <h2 class="sec-h">Looks</h2>
+        <div class="look-grid" id="look-grid"></div>
+      </div>
+    </div>
+
+    <nav class="tabbar" aria-label="Main">
+      <a href="#home" data-nav="home"><svg width="22" height="22"><use href="icons.svg#i-house"/></svg><span>Home</span></a>
+      <button type="button" class="tab-new" data-new><span class="plus"><svg width="22" height="22"><use href="icons.svg#i-plus"/></svg></span><span>New Reel</span></button>
+      <a href="#styles" data-nav="styles"><svg width="22" height="22"><use href="icons.svg#i-sparkles"/></svg><span>Styles</span></a>
+    </nav>
   </div>
 </section>
 
@@ -166,6 +229,7 @@
         <h1 class="qtitle">Drop your raw clip</h1>
         <p class="qsub">Hold your phone upright and talk. Fluff a line? Say it again. We keep the best take.</p>
         <div class="qbody">
+          <div class="look-chip" id="look-chip" hidden><span class="lk-th" id="look-chip-th"></span><span class="lk-t">Editing in <b id="look-chip-t"></b></span><button type="button" class="btn-text" id="look-chip-change">Change</button></div>
           <label class="drop" id="drop">
             <input type="file" id="file" accept="video/*,.mov,.mp4,.m4v">
             <span class="ic"><svg><use href="icons.svg#i-upload"/></svg></span>
@@ -212,7 +276,7 @@
 
 <!-- ================= EDITING ================= -->
 <section class="screen-v dark" data-screen="editing" aria-labelledby="ed-h">
-  <div class="bar"><a class="brand" href="index.html"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span></a><div class="grow"></div><span class="pill"><span class="live"></span><span id="ed-eta">About 2 minutes</span></span></div>
+  <div class="bar"><a class="brand" href="index.html"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span></a><a class="btn-text back-home" id="ed-home" href="#home" hidden><svg width="18" height="18"><use href="icons.svg#i-back"/></svg>Your Reels</a><div class="grow"></div><span class="pill"><span class="live"></span><span id="ed-eta">About 2 minutes</span></span></div>
   <div class="bay">
     <div class="phone-col">
       <div class="phone"><div class="screen"><div class="notch"></div><span class="tag"><span class="dot"></span><span id="ed-tag">Your raw take</span></span>
@@ -238,6 +302,7 @@
 <section class="screen-v" data-screen="result" aria-labelledby="rs-h">
   <div class="bar"><a class="brand" href="index.html"><img src="glyph.svg" alt="" width="30" height="30"><span class="brand-name">ChannelRecipe</span></a><div class="grow"></div>
     <span class="pill accent" id="rs-free">1 of 2 free edits left</span><button type="button" class="btn btn-sm" data-open="plans">Upgrade</button></div>
+  <div class="res-back"><a class="btn-text" id="rs-home" href="#home"><svg width="18" height="18"><use href="icons.svg#i-back"/></svg>Your Reels</a></div>
   <div class="res">
     <div class="player">
       <div class="phone"><div class="screen"><div class="notch"></div><span class="tag good" id="rs-tag"><span class="dot"></span><span id="rs-tag-t">Your Reel · v1</span></span>
@@ -253,7 +318,7 @@
       <div class="acts">
         <a class="btn btn-ghost" id="rs-dl" href="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/e_v1.mp4" download="my-reel.mp4"><svg width="18" height="18"><use href="icons.svg#i-download"/></svg>Download</a>
         <button type="button" class="btn btn-ghost" id="rs-share" hidden><svg width="18" height="18"><use href="icons.svg#i-link"/></svg>Share</button>
-        <button type="button" class="btn btn-ghost" id="rs-again"><svg width="18" height="18"><use href="icons.svg#i-upload"/></svg>Edit another</button>
+        <button type="button" class="btn btn-ghost" id="rs-again"><svg width="18" height="18"><use href="icons.svg#i-plus"/></svg>New Reel</button>
       </div>
     </div>
 
@@ -469,6 +534,31 @@
     <p class="sub">Pick a video from your Drive. We only read the file you choose.</p>
     <div class="stack" style="display:grid;gap:10px;margin-top:20px"><button type="button" class="btn btn-lg btn-google btn-block" data-drive><svg width="20" height="20"><use href="icons.svg#i-drive"/></svg>Choose from Google Drive</button></div>
     <p class="fine" style="text-align:left">Prototype: Drive picking switches on with the real backend.</p>
+  </div>
+</template>
+<template id="tpl-menu">
+  <div class="menu" role="menu" aria-labelledby="mn-h">
+    <p class="menu-h" id="mn-h"></p>
+    <div class="menu-items"></div>
+  </div>
+</template>
+<template id="tpl-rename">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rn-h">
+    <button type="button" class="modal-x" data-close aria-label="Close"><svg width="18" height="18"><use href="icons.svg#i-x"/></svg></button>
+    <h2 id="rn-h">Rename this Reel</h2>
+    <form id="rn-form" novalidate style="display:grid;gap:12px;margin-top:18px">
+      <label class="sr-only" for="rn-input">Name</label>
+      <input class="text-input" id="rn-input" maxlength="80" autocomplete="off" placeholder="A name you'll find it by">
+      <div class="modal-acts"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" id="rn-save">Save</button></div>
+    </form>
+  </div>
+</template>
+<template id="tpl-delete">
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="dl-h" aria-describedby="dl-sub">
+    <button type="button" class="modal-x" data-close aria-label="Close"><svg width="18" height="18"><use href="icons.svg#i-x"/></svg></button>
+    <h2 id="dl-h">Delete this Reel?</h2>
+    <p class="sub" id="dl-sub"></p>
+    <div class="modal-acts" style="margin-top:22px"><button type="button" class="btn btn-ghost" data-close>Keep it</button><button type="button" class="btn btn-danger" id="dl-go">Delete</button></div>
   </div>
 </template>
 <template id="tpl-plans">
