@@ -615,10 +615,22 @@ def tool_checks():
     cr_installs). node: a JavaScript runtime runs (a missing one blocks setup, as it always did); node_youtube: yt-dlp
     can use it for YouTube (Deno, or Node.js 22 or newer). An older Node is a note in setup and stops only videos that
     download from YouTube (cr_readiness.preset), never the rest."""
-    ffmpeg = "" if video_tools_ready() else (cr_installs.video_tools_problem() or "FFmpeg isn't ready.")
+    ffmpeg = cr_installs.video_tools_problem()
+    why = cr_installs.video_tools_code(ffmpeg)
+    if why in ("ffprobe_hangs", "ffprobe_blocked"):
+        # (a Windows PC whose ffprobe started and then waited forever, even in a Defender-excluded folder, 2026-10-30)
+        try:
+            import cr_network
+            found = cr_network.running_antivirus()
+        except Exception:                                    # noqa: BLE001 - the list is a hint only
+            found = []
+        if found:
+            ffmpeg += (f" Security programs running on this computer: {', '.join(found)}. Allow Studio's folder in "
+                       "each of them, then press Fix it again.")
     deno = tool_ready("deno", "--version")
     node = {"ready": True, "version": "deno", "reason": ""} if deno else cr_installs.node_status()
     return {"ffmpeg": not ffmpeg, "ffmpeg_reason": (ffmpeg + " " + cr_installs.fix_hint("ffmpeg")) if ffmpeg else "",
+            "ffmpeg_why": why,
             "node": deno or node["ready"] or node_ready(), "node_youtube": node["ready"], "node_version": node["version"],
             "node_reason": (node["reason"] + " " + cr_installs.fix_hint("node")) if not node["ready"] else "",
             "can_fix": {name: cr_installs.can_fix(name) for name in ("ffmpeg", "node", "claude")}}

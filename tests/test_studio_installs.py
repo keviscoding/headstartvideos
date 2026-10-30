@@ -368,16 +368,33 @@ def test_a_program_that_wont_start_says_why():
         return run
     slow = raising(subprocess.TimeoutExpired(["ffprobe"], 5))
     assert cr_installs.start_problem("ffprobe", which=which, run=slow) == \
-        "it didn't answer within 5 seconds (an antivirus may still be scanning it)"
+        "it started but didn't answer within 5 seconds (an antivirus or another security program may be holding it)"
     blocked = OSError(22, "An Application Control policy has blocked this file")
     blocked.winerror = 4551
     assert cr_installs.start_problem("ffprobe", which=which, run=raising(blocked)) == \
         "Windows' Smart App Control blocked it"
     assert cr_installs.start_problem("ffprobe", which=which, run=fake_ffmpeg(code=3)) == "it stopped with error code 3"
     assert cr_installs.video_tools_problem(which=which, run=slow) == \
-        "FFmpeg's ffprobe won't start: it didn't answer within 5 seconds (an antivirus may still be scanning it)."
+        "FFmpeg's ffprobe won't start: it started but didn't answer within 5 seconds (an antivirus or another " \
+        "security program may be holding it)."
     assert cr_installs.runs("ffprobe", which=which, run=fake_ffmpeg()) and not cr_installs.runs("ffprobe", which=which,
                                                                                                run=slow)
+
+
+def test_the_setup_report_says_which_way_ffmpeg_failed_without_its_message():
+    """Rippers280 (Discord, 2026-10-30): ffprobe started and waited forever, even in a Defender-excluded folder, and
+    the setup report only said "ffmpeg"."""
+    which = lambda name: "/bin/" + name
+
+    def hang(command, **kw):
+        raise subprocess.TimeoutExpired(command, 5)
+    assert cr_installs.video_tools_code(cr_installs.video_tools_problem(which=which, run=hang)) == "ffprobe_hangs"
+    assert cr_installs.video_tools_code(cr_installs.video_tools_problem(which=lambda n: None, run=fake_ffmpeg())) == \
+        "ffprobe_missing"
+    assert cr_installs.video_tools_code(cr_installs.video_tools_problem(which=which, run=fake_ffmpeg(
+        filters=" T. scale V->V"))) == "ffmpeg_features"
+    assert cr_installs.video_tools_code("") == ""
+    assert all(re.fullmatch(r"[a-z][a-z0-9_]{0,23}", code) for _, code in cr_installs.VIDEO_CODES)
 
 
 def test_a_fresh_ffmpeg_download_gets_time_for_its_first_antivirus_scan(monkeypatch):

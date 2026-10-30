@@ -208,7 +208,8 @@ def start_problem(name: str, flag: str = "-version", *, which=None, run=None, ti
     try:
         code = run([executable, flag], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout).returncode
     except subprocess.TimeoutExpired:
-        return f"it didn't answer within {timeout:g} seconds (an antivirus may still be scanning it)"
+        return (f"it started but didn't answer within {timeout:g} seconds (an antivirus or another security program "
+                "may be holding it)")
     except OSError as e:
         return WINDOWS_BLOCKS.get(getattr(e, "winerror", None)) or f"it won't start ({type(e).__name__}: {str(e)[:160]})"
     except subprocess.SubprocessError as e:
@@ -248,6 +249,17 @@ def video_tools_problem(ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", *, whi
     except (OSError, subprocess.SubprocessError):
         return "FFmpeg is installed but won't start."
     return ("This computer's FFmpeg can't " + " or ".join(missing) + ".") if missing else ""
+
+
+# video_tools_problem's answer as a short code for the setup report (cr_setup_report sends codes, never messages)
+VIDEO_CODES = (("ffprobe isn't installed", "ffprobe_missing"), ("ffprobe won't start: it started but", "ffprobe_hangs"),
+               ("ffprobe won't start: it stopped with error", "ffprobe_exits"), ("ffprobe won't start", "ffprobe_blocked"),
+               ("FFmpeg isn't installed", "ffmpeg_missing"), ("FFmpeg is installed but won't start", "ffmpeg_wont_start"),
+               ("FFmpeg can't", "ffmpeg_features"))
+
+
+def video_tools_code(problem: str) -> str:
+    return next((code for words, code in VIDEO_CODES if words in problem), "ffmpeg_other") if problem else ""
 
 
 def version_of(executable: str, *, run=None) -> tuple | None:
