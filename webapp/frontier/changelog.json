@@ -1,5 +1,14 @@
 [
   {
+    "build": 121,
+    "date": "2026-10-30",
+    "title": "Roblox Story Shorts finish more often",
+    "items": [
+      "Fixed: a Roblox Story Short no longer crashes in its picture check. It happened when someone flew along with another character before making their own first move, and it could stop a Short of any length.",
+      "Fixed: a stopped Short says what really stopped it. It used to say \"props failed: cannot schedule new futures after interpreter shutdown\", a side effect that hid the real reason, like a voice account problem."
+    ]
+  },
+  {
     "build": 120,
     "date": "2026-10-30",
     "title": "Roblox Story Shorts up to 3 minutes",
