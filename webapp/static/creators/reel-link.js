@@ -1,5 +1,6 @@
-/* Reads a pasted TikTok / Instagram Reel / YouTube Short link. Shared by the landing page and the app.
-   Returns {platform, kind, handle, id, url, thumb} or null. Mirrors what creators/learn.py can fetch with yt-dlp. */
+/* Reads a pasted TikTok / Instagram Reel / YouTube Short link, or a creator's TikTok / Instagram profile (we learn from
+   their most watched recent Reels). Shared by the landing page and the app.
+   Returns {platform, kind, handle, id, url, thumb, profile?} or null. Mirrors what the edit machines can open. */
 (function () {
   function parseReelLink(raw) {
     var s = String(raw || "").trim();
@@ -15,6 +16,9 @@
       if (m) return { platform: "TikTok", kind: "tiktok", handle: "@" + m[1], id: m[3], url: u.href, thumb: null };
       m = path.match(/^\/t\/([\w]+)/);
       if (m) return { platform: "TikTok", kind: "tiktok", handle: null, id: m[1], url: u.href, thumb: null };
+      m = path.match(/^\/@([\w.]{2,40})\/?$/);
+      if (m) return { platform: "TikTok profile", kind: "tiktok", handle: "@" + m[1], id: "@" + m[1], profile: true,
+                      url: "https://www.tiktok.com/@" + m[1], thumb: null };
       return null;
     }
     if (host === "vm.tiktok.com" || host === "vt.tiktok.com") {
@@ -23,7 +27,11 @@
     }
     if (host === "instagram.com") {
       m = path.match(/^\/(?:[\w.]+\/)?(reel|reels|p)\/([\w-]{5,})/);
-      return m ? { platform: "Instagram Reel", kind: "instagram", handle: null, id: m[2], url: u.href, thumb: null } : null;
+      if (m) return { platform: "Instagram Reel", kind: "instagram", handle: null, id: m[2], url: u.href, thumb: null };
+      m = path.match(/^\/([\w.]{1,30})\/?$/);
+      var reserved = /^(reels?|p|tv|stories|explore|accounts|direct|about|developer|legal|web)$/i;
+      return m && !reserved.test(m[1]) ? { platform: "Instagram profile", kind: "instagram", handle: "@" + m[1],
+                                            id: "@" + m[1], profile: true, url: "https://www.instagram.com/" + m[1], thumb: null } : null;
     }
     var yt = null;
     if (host === "youtube.com") {

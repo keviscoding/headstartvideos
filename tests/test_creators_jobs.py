@@ -309,6 +309,28 @@ def test_the_ready_email_goes_once_per_reel_in_the_house_style(api, monkeypatch)
     assert not w.send_ready(user, "ce_2", "Creator energy", "https://dl/x.mp4", 9.0, False)      # no signed link
 
 
+def test_when_our_claude_account_cannot_answer_the_edit_stops_gives_the_edit_back_and_tells_us(api, monkeypatch):
+    w = pytest.importorskip("webapp.creators_worker")   # the edit machines' image only: not in the public repo
+    from creators.hosted import claude_api
+    job = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story"}).json()
+    alerts, edited = [], []
+    monkeypatch.setattr(claude_api, "enabled", lambda: True)
+    monkeypatch.setattr(claude_api, "DOWN", "")
+
+    def ready():
+        claude_api.DOWN = "Claude API HTTP 400: Your credit balance is too low"
+        return claude_api.DOWN
+    monkeypatch.setattr(claude_api, "ready", ready)
+    monkeypatch.setattr(w, "alert_admins", lambda subject, text: alerts.append((subject, text)))
+    monkeypatch.setattr(w, "_edit", lambda *a: edited.append(a) or 0)
+    assert w.run(job["id"]) == 1
+    row = store.get(job["id"])
+    assert row["status"] == "failed" and row["error"] == w.PAUSED and "didn't use a free edit" in w.PAUSED
+    assert not edited                                   # stopped before ten minutes of a bare cut
+    assert "credit balance" in alerts[0][1] and job["id"] in alerts[0][1]
+    assert api.get("/api/creators/me").json()["free_left"] == 2
+
+
 class FakeVerify:
     def __init__(self):
         self.sent = []
@@ -657,3 +679,18 @@ def test_with_the_scrape_creators_key_instagram_profiles_open_and_previews_fall_
     assert sc[0][2] == {"x-api-key": "sk-test"}
     api.get("/api/creators/reel-preview?url=https://www.instagram.com/reel/DeeFoOLirO1/")
     assert len([c for c in calls if "scrapecreators" in c[0]]) == 1                # cached: one credit
+
+
+def test_a_creators_profile_can_be_pasted_to_learn_their_style(api, monkeypatch):
+    job = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story",
+                                               "refs": ["tiktok.com/@ahormozi"]}).json()
+    assert job["refs"] == ["https://www.tiktok.com/@ahormozi"]
+    store.finish(job["id"], "failed", error="x")
+    r = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story",
+                                             "refs": ["https://example.com/creator"]})
+    assert r.status_code == 400 and "creator's TikTok or Instagram profile" in r.json()["detail"]
+    monkeypatch.setenv("SCRAPECREATORS_API_KEY", "sk-test")                 # Instagram profiles open through it
+    job = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story",
+                                               "refs": ["https://www.instagram.com/sunnywallacee/"]}).json()
+    assert job["refs"] == ["https://www.instagram.com/sunnywallacee"]
+    assert cj._ref_style(job["refs"]) == "@sunnywallacee's style"
