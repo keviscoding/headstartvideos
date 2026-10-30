@@ -13,10 +13,17 @@
 
   // ---------- state ----------
   var KEY = "cr-creators-proto";
-  var S = { make: null, topic: null, platforms: [], refs: [], style: null, house: false, clip: null, freeLeft: 2, email: "", heard: null, version: 1 };
+  var S = { make: null, topic: null, platforms: [], refs: [], style: null, house: false, clip: null, freeLeft: 2, email: "", heard: null, version: 1, cut: 1 };
   try { var saved = JSON.parse(sessionStorage.getItem(KEY) || "null"); if (saved) Object.assign(S, saved, { clip: saved.clip && saved.clip.sample ? saved.clip : null }); } catch (e) {}
   function save() { try { var c = Object.assign({}, S); if (c.clip && !c.clip.sample) c.clip = null; sessionStorage.setItem(KEY, JSON.stringify(c)); } catch (e) {} }
   var params = new URLSearchParams(location.search);
+  // The demo edit's two real cuts (creator-edit-work/v2/renders): the first cut is what a new edit shows; the second
+  // is what the review player's "Apply notes" lands on (review.js, media/local/review.json).
+  var CUTS = {
+    1: { video: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/e_v1.mp4", poster: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/e_v1.jpg", beats: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/review/beats_v1/" },
+    2: { video: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.mp4", poster: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.jpg", beats: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/beats/" }
+  };
+  function cut() { return CUTS[S.cut >= 2 ? 2 : 1]; }
   var STYLES = {
     story: { name: "Cinematic story", clip: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_story.mp4", poster: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_story.jpg", line: "Score, B-roll and title cards" },
     energy: { name: "Creator energy", clip: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.mp4", poster: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.jpg", line: "Punch-ins and yellow key words" },
@@ -96,10 +103,14 @@
     var m = h.match(/^step-([1-5])$/);
     if (h === "start") h = "step-1", m = ["", "1"];
     var name = m ? "onboard" : (screens[h] ? h : h === "signin" ? "signup" : "signup");
-    if (name === "result" && !demo) { loadDemo().then(route); return; }
+    // a real edit's screens wait for hosted.js to know who's signed in (else the demo would flash in first)
+    if ((name === "result" || name === "editing" || name === "review") && window.CRHosted && window.CRHosted.ready && !window.CRHosted.settled) { window.CRHosted.ready.then(route); return; }
+    if (name === "result" && !demo && !(window.CRHosted && window.CRHosted.on)) { loadDemo().then(route); return; }
+    if (name === "review" && !demo) { loadDemo().then(route); return; }   // the review player reads the demo's data too
     if (current !== name) {
       Object.keys(screens).forEach(function (k) { screens[k].classList.toggle("on", k === name); });
       $$("video").forEach(function (v) { if (!screens[name].contains(v)) v.pause(); });
+      if (current === "review" && window.CRReview) window.CRReview.leave();
       current = name;
       window.scrollTo(0, 0);
     }
@@ -107,6 +118,7 @@
     if (name === "onboard") showStep(+m[1]);
     if (name === "editing") startEditing();
     if (name === "result") enterResult();
+    if (name === "review" && window.CRReview) window.CRReview.enter(demo);
     $$("[data-screen].on video[data-auto]").forEach(play);
   }
   window.addEventListener("hashchange", route);
@@ -127,12 +139,13 @@
     if (p) $("#plan-chip-name").textContent = p.name;
   }
   document.addEventListener("click", function (e) { if (e.target.closest("[data-auth-toggle]")) go(signin ? "signup" : "signin"); });
-  $("#google-btn").addEventListener("click", function () { afterAuth("Signed in with Google (prototype)."); });
+  $("#google-btn").addEventListener("click", function () { if (window.CRHosted && window.CRHosted.google()) return; afterAuth("Signed in with Google (prototype)."); });
   $("#email-form").addEventListener("submit", function (e) {
     e.preventDefault();
     var v = $("#email").value.trim(), msg = $("#email-msg");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) { msg.className = "field-msg bad"; msg.textContent = v ? "That email doesn't look right. Check for typos." : "Enter your email to continue."; $("#email").focus(); return; }
     msg.className = "field-msg"; msg.textContent = "";
+    if (window.CRHosted && window.CRHosted.email(v)) return; // the real sign-in: an emailed code
     S.email = v; save();
     afterAuth("We'd email a sign-in link to " + v + " (prototype).");
   });
@@ -260,16 +273,18 @@
     v.style.position = "absolute"; v.style.inset = "0"; img.style.transition = "opacity .2s";
   }
   $$(".style-tile", stylesEl).forEach(bindTile);
-  // every other look on the board, from real Reels (media/local/looks.json): picking any of them works the same way
-  fetch("media/local/looks.json").then(function (r) { return r.ok ? r.json() : null; }).then(function (looks) {
+  // the looks the engine draws (looks.json, from creators/looks/catalog.py): each tile plays its reference clip, the
+  // same raw take edited in that look
+  fetch("looks.json").then(function (r) { return r.ok ? r.json() : null; }).then(function (looks) {
     if (!looks) return;
-    looks.filter(function (l) { return !l.ours; }).forEach(function (l) {
-      STYLES[l.slug] = { name: l.name, clip: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/looks/" + l.slug + ".mp4", poster: "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/looks/" + l.slug + ".jpg", line: "Learned from a real Reel" };
-      var t = document.createElement("button"); t.type = "button"; t.className = "style-tile"; t.setAttribute("aria-pressed", "false"); t.dataset.style = l.slug;
-      t.innerHTML = '<div class="vid"><img src="' + STYLES[l.slug].poster + '" alt="" loading="lazy"><video muted playsinline loop preload="none" src="' + STYLES[l.slug].clip + '"></video></div><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span><div class="cap2"><b>' + esc(l.name) + "</b></div>";
+    looks.forEach(function (l) {
+      STYLES[l.key] = { name: l.name, clip: l.clip, poster: l.poster, line: l.line };
+      var t = document.createElement("button"); t.type = "button"; t.className = "style-tile"; t.setAttribute("aria-pressed", "false"); t.dataset.style = l.key;
+      t.innerHTML = '<div class="vid"><img src="' + esc(l.poster) + '" alt="" loading="lazy"><video muted playsinline loop preload="none" src="' + esc(l.clip) + '"></video></div><span class="tickbox"><svg><use href="icons.svg#i-check"/></svg></span><div class="cap2"><b>' + esc(l.name) + "</b><span>" + esc(l.line) + "</span></div>";
       stylesEl.appendChild(t); bindTile(t);
     });
-    styleState();
+    if (S.style && !STYLES[S.style]) { S.style = null; save(); }
+    styleState(); if (location.hash === "#step-4") preview(4);
   }).catch(function () {});
   function styleState() {
     $$(".style-tile", stylesEl).forEach(function (t) { t.setAttribute("aria-pressed", String(S.style === t.dataset.style)); });
@@ -302,11 +317,13 @@
     b.disabled = !ok;
     b.innerHTML = !c ? "Choose a clip first" : c.error ? "Pick another clip" : (S.freeLeft > 0 ? "Start my free edit " : "Start my edit ") + ICON("i-arrow");
     var s = b.querySelector("svg"); if (s) { s.setAttribute("width", "18"); s.setAttribute("height", "18"); }
-    $("#start-hint").textContent = ok ? "About 2 minutes · in " + styleLabel() : "About 2 minutes";
+    var eta = window.CRHosted && window.CRHosted.on && window.CRHosted.eta ? window.CRHosted.eta() : "About 2 minutes"; // real edits: measured
+    $("#start-hint").textContent = ok ? eta + " · in " + styleLabel() : eta;
   }
   function takeFile(f) {
     if (!f) return;
     if (!/^video\//.test(f.type) && !/\.(mov|mp4|m4v)$/i.test(f.name)) { S.clip = { name: f.name, size: f.size, error: "That isn't a video. Pick an MP4 or MOV." }; drawFile(); startState(); return; }
+    CRApp.file = f; // the real upload sends this file (hosted.js)
     var url = URL.createObjectURL(f), v = document.createElement("video");
     v.preload = "metadata"; v.muted = true; v.src = url;
     S.clip = { name: f.name, size: f.size, url: url };
@@ -329,6 +346,7 @@
   $("#use-sample").addEventListener("click", function () { S.clip = { name: "raw-take-sample.mov", sample: true, dur: 53.2, w: 1080, h: 1920, size: 0 }; save(); drawFile(); startState(); preview(5); });
   $("#start-edit").addEventListener("click", function () {
     if (!S.clip || S.clip.error) return;
+    if (window.CRHosted && window.CRHosted.start()) return; // signed in: upload and start a real edit
     if (S.freeLeft <= 0) return openPlans("You've used your 2 free edits. Every plan keeps everything you've seen.");
     S.freeLeft -= 1; S.version = 1; save();
     go("editing");
@@ -356,7 +374,7 @@
       if (S.refs.length) { setPv("https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.mp4", "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/look_energy.jpg", S.refs.length > 1 ? "Learning " + S.refs.length + " videos" : "Learning their look", false); c1.innerHTML = "<b>Their look,</b> your footage"; c2.innerHTML = "<b>~45 s</b> to learn it"; cap.innerHTML = "<b>We measure how they edit</b> and cut your clip the same way."; }
       else { setPv(st.clip, st.poster, S.style ? st.name : "Pick a look", !!S.style); c1.innerHTML = "<b>" + esc(st.name) + "</b>"; c2.innerHTML = esc(st.line); cap.innerHTML = "<b>Real edits of real Reels.</b> Hover a look to watch it."; } }
     if (n === 5) { var c = S.clip;
-      if (c && !c.sample && c.url && !c.error) { setPv(c.url, "", "Your raw take" + (c.dur ? " · " + fmt(c.dur) : ""), false); cap.innerHTML = "<b>That's your clip.</b> It stays on your device in this prototype."; }
+      if (c && !c.sample && c.url && !c.error) { setPv(c.url, "", "Your raw take" + (c.dur ? " · " + fmt(c.dur) : ""), false); cap.innerHTML = window.CRHosted && window.CRHosted.on ? "<b>That's your clip.</b> Only you and our edit machine see it." : "<b>That's your clip.</b> It stays on your device in this prototype."; }
       else { setPv("https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.mp4", "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.jpg", c && c.sample ? "Sample raw take · 0:53" : "A raw take, like yours", false); cap.innerHTML = "<b>One take, straight to camera.</b> That's all a look needs."; }
       c1.innerHTML = "<b>Best take</b> kept"; c2.innerHTML = "<b>Minutes,</b> not hours"; }
   }
@@ -367,6 +385,7 @@
   var editTimer = null;
   function startEditing() {
     clearInterval(editTimer);
+    if (window.CRHosted && window.CRHosted.on) return window.CRHosted.editing();
     var own = S.clip && !S.clip.sample && S.clip.url;
     var v = $("#ed-video");
     if (own) { v.removeAttribute("poster"); v.src = S.clip.url; $("#ed-tag").textContent = "Your raw take"; } else { v.poster = "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.jpg"; v.src = "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.mp4"; $("#ed-tag").textContent = "Sample raw take"; }
@@ -427,6 +446,7 @@
   var rv = $("#rs-video"), heardTimer = null, resultReady = false;
   function enterResult() {
     clearInterval(editTimer);
+    if (window.CRHosted && window.CRHosted.on) return window.CRHosted.result();
     var d = demo;
     $("#rs-free").textContent = S.freeLeft > 0 ? S.freeLeft + " of 2 free edits left" : "Free edits used";
     $("#rs-h").textContent = "“" + d.hook + "”";
@@ -446,8 +466,7 @@
       // Real frames of this edit, beat by beat, with the line you said there (media/local/beats.json).
       fetch("media/local/beats.json").then(function (r) { return r.ok ? r.json() : null; }).then(function (b) {
         if (!b || !b.energy) return;
-        $("#rs-added").innerHTML = b.energy.map(function (r) { return '<li><button type="button" data-seek="' + r.t + '"><span class="th"><img src="' + esc(r.img) + '" alt="" loading="lazy"></span><span class="tchip">' + fmt(r.t) + '</span><span class="txt">' + esc(r.did) + '<span class="said2">“' + esc(r.said) + '”</span></span></button></li>'; }).join("");
-        $("#rs-acount").textContent = b.energy.length;
+        beats = b.energy; drawBeats();
       }).catch(function () {});
       $("#rs-sound-sub").textContent = "Made for this video, mixed under your voice.";
       $("#rs-sound").innerHTML = [
@@ -465,9 +484,27 @@
       drawMarkers();
       window.CRCutline.render($("#rs-cutline"), d);
     }
+    syncCut();
     rv.currentTime = 0;
     clearTimeout(heardTimer);
     if (!S.heard) heardTimer = setTimeout(openHeard, 9000);
+  }
+  // Real frames of the cut on screen, beat by beat, with the line said there.
+  var beats = null, shownCut = 1;
+  function drawBeats() {
+    if (!beats) return;
+    var dir = cut().beats;
+    $("#rs-added").innerHTML = beats.map(function (r) { return '<li><button type="button" data-seek="' + r.t + '"><span class="th"><img src="' + esc(dir + r.img.split("/").pop()) + '" alt="" loading="lazy"></span><span class="tchip">' + fmt(r.t) + '</span><span class="txt">' + esc(r.did) + '<span class="said2">“' + esc(r.said) + '”</span></span></button></li>'; }).join("");
+    $("#rs-acount").textContent = beats.length;
+  }
+  function syncCut() { // after the review applied notes, the result shows the second cut
+    var c = cut();
+    $("#rs-dl").setAttribute("href", c.video);
+    $("#rs-tag-t").textContent = mode === "after" ? "Your Reel · v" + S.version : $("#rs-tag-t").textContent;
+    if (shownCut === (S.cut >= 2 ? 2 : 1)) return;
+    shownCut = S.cut >= 2 ? 2 : 1;
+    if (mode === "after") { rv.src = c.video; rv.poster = c.poster; }
+    drawBeats();
   }
   function drawMarkers() {
     var sc = $("#rs-scrub"), dur = demo.edit_seconds;
@@ -476,7 +513,7 @@
   }
   var mode = "after";
   function upd() {
-    var dur = rv.duration || (mode === "after" ? demo.edit_seconds : demo.raw_seconds), p = rv.currentTime / dur;
+    var dur = rv.duration || (demo ? (mode === "after" ? demo.edit_seconds : demo.raw_seconds) : 0), p = dur ? rv.currentTime / dur : 0;
     $(".scrub .fill").style.width = (p * 100) + "%"; $(".scrub .knob").style.left = (p * 100) + "%";
     $("#rs-time").textContent = fmt(rv.currentTime) + " / " + fmt(dur);
     $("#rs-scrub").setAttribute("aria-valuenow", Math.round(rv.currentTime)); $("#rs-scrub").setAttribute("aria-valuemax", Math.round(dur));
@@ -505,15 +542,16 @@
     mode = m;
     $$("[data-ba]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.ba === m)); });
     var wasPlaying = !rv.paused;
-    rv.src = m === "after" ? "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.mp4" : "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.mp4";
-    rv.poster = m === "after" ? "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_edit.jpg" : "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.jpg";
-    $("#rs-tag-t").textContent = m === "after" ? "Your Reel · v" + S.version : "Raw take · " + fmt(demo.raw_seconds);
+    var hs = window.CRHosted && window.CRHosted.on && window.CRHosted.media(m); // a real edit's own files
+    rv.src = hs ? hs.src : m === "after" ? cut().video : "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.mp4";
+    rv.poster = hs ? hs.poster : m === "after" ? cut().poster : "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/e_raw.jpg";
+    $("#rs-tag-t").textContent = m === "after" ? "Your Reel · v" + S.version : "Raw take · " + fmt(hs ? hs.seconds : demo.raw_seconds);
     $("#rs-tag").classList.toggle("good", m === "after");
     if (wasPlaying) play(rv);
     upd();
   }
   $$("[data-ba]").forEach(function (b) { b.addEventListener("click", function () { if (b.dataset.ba !== mode) setMode(b.dataset.ba); }); });
-  $("#rs-dl").addEventListener("click", function () { toast("Downloading your Reel (prototype: a 720p preview file)."); if (!S.heard) { clearTimeout(heardTimer); heardTimer = setTimeout(openHeard, 1500); } });
+  $("#rs-dl").addEventListener("click", function () { toast(window.CRHosted && window.CRHosted.on ? "Downloading your Reel." : "Downloading your Reel (prototype: a 720p preview file)."); if (!S.heard) { clearTimeout(heardTimer); heardTimer = setTimeout(openHeard, 1500); } });
   $("#rs-again").addEventListener("click", function () { S.clip = null; save(); rv.pause(); go("step-5"); });
   // tweak chat
   var msgs = $("#rs-msgs");
@@ -564,5 +602,8 @@
     S.heard = "creator:@" + h; save(); closeHeard(); toast("Thanks! We'll thank @" + h + ".");
   });
 
+  // what hosted.js (the real backend) needs from the prototype
+  var CRApp = window.CRApp = { S: S, save: save, go: go, toast: toast, openPlans: openPlans, styleLabel: styleLabel, STYLES: STYLES,
+    fmt: fmt, esc: esc, ICON: ICON, play: play, startState: startState, drawFile: drawFile, openModal: openModal, closeModal: closeModal, preview: function () { if (current === "onboard") preview(stepNow); }, current: function () { return current; }, file: null, cuts: CUTS, cut: cut };
   route();
 })();

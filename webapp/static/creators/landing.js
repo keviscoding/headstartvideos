@@ -18,17 +18,62 @@
     vids.forEach(function (v) { io.observe(v); });
   }
   // The launch film: a muted loop once it's on screen; "Watch with sound" (or a click on it) starts it over with sound.
+  // With sound it gets our own quiet controls, never the browser's: on iPhones those cover the film (owner, 10-30).
+  // It plays clean, with only a thin progress line; a tap pauses and shows the bar (seek, sound), a mouse shows it too.
   var film = $("#film"), fv = $("#film-video"), fplay = $("#film-play");
   if (film && fv) {
     var fsrc = function () { return (fv.clientWidth || 960) * (window.devicePixelRatio || 1) >= 1500 ? fv.dataset.hd : fv.dataset.sd; };
     var fload = function () { if (!fv.getAttribute("src")) { fv.src = fsrc(); fv.preload = "auto"; } };
+    var fui = $("#film-ui"), ftog = film.querySelector(".film-tog"), fmute = film.querySelector(".film-mute"),
+        ftrack = film.querySelector(".film-track"), ffill = ftrack.querySelector("i"), ftime = film.querySelector(".film-time"),
+        fbig = $("#film-big"), fidle = 0;
+    var mmss = function (s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + ("0" + s % 60).slice(-2); };
+    var icon = function (btn, id, label) { btn.querySelector("use").setAttribute("href", "icons.svg#" + id); btn.setAttribute("aria-label", label); };
+    var wake = function (ms) {
+      film.classList.remove("idle"); clearTimeout(fidle);
+      if (!fv.paused) fidle = setTimeout(function () { film.classList.add("idle"); }, ms || 2400);
+    };
+    var rest = function () { clearTimeout(fidle); film.classList.add("idle"); };
+    var draw = function () {
+      var d = fv.duration || 51, t = fv.currentTime || 0;
+      ffill.style.transform = "scaleX(" + Math.min(1, t / d) + ")"; film.style.setProperty("--p", Math.min(1, t / d));
+      ftime.firstChild.nodeValue = mmss(t); ftrack.setAttribute("aria-valuenow", Math.round(t));
+    };
+    var toggle = function () {
+      if (fv.paused) { if (fv.ended) fv.currentTime = 0; play(fv); } else fv.pause();
+    };
     var withSound = function () {
       fload(); film.classList.add("sound");
       $$(".mclip video").forEach(function (o) { o.muted = true; });
-      fv.loop = false; fv.muted = false; fv.controls = true; fv.currentTime = 0; play(fv);
+      fv.loop = false; fv.muted = false; fv.controls = false; fv.currentTime = 0; play(fv);
+      icon(fmute, "i-sound-on", "Mute"); rest();
     };
     fplay.addEventListener("click", withSound);
-    fv.addEventListener("click", function () { if (!film.classList.contains("sound")) withSound(); });
+    fv.addEventListener("click", function () { if (!film.classList.contains("sound")) withSound(); else { toggle(); wake(); } });
+    fbig.addEventListener("click", function () { toggle(); rest(); });
+    ftog.addEventListener("click", function () { toggle(); wake(); });
+    fmute.addEventListener("click", function () {
+      fv.muted = !fv.muted; icon(fmute, fv.muted ? "i-sound-off" : "i-sound-on", fv.muted ? "Unmute" : "Mute"); wake();
+    });
+    fv.addEventListener("play", function () { film.classList.remove("paused"); icon(ftog, "i-pause", "Pause"); if (!film.classList.contains("idle")) wake(1200); });
+    fv.addEventListener("pause", function () { film.classList.add("paused"); icon(ftog, "i-play", "Play"); wake(); });
+    fv.addEventListener("timeupdate", draw);
+    fv.addEventListener("loadedmetadata", function () { ftime.lastChild.textContent = " / " + mmss(fv.duration); ftrack.setAttribute("aria-valuemax", Math.round(fv.duration)); });
+    film.addEventListener("pointermove", function (e) { if (e.pointerType === "mouse" && film.classList.contains("sound")) wake(); });
+    var seekTo = function (x) {
+      var r = ftrack.getBoundingClientRect(), f = Math.min(1, Math.max(0, (x - r.left) / r.width));
+      if (fv.duration) { fv.currentTime = f * fv.duration; draw(); }
+    };
+    ftrack.addEventListener("pointerdown", function (e) {
+      e.preventDefault(); ftrack.setPointerCapture(e.pointerId); film.classList.add("seeking"); seekTo(e.clientX); wake();
+    });
+    ftrack.addEventListener("pointermove", function (e) { if (film.classList.contains("seeking")) seekTo(e.clientX); });
+    ["pointerup", "pointercancel"].forEach(function (n) { ftrack.addEventListener(n, function () { film.classList.remove("seeking"); wake(); }); });
+    ftrack.addEventListener("keydown", function (e) {
+      var k = { ArrowLeft: -5, ArrowRight: 5 }[e.key];
+      if (k) { e.preventDefault(); fv.currentTime = Math.max(0, Math.min(fv.duration || 51, fv.currentTime + k)); draw(); wake(); }
+    });
+    fui.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
     if (!reduce && "IntersectionObserver" in window) {
       var fio = new IntersectionObserver(function (es) {
         es.forEach(function (e) {

@@ -1,0 +1,100 @@
+[
+ {
+  "key": "story",
+  "name": "Cinematic story",
+  "line": "Score, B-roll and title cards",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/story.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/story.jpg"
+ },
+ {
+  "key": "energy",
+  "name": "Creator energy",
+  "line": "Punch-ins and yellow key words",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/energy.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/energy.jpg"
+ },
+ {
+  "key": "bold",
+  "name": "Bold caps",
+  "line": "Big caps, one word in colour",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/bold.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/bold.jpg"
+ },
+ {
+  "key": "karaoke",
+  "name": "Word by word",
+  "line": "Each word lights up as you say it",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/karaoke.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/karaoke.jpg"
+ },
+ {
+  "key": "native",
+  "name": "Title box",
+  "line": "A headline box on top, clean subtitles",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/native.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/native.jpg"
+ },
+ {
+  "key": "lowercase",
+  "name": "Lowercase",
+  "line": "Small, soft, lowercase. Nothing else",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/lowercase.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/lowercase.jpg"
+ },
+ {
+  "key": "serif",
+  "name": "Editorial serif",
+  "line": "Magazine serif, italic on the words that matter",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/serif.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/serif.jpg"
+ },
+ {
+  "key": "podcast",
+  "name": "Podcast clip",
+  "line": "Tall caps, two-camera cuts",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/podcast.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/podcast.jpg"
+ },
+ {
+  "key": "noir",
+  "name": "Black & white",
+  "line": "Monochrome, one serif word at a time",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/noir.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/noir.jpg"
+ },
+ {
+  "key": "quote",
+  "name": "Quote frame",
+  "line": "Your best line as a title, the clip below",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/quote.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/quote.jpg"
+ },
+ {
+  "key": "letterbox",
+  "name": "Letterbox",
+  "line": "Film bars, grain, words in the black",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/letterbox.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/letterbox.jpg"
+ },
+ {
+  "key": "moody",
+  "name": "Moody",
+  "line": "Low light, tiny caps, a slow push",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/moody.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/moody.jpg"
+ },
+ {
+  "key": "split",
+  "name": "Split screen",
+  "line": "Clips on top, you below, on your words",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/split.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/split.jpg"
+ },
+ {
+  "key": "raw",
+  "name": "Raw",
+  "line": "Just you. One line on top",
+  "clip": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/raw.mp4",
+  "poster": "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/creators/v1/styles/raw.jpg"
+ }
+]

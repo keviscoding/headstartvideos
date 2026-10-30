@@ -23,7 +23,7 @@ WEBAPP = Path(server.__file__).resolve().parent
 ASYNC_ON_PURPOSE = {
     # server.py: no blocking work at all (an in-memory answer, a cached page, a stat before FileResponse streams)
     "server.py": {"health", "landing", "favicon", "apple_touch_icon", "index", "privacy_page", "terms_page",
-                  "harness_3d_page", "course_page", "money_niche_page", "money_niche_channel_check", "affiliates_page", "robots_txt",
+                  "harness_3d_page", "course_page", "creators_root", "creators_page", "money_niche_page", "money_niche_channel_check", "affiliates_page", "robots_txt",
                   "sitemap_xml", "get_client_config", "get_voices", "get_all_voices", "avatar_gen_cost", "serve_file",
                   "get_settings", "save_settings",
                   # await the request itself, then hand the blocking part to a thread
@@ -34,6 +34,7 @@ ASYNC_ON_PURPOSE = {
     "cloud_jobs.py": {"get_relay_next", "post_relay_ytdlp", "post_relay_messages"},  # long-polls: asyncio.sleep
     "studio_ranking.py": {"get_allowance", "post_watch", "post_watch_upload", "get_watch", "post_tiktok_search",
                           "post_youtube_search", "post_clean", "get_clean"},  # every blocking part through _call()
+    "creators_jobs.py": {"post_notes"},          # awaits the multipart body, then start_round in a thread
 }
 
 

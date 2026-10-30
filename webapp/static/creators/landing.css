@@ -396,7 +396,26 @@
 .film-play svg { flex: none; width: 20px; height: 20px; }
 .film-play small { font-size: 14px; font-weight: 550; color: rgba(255, 255, 255, .62); }
 .film.sound .film-play { display: none; }
-@media (max-width: 560px) { .film { margin-top: 26px; border-radius: 16px; } .film-play { min-height: 44px; font-size: 15px; padding: 0 16px 0 14px; } .film-play small { font-size: 13px; } }
+/* Our own controls once it plays with sound (the browser's cover the film on iPhones): one quiet bar that fades out
+   while it plays, a round play button while it's paused. */
+.film-ui { position: absolute; left: 14px; right: 14px; bottom: 14px; z-index: 2; display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 6px; border-radius: 999px; background: rgba(11, 11, 15, .72); color: #fff; transform: translate3d(0, 0, 0); opacity: 0; visibility: hidden; transition: opacity .3s ease, visibility .3s; }
+.film.sound .film-ui { opacity: 1; visibility: visible; }
+.film.sound.idle:not(.paused):not(.seeking) .film-ui { opacity: 0; visibility: hidden; }
+.film.sound.idle:not(.paused) video { cursor: none; }
+.film-ui button { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
+.film-ui button:hover { background: rgba(255, 255, 255, .12); }
+.film-ui svg { width: 18px; height: 18px; }
+.film-track { position: relative; flex: 1; height: 28px; cursor: pointer; touch-action: none; }
+.film-track::before, .film-track i { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 3px; background: rgba(255, 255, 255, .28); }
+.film-track i { background: #fff; transform-origin: 0 50%; transform: scaleX(0); }
+.film-track:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px; }
+.film-time { flex: none; min-width: 34px; font: 550 13px/1 var(--font); font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .86); }
+.film-big { position: absolute; left: 50%; top: 50%; z-index: 2; display: none; place-items: center; width: 68px; height: 68px; border: 0; border-radius: 999px; background: rgba(11, 11, 15, .72); color: #fff; transform: translate3d(-50%, -50%, 0); cursor: pointer; }
+.film-big svg { width: 26px; height: 26px; margin-left: 3px; }
+.film.sound.paused:not(.seeking) .film-big { display: grid; }
+.film.sound::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; height: 3px; background: var(--accent); transform-origin: 0 50%; transform: scaleX(var(--p, 0)); opacity: 0; transition: opacity .3s ease; pointer-events: none; }
+.film.sound.idle:not(.paused):not(.seeking)::after { opacity: 1; }
+@media (max-width: 560px) { .film { margin-top: 26px; border-radius: 16px; } .film-play { min-height: 44px; font-size: 15px; padding: 0 16px 0 14px; } .film-play small { font-size: 13px; } .film-ui { left: 8px; right: 8px; bottom: 8px; height: 38px; gap: 6px; padding: 0 4px; } .film-ui button { width: 30px; height: 30px; } .film-time span { display: none; } .film-big { width: 56px; height: 56px; } }
 
 /* What's in an edit: four real moments from the demo edits (tap one to hear it), then three plain promises */
 .moments { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(14px, 2vw, 24px); max-width: 1060px; margin: clamp(40px, 5vw, 56px) auto 0; }
