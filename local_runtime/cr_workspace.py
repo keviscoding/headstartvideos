@@ -898,6 +898,58 @@ def install(studio, activity, *, token, home=None):
         except Exception as error:
             return failure(error)
 
+    # Trim a finished video without AI (cr_trim): a new start and end, and one part cut out if wanted. FFmpeg on this
+    # computer, no Claude usage or money; the untrimmed video stays in its working folder and Undo puts it back.
+    def trim_video(slug):
+        job = voice_job(slug)
+        final = getattr(studio.mv, "final_video", None)
+        video = Path(final(job)).resolve() if callable(final) else job / "video.mp4"
+        if not in_output(video):
+            raise ValueError("Unavailable project.")
+        return job, video
+
+    def trim_target(slug):
+        import cr_trim
+        job, video = trim_video(slug)
+        if ((getattr(studio, "JOBS", {}).get(job.name) or {}).get("state")) in {"running", "queued", "held"}:
+            raise cr_trim.Refused("This video is still being made. Trim it once it has finished.")
+        return job, video
+
+    def trim_error(error):
+        import cr_trim
+        if isinstance(error, cr_trim.Refused):
+            return protect(jsonify(error=str(error))), 409
+        return failure(error)
+
+    @app.get("/cr-workspace/trim/<slug>")
+    def cr_workspace_trim_status(slug):
+        try:
+            local_access()
+            import cr_trim
+            return protect(jsonify(slug=slug, **cr_trim.status(*trim_video(slug))))
+        except Exception as error:
+            return trim_error(error)
+
+    @app.post("/cr-workspace/trim/<slug>")
+    def cr_workspace_trim(slug):
+        try:
+            local_access()
+            import cr_trim
+            data = request.get_json(silent=True) or {}
+            job, video = trim_target(slug)
+            return protect(jsonify(cr_trim.start(job, video, data.get("start"), data.get("end"), data.get("remove")))), 202
+        except Exception as error:
+            return trim_error(error)
+
+    @app.post("/cr-workspace/trim/<slug>/undo")
+    def cr_workspace_trim_undo(slug):
+        try:
+            local_access()
+            import cr_trim
+            return protect(jsonify(cr_trim.undo(*trim_target(slug))))
+        except Exception as error:
+            return trim_error(error)
+
     @app.get("/cr-workspace/project/<slug>")
     def cr_workspace_project(slug):
         try:

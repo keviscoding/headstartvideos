@@ -197,6 +197,10 @@ under Saved ideas.
   days, then Studio empties it for good. Say first which video or style goes and what stays (their voice library,
   styles and other videos; for a style, the videos made with it), and that Claude Code asks them to approve. A video
   being made is refused: don't cancel it to delete it unless they ask for that too.
+- Trimming a finished video (a new start or end, or one part cut out of the middle, say to end it with the voiceover):
+  Projects → Video & exports → **Trim** on the Studio page, for long videos and Shorts. Studio cuts it on this computer
+  with FFmpeg: no AI, no cost, a minute or a few. The untrimmed video is kept and **Undo trim** puts it back. Never
+  make the video again or prompt a change just to shorten it.
 - Languages: a video can be made in Spanish, Portuguese, French, German, Italian, Hindi and the other languages
   `list_styles` lists under `languages`: `make_videos` options.language (on the Studio page: Create → Narration &
   sound → Language). Its script, voice, captions and words on screen are all in that language. Hindi is written in

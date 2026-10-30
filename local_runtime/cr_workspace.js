@@ -887,7 +887,7 @@
   function releaseVideo(slug) {
     const src = `/f/video/${encoded(slug)}`, released = [];
     for (const v of document.querySelectorAll('video')) {
-      if (v.getAttribute('src') !== src) continue;
+      if ((v.getAttribute('src') || '').split('?')[0] !== src) continue;
       v.pause(); v.removeAttribute('src'); v.load(); released.push(v);
     }
     return () => {for (const v of released) v.src = src;};
@@ -964,6 +964,155 @@
     }
     $('crw-progress-actions').append(box);
   }
+  // Trim (thatguygab, 2026-10-30: "Sometimes I just want to trim the video to match the VO but I need to prompt it"): a
+  // new start and end, and one part cut out if wanted, cut by FFmpeg on this computer (cr_trim). No AI, no cost.
+  const trim = {slug: '', duration: 0, start: 0, end: 0, cutOn: false, cutFrom: 0, cutTo: 0, previewing: false, busy: false};
+  const TRIM_FIELDS = {start: 'crw-trim-start', end: 'crw-trim-end', cutFrom: 'crw-trim-cut-from', cutTo: 'crw-trim-cut-to'};
+  function clock(t) {t = Math.round(Math.max(0, Number(t) || 0) * 10) / 10; const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`;}
+  function seconds(value) {             // "1:05.2", "65.2" or "1:02:03" → seconds; NaN when it isn't a time
+    const parts = String(value || '').trim().split(':'); let total = 0;
+    for (const p of parts) {if (!/^(\d+\.?\d*|\.\d+)$/.test(p)) return NaN; total = total * 60 + Number(p);}
+    return total;
+  }
+  function trimParts() {
+    const cut = trim.cutOn && trim.cutTo > trim.cutFrom;
+    const parts = cut ? [[trim.start, Math.min(trim.end, Math.max(trim.start, trim.cutFrom))], [Math.max(trim.start, Math.min(trim.end, trim.cutTo)), trim.end]] : [[trim.start, trim.end]];
+    return parts.filter(([a, b]) => b - a > 0.05);
+  }
+  function drawTrim() {
+    const d = trim.duration || 1, at = t => Math.max(0, Math.min(100, t / d * 100)), v = $('crw-output-video');
+    Object.assign($('crw-trim-kept').style, {left: at(trim.start) + '%', width: at(trim.end) - at(trim.start) + '%'});
+    const cut = trim.cutOn && trim.cutTo > trim.cutFrom, a = Math.max(trim.start, trim.cutFrom), b = Math.min(trim.end, trim.cutTo);
+    hide('crw-trim-gap', !(cut && b > a)); Object.assign($('crw-trim-gap').style, {left: at(a) + '%', width: Math.max(0, at(b) - at(a)) + '%'});
+    $('crw-trim-handle-start').style.left = at(trim.start) + '%'; $('crw-trim-handle-end').style.left = at(trim.end) + '%';
+    $('crw-trim-head').style.left = at(v.currentTime || 0) + '%';
+    for (const [key, id] of Object.entries(TRIM_FIELDS)) if (document.activeElement !== $(id)) {$(id).value = clock(trim[key]); $(id).removeAttribute('aria-invalid');}
+    const kept = trimParts().reduce((sum, [x, y]) => sum + y - x, 0), cutS = trim.duration - kept;
+    const change = cutS >= 0.05 && kept >= 1;
+    text('crw-trim-summary', kept < 1 ? 'Keep at least a second of video.' : change ? `New length ${clock(kept)}, ${clock(cutS)} cut (was ${clock(trim.duration)}).` : 'Drag the handles or set a start and end to trim.');
+    $('crw-trim-apply').disabled = trim.busy || !change; $('crw-trim-preview').disabled = trim.busy || kept < 1;
+  }
+  function setTrim(key, t) {
+    const d = trim.duration; t = Math.max(0, Math.min(d, t));
+    if (key === 'start') trim.start = Math.min(t, Math.max(0, trim.end - 1));
+    else if (key === 'end') trim.end = Math.max(t, Math.min(d, trim.start + 1));
+    else if (key === 'cutFrom') {trim.cutFrom = t; if (trim.cutTo < t) trim.cutTo = Math.min(d, t + 1);}
+    else {trim.cutTo = t; if (trim.cutFrom > t) trim.cutFrom = Math.max(0, t - 1);}
+    drawTrim();
+  }
+  function stopPreview() {trim.previewing = false; text('crw-trim-preview', 'Preview');}
+  function previewTrim() {
+    const v = $('crw-output-video'), parts = trimParts();
+    if (trim.previewing) {v.pause(); stopPreview(); return;}
+    if (!parts.length) return;
+    trim.previewing = true; text('crw-trim-preview', 'Stop preview'); v.currentTime = parts[0][0]; v.play().catch(() => {});
+    const step = () => {                          // plays the kept parts only: jumps the cut, stops at the new end
+      if (!trim.previewing) return;
+      const t = v.currentTime, next = parts.find(([, b]) => t < b - 0.03);
+      if (!next || v.ended) {v.pause(); stopPreview(); drawTrim(); return;}
+      if (t < next[0] - 0.08) v.currentTime = next[0];
+      $('crw-trim-head').style.left = Math.min(100, t / (trim.duration || 1) * 100) + '%';
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  function busyTrim(on) {
+    trim.busy = on; $('crw-trim').classList.toggle('crw-trim-busy', on); hide('crw-trim-progress', !on);
+    for (const id of [...Object.values(TRIM_FIELDS), 'crw-trim-cut-on', 'crw-trim-cancel', 'crw-trim-undo']) $(id).disabled = on;
+    if (on) {$('crw-trim-progress-bar').style.width = '0%';} drawTrim();
+  }
+  function showTrimState(s) {
+    if (s.duration) trim.duration = s.duration;
+    hide('crw-trim-undo-row', !s.trimmed);
+    if (s.trimmed) text('crw-trim-undo-text', `Trimmed from ${clock(s.original_duration)} to ${clock(s.duration || trim.duration)}. The Narration and Subtitles downloads are from before the trim.`);
+  }
+  function releaseTrimmed(slug) {      // every player lets go of the file; the viewer's own comes back by reloadOutput
+    const v = $('crw-output-video'); v.pause(); v.removeAttribute('src'); v.load(); return releaseVideo(slug);
+  }
+  function reloadOutput(slug) {        // the new file, past the browser's copy of the old one
+    if (!$('crw-output').open || state.currentOutput?.slug !== slug) return;
+    $('crw-output-video').src = `/f/video/${encoded(slug)}?v=${Date.now()}`;
+  }
+  async function watchTrim(slug, putBack) {
+    for (;;) {
+      await new Promise(done => setTimeout(done, 800));
+      let s; try {s = await api(`/cr-workspace/trim/${encoded(slug)}`);} catch (e) {s = {running: false, error: e.message};}
+      if (s.running) {if (trim.slug === slug) {$('crw-trim-progress-bar').style.width = Math.round((s.progress || 0) * 100) + '%'; $('crw-trim-progress-bar').parentElement.setAttribute('aria-valuenow', String(Math.round((s.progress || 0) * 100)));} continue;}
+      putBack(); reloadOutput(slug);
+      if (trim.slug !== slug) {toast(s.error || 'Your video is trimmed.'); return;}
+      busyTrim(false); showTrimState(s);
+      if (s.error) {text('crw-trim-note', s.error); return;}
+      hide('crw-trim', true); $('crw-output-trim').setAttribute('aria-expanded', 'false'); text('crw-trim-note', '');
+      text('crw-output-message', `Trimmed to ${clock(s.duration)}. The untrimmed video is kept: Undo trim puts it back.`);
+      return;
+    }
+  }
+  async function applyTrim() {
+    const slug = trim.slug; if (!slug || trim.busy) return;
+    $('crw-output-video').pause(); stopPreview();
+    const cut = trim.cutOn && trim.cutTo > trim.cutFrom;
+    busyTrim(true); text('crw-trim-note', 'Trimming on this computer. A long video takes a few minutes; you can close this window meanwhile.');
+    const putBack = releaseTrimmed(slug);            // Windows can't replace a file a player is still reading
+    try {await api(`/cr-workspace/trim/${encoded(slug)}`, {method: 'POST', body: {start: trim.start, end: trim.end, remove: cut ? [trim.cutFrom, trim.cutTo] : null}}); watchTrim(slug, putBack);}
+    catch (e) {putBack(); reloadOutput(slug); busyTrim(false); text('crw-trim-note', e.message);}
+  }
+  async function undoTrim() {
+    const slug = trim.slug; if (!slug) return; $('crw-trim-undo').disabled = true;
+    const putBack = releaseTrimmed(slug);
+    try {const r = await api(`/cr-workspace/trim/${encoded(slug)}/undo`, {method: 'POST', body: {}}); putBack(); reloadOutput(slug);
+      showTrimState({trimmed: false, duration: r.duration}); hide('crw-trim', true); $('crw-output-trim').setAttribute('aria-expanded', 'false');
+      text('crw-output-message', 'The untrimmed video is back.');}
+    catch (e) {putBack(); reloadOutput(slug); text('crw-output-message', e.message);}
+    finally {$('crw-trim-undo').disabled = false;}
+  }
+  async function loadTrim(slug) {
+    trim.slug = slug; trim.busy = false; stopPreview(); hide('crw-trim', true); hide('crw-trim-undo-row', true); text('crw-trim-note', '');
+    $('crw-output-trim').setAttribute('aria-expanded', 'false'); busyTrim(false);
+    try {const s = await api(`/cr-workspace/trim/${encoded(slug)}`); if (trim.slug !== slug) return; showTrimState(s);
+      if (s.running) {hide('crw-trim', false); busyTrim(true); text('crw-trim-note', 'Trimming on this computer.'); watchTrim(slug, releaseTrimmed(slug));}
+      else if (s.error) text('crw-trim-note', s.error);}
+    catch (_) {/* trimming is optional: the viewer works without it */}
+  }
+  function toggleTrim() {
+    const open = $('crw-trim').hidden, v = $('crw-output-video');
+    if (open) {
+      if (Number.isFinite(v.duration) && v.duration > 0) trim.duration = v.duration;
+      if (!trim.duration) {text('crw-output-message', 'The video is still loading. Try Trim again in a moment.'); return;}
+      Object.assign(trim, {start: 0, end: trim.duration, cutOn: false, cutFrom: 0, cutTo: 0}); $('crw-trim-cut-on').checked = false; hide('crw-trim-cut-fields', true);
+    } else {v.pause(); stopPreview();}
+    hide('crw-trim', !open); $('crw-output-trim').setAttribute('aria-expanded', String(open)); drawTrim();
+  }
+  function wireTrim() {
+    const v = $('crw-output-video'), bar = $('crw-trim-bar');
+    $('crw-output-trim').addEventListener('click', toggleTrim);
+    $('crw-trim-cancel').addEventListener('click', () => {if (!$('crw-trim').hidden) toggleTrim();});
+    $('crw-trim-preview').addEventListener('click', previewTrim);
+    $('crw-trim-apply').addEventListener('click', applyTrim);
+    $('crw-trim-undo').addEventListener('click', undoTrim);
+    v.addEventListener('timeupdate', () => {if (!$('crw-trim').hidden && !trim.previewing) $('crw-trim-head').style.left = Math.min(100, v.currentTime / (trim.duration || 1) * 100) + '%';});
+    v.addEventListener('pause', () => {if (trim.previewing && !v.seeking) stopPreview();});
+    $('crw-trim-cut-on').addEventListener('change', e => {
+      trim.cutOn = e.target.checked; hide('crw-trim-cut-fields', !trim.cutOn);
+      if (trim.cutOn && !(trim.cutTo > trim.cutFrom)) {const from = Math.max(trim.start, Math.min(trim.end - 1, v.currentTime || (trim.start + trim.end) / 2 - 0.5)); trim.cutFrom = from; trim.cutTo = Math.min(trim.end, from + 1);}
+      drawTrim();
+    });
+    for (const [key, id] of Object.entries(TRIM_FIELDS)) $(id).addEventListener('change', () => {
+      const t = seconds($(id).value); if (!Number.isFinite(t)) {$(id).setAttribute('aria-invalid', 'true'); text('crw-trim-summary', 'Type a time like 1:05.2 (minutes:seconds) or 65.2.'); return;}
+      setTrim(key, t); v.currentTime = trim[key];
+    });
+    for (const button of all('[data-trim-set]')) button.addEventListener('click', () => setTrim(button.dataset.trimSet, v.currentTime || 0));
+    const at = e => {const r = bar.getBoundingClientRect(); return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * trim.duration;};
+    bar.addEventListener('pointerdown', e => {if (e.target.classList.contains('crw-trim-handle') || trim.busy) return; stopPreview(); v.currentTime = at(e); drawTrim();});
+    for (const key of ['start', 'end']) {
+      const handle = $(`crw-trim-handle-${key}`);
+      handle.addEventListener('pointerdown', e => {if (trim.busy) return; e.preventDefault(); stopPreview(); v.pause(); handle.setPointerCapture(e.pointerId);});
+      handle.addEventListener('pointermove', e => {if (!handle.hasPointerCapture(e.pointerId)) return; setTrim(key, at(e)); v.currentTime = trim[key];});
+      handle.addEventListener('keydown', e => {
+        const step = {ArrowLeft: -1, ArrowRight: 1}[e.key]; if (!step) return; e.preventDefault();
+        setTrim(key, trim[key] + step * (e.shiftKey ? 1 : 0.1)); v.currentTime = trim[key];
+      });
+    }
+  }
   async function openOutput(job) {
     try {
       const data = await api(`/api/result/${encoded(job.slug)}`); if (!data.video) throw new Error('This project has no finished video to open yet.');
@@ -981,7 +1130,7 @@
         // a video drawn by its style's own code: no timeline (its minutes are whole animations), and why, plainly
         if (saved.no_timeline) {$('crw-output-editor').hidden = true; hide('crw-output-timing', true); if (saved.improve) {$('crw-output-editor').href = saved.improve; text('crw-output-editor-label', 'Improve this style'); $('crw-output-editor').hidden = false;}}
         text('crw-output-message', [saved.no_timeline || '', lines.length ? 'Sound check: ' + lines.join(' · ') : ''].filter(Boolean).join(' '));} catch (_) {/* the sound check is optional */}
-      $('crw-output').showModal();
+      $('crw-output').showModal(); loadTrim(job.slug);
     } catch (e) {toast(e.message);}
   }
   function celebrate(job) {
@@ -1408,7 +1557,8 @@
   $('crw-output-video').addEventListener('loadedmetadata',()=>{const v=$('crw-output-video');v.classList.toggle('is-tall',v.videoHeight>v.videoWidth*1.1);});
   $('crw-output-video').addEventListener('emptied',()=>$('crw-output-video').classList.remove('is-tall'));
   $('crw-output-close').addEventListener('click',()=>{$('crw-output-video').pause();$('crw-output').close();});
-  $('crw-output').addEventListener('close',()=>{$('crw-output-video').pause();$('crw-output-video').removeAttribute('src');$('crw-output-video').load();});
+  wireTrim();
+  $('crw-output').addEventListener('close',()=>{stopPreview();hide('crw-trim',true);$('crw-output-video').pause();$('crw-output-video').removeAttribute('src');$('crw-output-video').load();});
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
   $('crw-projects-refresh').addEventListener('click',()=>{refreshActivity(true);claudeOverall();});
   $('crw-delete-confirm').addEventListener('click',confirmDelete);

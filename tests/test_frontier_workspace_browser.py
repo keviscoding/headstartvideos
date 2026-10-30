@@ -465,6 +465,30 @@ def workspace(browser):
             return jsonify(error="Cancellation is bound to the exact active run."), 409
         return jsonify(ok=True)
 
+    # Trim (cr_trim, cut for real in tests/test_studio_trim.py): the page's side of it, with a trim that takes two polls
+    env.trim = {"duration": 6.0, "trimmed": False, "polls": 0}
+
+    @app.get("/cr-workspace/trim/<slug>")
+    def trim_state(slug):
+        t = env.trim
+        if t["polls"]:
+            t["polls"] -= 1
+            return jsonify(running=True, progress=0.5, trimmed=False, error="")
+        return jsonify(slug=slug, trimmed=t["trimmed"], running=False, progress=0, error="", duration=t["duration"],
+                       **({"original_duration": 6.0} if t["trimmed"] else {}))
+
+    @app.post("/cr-workspace/trim/<slug>")
+    def trim_start(slug):
+        body = request.json
+        parts = [[body["start"], body["remove"][0]], [body["remove"][1], body["end"]]] if body["remove"] else [[body["start"], body["end"]]]
+        env.trim.update(polls=2, trimmed=True, duration=round(sum(b - a for a, b in parts), 3))
+        return jsonify(started=True, parts=parts), 202
+
+    @app.post("/cr-workspace/trim/<slug>/undo")
+    def trim_undo(slug):
+        env.trim.update(trimmed=False, duration=6.0)
+        return jsonify(undone=True, duration=6.0)
+
     server = make_server("127.0.0.1", 0, app, threaded=True)
     assert server.server_port != 7860
     worker = threading.Thread(target=server.serve_forever, daemon=True)
@@ -1154,6 +1178,75 @@ def test_unfinished_and_stopped_studies_show_in_my_styles_and_the_clone_bar_says
     page.locator('[data-family="custom"]').click()
     assert page.locator("#crw-gallery-grid .crw-study-card").count() == 2
     assert "2 style studies not finished" in page.locator("#crw-gallery-count").inner_text()
+
+
+def test_a_finished_video_is_trimmed_without_ai_and_undo_puts_it_back(workspace, tmp_path):
+    """thatguygab (2026-10-30): "Sometimes I just want to trim the video to match the VO but I need to prompt it which
+    takes even longer." Trim sets a start, an end and one part to cut out, previews the result, cuts it on this
+    computer (no AI, no cost) and Undo puts the untrimmed video back."""
+    import shutil
+    import subprocess
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg makes the test film")
+    film = tmp_path / "film.webm"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x415573:s=160x90:d=6:r=25",
+                    "-c:v", "libvpx-vp9", "-b:v", "50k", "-g", "5", str(film)], check=True, timeout=60)
+    env, page = workspace, workspace.page
+    env.video_file = str(film)
+    env.open("#projects")
+    page.get_by_role("button", name="Video & exports", exact=True).click()
+    page.locator("#crw-output").wait_for(state="visible")
+    page.wait_for_function("document.querySelector('#crw-output-video').readyState >= 1")
+    assert page.locator("#crw-trim-undo-row").is_hidden()
+    page.get_by_role("button", name="Trim", exact=True).click()
+    assert page.locator("#crw-output-trim").get_attribute("aria-expanded") == "true"
+    assert page.locator("#crw-trim-start").input_value() == "0:00.0" and page.locator("#crw-trim-end").input_value() == "0:06.0"
+    assert page.locator("#crw-trim-apply").is_disabled(), "nothing to trim yet"
+    page.locator("#crw-trim-start").fill("0.5")
+    page.locator("#crw-trim-start").press("Tab")
+    page.locator("#crw-trim-end").fill("0:05")
+    page.locator("#crw-trim-end").press("Tab")
+    page.locator("#crw-trim-handle-end").press("Shift+ArrowLeft")          # the handle moves by keyboard too
+    assert page.locator("#crw-trim-end").input_value() == "0:04.0"
+    page.locator("#crw-trim-cut-on").check()
+    page.locator("#crw-trim-cut-from").fill("1.5")
+    page.locator("#crw-trim-cut-from").press("Tab")
+    page.locator("#crw-trim-cut-to").fill("2.5")
+    page.locator("#crw-trim-cut-to").press("Tab")
+    assert page.locator("#crw-trim-summary").inner_text() == "New length 0:02.5, 0:03.5 cut (was 0:06.0)."
+    assert page.locator("#crw-trim-gap").is_visible()
+    page.locator("#crw-trim-end").fill("soon")
+    page.locator("#crw-trim-end").press("Tab")
+    assert page.locator("#crw-trim-end").get_attribute("aria-invalid") == "true"
+    assert "Type a time like 1:05.2" in page.locator("#crw-trim-summary").inner_text()
+    # Preview plays the kept parts only: it never shows the cut part and stops at the new end
+    page.evaluate("""() => {const v = document.querySelector('#crw-output-video'); window.seen = [];
+        v.addEventListener('timeupdate', () => window.seen.push(v.currentTime));}""")
+    page.locator("#crw-trim-preview").click()
+    page.wait_for_function("document.querySelector('#crw-trim-preview').textContent === 'Preview'", timeout=8000)
+    seen = page.evaluate("window.seen")
+    assert seen and min(seen) >= 0.45 and max(seen) <= 4.1, seen
+    assert not [t for t in seen if 1.6 < t < 2.4], seen
+    if os.environ.get("CR_SHOT"):
+        page.locator("#crw-output").screenshot(path=os.environ["CR_SHOT"].replace(".png", "-trim.png"))
+    page.locator("#crw-trim-apply").click()
+    page.locator("#crw-trim-progress").wait_for(state="visible")
+    assert page.locator("#crw-output-video").get_attribute("src") is None, "the player lets go of the file (Windows)"
+    page.locator("#crw-trim-undo-row").wait_for(state="visible")
+    trim_post = [p for p in env.posts if p["path"] == "/cr-workspace/trim/finished-film"]
+    assert trim_post == [{"path": "/cr-workspace/trim/finished-film", "body": {"start": 0.5, "end": 4, "remove": [1.5, 2.5]}}]
+    assert page.locator("#crw-trim").is_hidden()
+    assert page.locator("#crw-output-video").get_attribute("src").startswith("/f/video/finished-film?v=")
+    assert "Trimmed to 0:02.5" in page.locator("#crw-output-message").inner_text()
+    assert page.locator("#crw-trim-undo-text").inner_text().startswith("Trimmed from 0:06.0 to 0:02.5.")
+    page.get_by_role("button", name="Undo trim").click()
+    page.locator("#crw-trim-undo-row").wait_for(state="hidden")
+    assert env.posts[-1]["path"] == "/cr-workspace/trim/finished-film/undo"
+    assert page.locator("#crw-output-message").inner_text() == "The untrimmed video is back."
+    page.locator("#crw-output-close").click()
+    page.get_by_role("button", name="Video & exports", exact=True).click()       # opens fresh, not trimmed
+    page.locator("#crw-output").wait_for(state="visible")
+    assert page.locator("#crw-trim").is_hidden() and page.locator("#crw-trim-undo-row").is_hidden()
 
 
 def test_a_finished_video_is_deleted_into_the_trash_and_undo_brings_it_back(workspace):
