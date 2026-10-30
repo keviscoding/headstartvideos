@@ -28,6 +28,16 @@ PACKLESS = {"ranking"}                                       # pipelines that ne
 # relative on Mac and Linux: our nice 10 under their own os.nice(10) ran the Short at 19, the very lowest.
 SELF_LOWERING = {"ranking"}
 SECONDS = (15, 60)
+# Pipelines that make longer Shorts with an AI voice, up to these seconds (a YouTube Short is at most 3 minutes). Roblox
+# story channels' 90-150 s Shorts get the most views (184 measured: median 7M vs 1.9M under 45 s); the others stay at 60.
+LONG_SECONDS = {"roblox": 180}
+
+
+def max_seconds(info) -> int:
+    """The longest Short this recipe makes with an AI voice."""
+    shorts = info.get("shorts") if isinstance(info, dict) else None
+    pipe = str(shorts.get("pipeline") or "zack3d") if isinstance(shorts, dict) else ""
+    return LONG_SECONDS.get(pipe, SECONDS[1])
 KEEP_LINES = 2000                                            # of a run's output, for short/stopped.log
 
 
@@ -166,7 +176,7 @@ def seconds_of(info: dict, features, extra: str = "") -> int:
         want = int(want) if want is not None else int((info.get("shorts") or {}).get("seconds") or 25)
     except (TypeError, ValueError):
         want = 25
-    return max(SECONDS[0], min(SECONDS[1], want))
+    return max(SECONDS[0], min(max_seconds(info), want))
 
 
 def ready(home: Path = HOME) -> list:

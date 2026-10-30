@@ -293,6 +293,26 @@ def test_a_shorts_recipe_quotes_its_own_cost_per_short(studio):
     assert ok("quote", {"style": "cr-shorts-3d"})["media"]["per_video_usd"] == 0.02   # no estimate: the voice price
 
 
+def test_a_roblox_short_can_run_three_minutes_and_is_quoted_at_its_length(studio):
+    """JP (Discord, 2026-10-30) asked for 2-minute Roblox Shorts and Create stopped at 60 seconds."""
+    for row in CATALOG["channels"]:
+        if row["name"] == "cr-shorts-roblox":
+            row["short_max"] = 180
+    try:
+        long = {"short_seconds": 165}
+        q = ok("quote", {"style": "cr-shorts-roblox", "options": long})
+        assert q["short_seconds"] == 165 and q["media"]["per_video_usd"] == 1.8      # $0.60 for 55 s, three times
+        assert q["quote_id"] != ok("quote", {"style": "cr-shorts-roblox"})["quote_id"], "a 55 s quote isn't a 165 s one"
+        ok("make_videos", {"titles": ["The floor is lava"], "style": "cr-shorts-roblox", "where": "this_computer",
+                           "quote_id": q["quote_id"], "options": long})
+        assert studio.posted("/api/run")[0]["extra"].startswith("[[short_seconds=165]] ")
+        assert ok("quote", {"style": "cr-shorts-roblox", "options": {"short_seconds": 900}})["short_seconds"] == 180
+        assert ok("quote", {"style": "cr-shorts-3d", "options": {"short_seconds": 120}})["short_seconds"] == 60
+    finally:
+        for row in CATALOG["channels"]:
+            row.pop("short_max", None)
+
+
 def test_the_daily_model_check_is_run_once_when_it_is_the_only_blocker(studio):
     studio.run_answers = [tools.Refused("Complete this video's setup before starting.", 409,
                                         {"blockers": ["Verify both Claude models in setup."]}),

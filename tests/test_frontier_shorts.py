@@ -31,6 +31,16 @@ def test_the_length_comes_from_the_page_then_the_recipe_and_stays_in_range():
     assert shorts.seconds_of({"format": "short"}, {"short_seconds": "bad"}, "") == 25
 
 
+def test_roblox_story_shorts_run_up_to_three_minutes_and_the_others_a_minute():
+    """JP (Discord, 2026-10-30) wanted 2-minute Roblox Shorts; the channels' 90-150 s Shorts get the most views."""
+    roblox = {"format": "short", "shorts": {"pipeline": "roblox", "seconds": 55}}
+    assert shorts.max_seconds(roblox) == 180 and shorts.max_seconds({"format": "short", "shorts": {}}) == 60
+    assert shorts.seconds_of(roblox, {}, "[[short_seconds=120]]") == 120
+    assert shorts.seconds_of(roblox, {}, "[[short_seconds=900]]") == 180      # a YouTube Short is at most 3 minutes
+    photo = {"format": "short", "shorts": {"pipeline": "photo2d", "seconds": 25}}
+    assert shorts.seconds_of(photo, {}, "[[short_seconds=120]]") == 60
+
+
 def test_a_studio_without_the_pipelines_or_the_pack_says_what_is_missing(tmp_path):
     missing = shorts.ready(tmp_path)
     assert any("pipelines" in m for m in missing) and any("asset pack" in m for m in missing)

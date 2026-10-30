@@ -1425,6 +1425,34 @@ def test_a_style_cloned_from_a_shorts_recipe_is_made_as_a_short(workspace):
     assert not env.errors
 
 
+def test_roblox_story_shorts_offer_up_to_three_minutes_and_the_other_shorts_one(workspace):
+    """JP (Discord, 2026-10-30): "Why do the exact opposite of what is requested, which is a 2-minute video?" Create
+    stopped every Short at 60 seconds; Roblox Story Shorts (and clones of them) now run up to 3 minutes."""
+    env, page = workspace, workspace.page
+    env.catalog["channels"] += cr_presentation.presentation_catalog([
+        {"name": "cr_clone_lava", "label": "My Roblox clone", "short_seconds": 55, "short_max": 180,
+         "own_recording": True},
+        {"name": "cr-shorts-3d", "short_seconds": 25, "short_max": 60, "own_recording": False}])
+    env.open("?cr-preset=cr_clone_lava")
+    two = page.locator("[data-seconds='120']")
+    assert two.is_visible() and page.locator("[data-seconds='180']").is_visible()
+    two.click()
+    assert page.inner_text("#crw-summary-duration") == "2 minutes"
+    page.locator("#crw-title").fill("The floor is lava")
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    assert env.creates[0]["body"]["extra"].startswith("[[short_seconds=120]] ")
+    # a Short that stops at a minute hides the longer lengths, and a longer one typed in is refused, said plainly
+    env.open("?cr-preset=cr-shorts-3d")
+    assert two.is_hidden() and page.locator("[data-seconds='60']").is_visible()
+    assert page.input_value("#crw-seconds") == "25"
+    page.locator("#crw-seconds").fill("120")
+    page.locator("#crw-title").fill("Why cats purr")
+    page.locator("#crw-create").click()
+    page.wait_for_function("document.getElementById('crw-error')?.textContent.includes('between 15 and 60 seconds')")
+    assert not env.errors
+
+
 def test_roblox_story_shorts_take_my_recording_and_the_other_shorts_say_they_voice_their_own(workspace):
     """Primo (Discord, 2026-10-29) pitches the Adam voice 1.3x in CapCut and uploads that take as a Roblox Story
     Short's narration, but Create refused My recording for every Short ("Shorts write and voice their own narration").

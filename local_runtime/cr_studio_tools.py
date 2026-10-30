@@ -270,7 +270,8 @@ def style_card(row: dict, thumb: str = "") -> dict:
             "family": row.get("family") or "", "kind": kind(row), "mine": bool(row.get("custom")),
             "renders_on": ["this_computer"] + ([] if block else ["studio_cloud"]),
             "cloud_note": block, "media_cost": one_line(row.get("cost"), 220) if row.get("cost") else "",
-            "short_seconds": row.get("short_seconds"), "needs_panels": bool(row.get("panels")),
+            "short_seconds": row.get("short_seconds"), "short_max": row.get("short_max"),
+            "needs_panels": bool(row.get("panels")),
             "thumbnail_path": thumb, "preview_url": link(row["preview_url"]) if row.get("preview_url") else "",
             # a few moving seconds of the style (cr_recipe_clips): the gallery plays it on hover; a link to show them
             "moving_preview_url": clip_link(row.get("preview_clip")),
@@ -356,7 +357,13 @@ def thumbnail_count(row: dict, options: dict) -> int:
         return 2
 
 
-def media_estimate(cat: dict, row: dict, minutes: int, features: dict, thumbnails: int = 0) -> dict:
+def short_seconds_for(row: dict, options: dict) -> int:
+    """A Short's length: options.short_seconds, else its recipe's own, from 15 up to the longest its recipe makes."""
+    return max(15, min(int(options.get("short_seconds") or row.get("short_seconds") or 25), int(row.get("short_max") or 60)))
+
+
+def media_estimate(cat: dict, row: dict, minutes: int, features: dict, thumbnails: int = 0,
+                   seconds: int | None = None) -> dict:
     prices = cat.get("prices") or {}
     per = prices.get("features") or {}
     voice = float(((prices.get("voice") or {}).get("per_min")) or 0)
@@ -369,6 +376,8 @@ def media_estimate(cat: dict, row: dict, minutes: int, features: dict, thumbnail
     each = total * minutes + coded_usd(row, minutes)
     if kind(row) == "short" and isinstance(row.get("short_cost_usd"), (int, float)):
         each = float(row["short_cost_usd"])                        # the recipe's own estimate for one Short
+        if seconds and row.get("short_seconds"):
+            each *= seconds / float(row["short_seconds"])          # (at its own length: voice and sound go with length)
     # the YouTube thumbnails: one AI picture each on the image account, none when the creator turns them off
     thumbs = {"count": thumbnails, "usd": round(thumbnails * picture_usd(cat), 2), "offered": kind(row) != "short",
               "note": "Each YouTube thumbnail is one AI picture on your image account. options.thumbnails=false "
@@ -387,10 +396,10 @@ def media_estimate(cat: dict, row: dict, minutes: int, features: dict, thumbnail
 
 
 def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, features: dict,
-              thumbnails: int = 0) -> dict:
-    media = media_estimate(cat, row, minutes, features, thumbnails)
+              thumbnails: int = 0, seconds: int | None = None) -> dict:
+    media = media_estimate(cat, row, minutes, features, thumbnails, seconds)
     out = {"style": row["name"], "style_name": row.get("label"), "titles": titles, "minutes": minutes,
-           "where": where, "media": media}
+           **({"short_seconds": seconds} if seconds else {}), "where": where, "media": media}
     if where == "studio_cloud":
         block = cloud_block(row)
         if block:
@@ -461,7 +470,10 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
                           "stops_watching_after_minutes": b["stop_minutes"], "note": cr_watch.estimate_text(minutes)
                           + " Turn off the youtube feature (options.features) for a faster video without real footage."}
     key = json.dumps([row["name"], titles, minutes, where, sorted(k for k, v in features.items() if v)]
-                     + ([thumbnails] if thumbnails != 2 else []))       # the usual 2 keeps quote ids as they were
+                     + ([thumbnails] if thumbnails != 2 else [])       # the usual 2 keeps quote ids as they were
+                     # a Short priced by its length, at another length than its recipe's own: quoted at that length
+                     + ([seconds] if seconds and row.get("short_cost_usd") is not None
+                        and seconds != row.get("short_seconds") else []))
     out["quote_id"] = "q_" + hashlib.sha256(key.encode()).hexdigest()[:16]
     quotes = _read(STATE / "quotes.json")
     quotes = {k: v for k, v in quotes.items() if time.time() - v < QUOTE_SECONDS}
@@ -853,7 +865,8 @@ def tool_quote(args):
         raise Refused("options must be an object.")
     character_choice(row, options, where)
     q = quote_for(cat, row, titles=titles, minutes=minutes, where=where, features=features_for(row, options.get("features")),
-                  thumbnails=thumbnail_count(row, options))
+                  thumbnails=thumbnail_count(row, options),
+                  seconds=short_seconds_for(row, options) if kind(row) == "short" else None)
     if character_note(row, options):
         q["character"] = character_note(row, options)
     return q
@@ -903,7 +916,7 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
     if p["script"] and len(titles) > 1:
         raise Refused("Your own script goes with one title.")
     if kind(row) == "short":
-        seconds = max(15, min(int(options.get("short_seconds") or row.get("short_seconds") or 25), 60))
+        seconds = short_seconds_for(row, options)
         if row.get("ranking"):
             r = options.get("ranking") or {}
             ranking = {"ranks": max(3, min(int(r.get("ranks") or 5), 10)),
@@ -1018,7 +1031,8 @@ def tool_make_videos(args):
             return resume_first_answer(found["matches"], found.get("others") or [])
     issued = _read(STATE / "quotes.json").get(str(args.get("quote_id") or ""))
     q = quote_for(cat, row, titles=len(titles), minutes=minutes, where=where, features=features,
-                  thumbnails=thumbnail_count(row, options))
+                  thumbnails=thumbnail_count(row, options),
+                  seconds=short_seconds_for(row, options) if kind(row) == "short" else None)
     if character_note(row, options):
         q["character"] = character_note(row, options)
     if args.get("quote_id") != q["quote_id"] or not issued or time.time() - issued > QUOTE_SECONDS:
@@ -2087,7 +2101,7 @@ _OPTIONS = {"type": "object", "description": (
     "each at the default model: the quote drops by that), thumbnail_count 1-4, description (YouTube "
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
     "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
-    "short_seconds 15-60 for Shorts, quicker_3d_review (true: one 3D review round instead of three, about a quarter "
+    "short_seconds for Shorts (15 up to the style's short_max: 60, or 180 for Roblox Story Shorts), quicker_3d_review (true: one 3D review round instead of three, about a quarter "
     "to a third less Claude time on a 3D video, fewer last fixes; Create's Quicker 3D review), frame_check (a style "
     "drawn in code: false skips the check where Claude looks at each minute's frames before they are drawn and "
     "re-plans it once when it finds something clear; default Studio's setting, quote's frame_check says its time), "

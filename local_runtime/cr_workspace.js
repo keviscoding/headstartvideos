@@ -197,6 +197,7 @@
   // a style cloned from a Shorts recipe is one too (its family says Animation or My styles): JP's Roblox clones showed
   // the minutes picker and every Short came out at the recipe's own length (2026-10-30)
   const isShort = (r) => String(r?.family || '') === 'Shorts' || Number.isFinite(r?.short_seconds);
+  const shortMax = (r) => Number(r?.short_max) || 60;   // the longest Short its recipe makes (Roblox Story Shorts: 3 min)
   const isRanking = (r) => !!r?.ranking;   // Ranking Shorts: real clips counted down; their length comes from the clips
   // My recording: every long-video recipe, and the Shorts recipes a recording can narrate (Roblox Story Shorts, Primo
   // 2026-10-29: his own pitched take); the other Shorts write and voice their own narration (catalog own_recording)
@@ -211,7 +212,9 @@
     const own = takesRecording(state.selected), ownButton = document.querySelector('[data-narration-mode="own"]');
     if (ownButton) ownButton.hidden = !own;
     if (!own && state.narration === 'own') setNarration('ai');
-    hide('crw-short-duration', !s || rk || state.narration === 'own'); hide('crw-long-duration', s); hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
+    hide('crw-short-duration', !s || rk || state.narration === 'own'); hide('crw-long-duration', s);
+    const most = shortMax(state.selected); $('crw-seconds').max = most;
+    for (const b of all('[data-seconds]')) b.hidden = Number(b.dataset.seconds) > most; hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
     const tall = s || !!state.selected?.vertical;   // a style learned from Shorts is vertical too, at any length
     text('crw-canvas-label', tall ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', tall ? '9:16 vertical' : '16:9 landscape');
     if (s) for (const id of SHORT_ONLY_HIDDEN) hide(id, true);
@@ -222,7 +225,7 @@
     const fresh = !state.selected || state.selected.name !== recipe?.name;
     if (fresh && state.selected) error('');                       // another recipe: the last one's problems don't apply
     state.selected = recipe;
-    if (fresh && isShort(recipe) && recipe.short_seconds) { $('crw-seconds').value = recipe.short_seconds; chooseGroup('[data-seconds]', 'seconds', String(recipe.short_seconds)); }   // its own length
+    if (fresh && isShort(recipe) && recipe.short_seconds) { $('crw-seconds').value = Math.min(recipe.short_seconds, shortMax(recipe)); chooseGroup('[data-seconds]', 'seconds', $('crw-seconds').value); }   // its own length
     text('crw-selected-name', recipe.label); text('crw-selected-description', recipe.description || recipe.tagline);
     recipePreview($('crw-selected-art'),recipe);
     tags('crw-selected-tags', recipe.capabilities);
@@ -383,7 +386,7 @@
     const reads = scriptMinutes ? (scriptMinutes < 1 ? `about ${Math.max(5, Math.round(scriptMinutes * 60 / 5) * 5)} seconds` : `about ${Math.round(scriptMinutes * 10) / 10} minutes`) : '';
     text('crw-script-length', reads ? `${scriptWords} words: ${reads} of video at this style's reading pace. Your script sets the length.` : '');
     hide('crw-script-length', !reads);
-    text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) && !isShort(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) && state.narration !== 'own' ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
+    text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) && !isShort(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) && state.narration !== 'own' ? (n => n % 60 || n < 120 ? `${n} seconds` : `${n / 60} minutes`)(number('crw-seconds',25,15,shortMax(r))) : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
     thumbsSummary();
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     // a cloned style reads with its own narrator (the kind of voice its channel has), else the account's voice
@@ -1083,7 +1086,7 @@
   function schedule() {clearTimeout(state.timer);state.timer=setTimeout(async()=>{await refreshActivity();schedule();},document.hidden?15000:state.busy||state.openJob?2500:10000);}
   function payload() {
     const title = [$('crw-title').value.trim(),...$('crw-batch-titles').value.split('\n').map(v=>v.trim()).filter(Boolean)].filter(Boolean).join('\n');
-    if (!title) throw new Error('Give your video a title or idea.'); if (title.split('\n').some(t=>t.length>280)) throw new Error('Keep each title under 280 characters. Put detailed guidance in Extra instructions.'); if (title.split('\n').length>30) throw new Error('Create up to 30 titles in one batch.'); if (!state.selected) throw new Error('Choose a visual recipe.'); const short=isShort(state.selected); if (short) {const sec=Number($('crw-seconds').value); if (state.narration!=='own' && (!Number.isInteger(sec)||sec<15||sec>60)) throw new Error('Choose a Short length between 15 and 60 seconds.'); if (state.narration==='own' && !takesRecording(state.selected)) throw new Error(`${state.selected.label || 'This Shorts recipe'} writes and voices its own narration. Choose AI narration.`);} else {const duration=Number($('crw-minutes').value); if (!Number.isInteger(duration)||duration<1||duration>60) throw new Error('Choose a whole-number duration between 1 and 60 minutes.');}
+    if (!title) throw new Error('Give your video a title or idea.'); if (title.split('\n').some(t=>t.length>280)) throw new Error('Keep each title under 280 characters. Put detailed guidance in Extra instructions.'); if (title.split('\n').length>30) throw new Error('Create up to 30 titles in one batch.'); if (!state.selected) throw new Error('Choose a visual recipe.'); const short=isShort(state.selected); if (short) {const sec=Number($('crw-seconds').value); const most=shortMax(state.selected); if (state.narration!=='own' && (!Number.isInteger(sec)||sec<15||sec>most)) throw new Error(`Choose a Short length between 15 and ${most} seconds${most>=120?` (${most/60} minutes)`:''}.`); if (state.narration==='own' && !takesRecording(state.selected)) throw new Error(`${state.selected.label || 'This Shorts recipe'} writes and voices its own narration. Choose AI narration.`);} else {const duration=Number($('crw-minutes').value); if (!Number.isInteger(duration)||duration<1||duration>60) throw new Error('Choose a whole-number duration between 1 and 60 minutes.');}
     if (state.input==='script' && !$('crw-script').value.trim()) throw new Error('Paste your narration script, or choose My idea.');
     if (state.narration==='own' && !state.audio) throw new Error('Choose your narration recording first.');
     if (state.narration==='own' && title.includes('\n')) throw new Error('Use one title for an uploaded narration recording.');
@@ -1110,7 +1113,7 @@
       const ranking={ranks:number('crw-ranks',5,3,10),commentary:checked('crw-rank-commentary'),booms:checked('crw-rank-booms'),sfx:$('crw-rank-sfx').value,
         punch_ins:checked('crw-rank-punch'),clean:checked('crw-rank-clean'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{}),...(reference?{reference}:{})};
       p.extra=`[[ranking=${JSON.stringify(ranking)}]] `+(p.extra||'');}
-    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';if(pictureUse()!=='avatar'){p.character='';p.character_image='';}p.threed_look='';p.threed_quick=false;}
+    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,shortMax(state.selected))}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';if(pictureUse()!=='avatar'){p.character='';p.character_image='';}p.threed_look='';p.threed_quick=false;}
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
