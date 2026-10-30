@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
 import cr_claude
 import cr_recover as recover
+import cr_threed_resume
 
 TOKEN = "synthetic-recover-token"
 BASE = "http://127.0.0.1:7860"
@@ -722,3 +723,23 @@ def test_a_music_cues_own_receipt_never_holds_up_a_free_resume(tmp_path):
     d = recover.diagnose(tmp_path, job, server_stages=[])
     assert d["media"] == [] and d["free_to_resume"]
     assert recover.safe_to_resume(job, home=tmp_path, server_stages=[])[0]
+
+
+def test_a_3d_video_stopped_in_its_review_can_finish_with_the_review_so_far(studio_env):
+    """Swapnil (Claude Pro, 2026-10-30): the choice is saved for this video, and then a plain Resume carries it on
+    with nothing approved (the stopped review call never runs again)."""
+    env = studio_env
+
+    def finish(on):
+        return env.client.post("/cr-workspace/threed-finish/" + env.job.name, json={"finish": on}, base_url=BASE,
+                               headers={"X-CR-Local-Token": TOKEN})
+    assert finish(True).status_code == 409, "offered only for a stop in the 3D picture review"
+    cache = env.home / "output" / "cr-claude-cache" / PROJECT
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / f"{S1}.json").write_text(json.dumps({"state": "failed", "label": "3D picture review, round 3",
+                                                  "error_code": "timeout"}), encoding="utf-8")
+    got = finish(True)
+    assert got.status_code == 200 and got.get_json()["recovery"]["free_to_resume"]
+    assert post(env, env.job.name, {"only_if_free": True}).status_code == 200
+    assert env.submitted == [PROJECT] and env.bridge.calls == [], "resumed, and no stopped step was approved"
+    assert finish(False).status_code == 200 and not cr_threed_resume.finishing(env.job)

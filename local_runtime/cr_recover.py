@@ -226,6 +226,8 @@ def run_ended(job, state, failure=None) -> None:
             # a finished video needs no kept 3D review pictures (cr_threed_resume; the answers are small and stay)
             import shutil
             shutil.rmtree(Path(job) / "threed" / "review_keep" / "previews", ignore_errors=True)
+            import cr_threed_resume                            # the choice was for that run's review only
+            cr_threed_resume.choose_finish(job, False)
     except OSError:
         pass
 
@@ -491,6 +493,13 @@ def diagnose(home, job, *, server_stages=None, allowance=None, message="", claud
     since = float(run.get("started") or 0)
     stages = stuck_stages(home, project_id, server_stages, allowance=allowance, now=now,
                           claude_ready=claude_ready) if project_id else []
+    finish = threed_finish(job, stages)
+    if finish["chosen"]:
+        # the creator chose to finish with the 3D review so far: its stopped calls never run again (cr_threed_resume)
+        for s in stages:
+            if s.get("label", "").startswith("3D picture review") and (s["needs_approval"] or s.get("fix_first")):
+                s.update(needs_approval=False, fix_first="", skipped=True, may_have_spent=False,
+                         reason="Skipped: you chose to finish with the 3D review so far.", spent_note="")
     media = stuck_media(job, since=since, message=message)
     stop = last_stop(job, home)
     stopped_on = ("claude_stage" if stages else "media" if media else "local" if stop["kind"] == "local" else "")
@@ -511,6 +520,7 @@ def diagnose(home, job, *, server_stages=None, allowance=None, message="", claud
         out.update(reset_at=reset["reset_at"], reset_label=reset.get("reset_label") or "",
                    reset_passed=bool(reset.get("reset_passed")))
     out["groups"] = stage_groups(stages)
+    out["threed_finish"] = finish
     if usage:
         import cr_allowance
         threed = any(s.get("label", "").startswith("3D picture review") for s in stages)
@@ -540,7 +550,7 @@ def stage_groups(stages) -> list:
     for s in stages or []:
         name = s.get("label") or (GROUP_NAMES.get(s.get("kind"), "Claude steps") + (
             " (Opus)" if s.get("model_role") == "visual" else " (Sonnet)" if s.get("model_role") == "general" else ""))
-        if s.get("status") == "retry_allowed" or s.get("never_started"):
+        if s.get("status") == "retry_allowed" or s.get("never_started") or s.get("skipped"):
             what = s.get("reason", "")
         else:
             what = GROUP_WORDS.get(s.get("error_code") if s.get("status") != "authorized" else "",
@@ -560,6 +570,31 @@ def stage_groups(stages) -> list:
         else:
             row["line"] = f"{row['name']} ({n} call{'' if n == 1 else 's'}): {what}"
         out.append(row)
+    return out
+
+
+def threed_finish(job, stages) -> dict:
+    """Whether this video can finish with its 3D review so far (it stopped in the 3D picture review: Swapnil, Claude
+    Pro, 2026-10-30), whether the creator chose it, and how far the review got, in words for the stopped card."""
+    import cr_threed_resume
+    chosen = cr_threed_resume.finishing(job)
+    available = chosen or any(s.get("label", "").startswith("3D picture review") and
+                              (s.get("needs_approval") or s.get("fix_first")) for s in stages or [])
+    out = {"available": available, "chosen": chosen}
+    if not available:
+        return out
+    so_far = cr_threed_resume.review_so_far(job)
+    cur, rounds, answered = so_far["round"], so_far["rounds"], so_far["answered"]
+    done = max(0, cur - 1)
+    if done:
+        said = (f"Review round{'s' if done > 1 else ''} {'1' if done == 1 else f'1-{done}'} of {rounds or done + 1} "
+                f"{'is' if done == 1 else 'are'} finished and {'its' if done == 1 else 'their'} fixes are kept")
+    else:
+        said = "No review round has finished yet"
+    said += (f"; {answered} part{'' if answered == 1 else 's'} of round {cur} {'is' if answered == 1 else 'are'} "
+             "reviewed too" if answered and cur else "")
+    out.update(so_far, note=f"{said}. The shots Claude hasn't checked yet go to the final render as they are, with "
+                             "no more Claude for the review. Only this video changes.")
     return out
 
 
@@ -1006,6 +1041,25 @@ def install(studio, activity, *, token, home=None, bridge=None, start_watcher=Tr
             return jsonify(error=str(error)), 404
         except Exception:                                      # noqa: BLE001
             return jsonify(error="Studio couldn't read this video's saved work."), 500
+
+    @app.post("/cr-workspace/threed-finish/<slug>")
+    def cr_threed_finish(slug):
+        """The creator's choice for a 3D video that stopped in its picture review: finish with the review so far
+        (finish true) or go back to trying the stopped review calls (false). Nothing runs: Resume carries it on."""
+        try:
+            import cr_threed_resume
+            job = find(slug)
+            if live_state(studio, job.name, saved_project(job).get("id")):
+                return jsonify(error="This video is being made now. Choose once it has stopped."), 409
+            finish = (request.get_json(silent=True) or {}).get("finish") is True
+            if finish and not threed_finish(job, look(job)["claude_stages"])["available"]:
+                return jsonify(error="This video didn't stop in its 3D picture review."), 409
+            cr_threed_resume.choose_finish(job, finish)
+            return jsonify(saved=True, finish=finish, recovery=look(job))
+        except Refused as error:
+            return jsonify(error=str(error)), 404
+        except Exception:                                      # noqa: BLE001
+            return jsonify(error="Studio couldn't save that choice."), 500
 
     @app.post("/cr-workspace/recovery/<slug>")
     def cr_recover_video(slug):

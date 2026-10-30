@@ -1221,6 +1221,14 @@ def _recovery(slug: str, out: dict) -> bool:
         out["stuck_claude_summary"] = [g.get("line") for g in r.get("groups") or [] if g.get("line")]
     if (r.get("claude_use") or {}).get("line"):
         out["claude_so_far"] = r["claude_use"]["line"]      # Studio's own count, never the plan's quota
+    fin = r.get("threed_finish") or {}
+    if fin.get("chosen"):
+        out["threed_review"] = "The creator chose to finish with the 3D review so far: resume_video(id) carries it on."
+    elif fin.get("available"):
+        # stopped in its 3D picture review (Claude's limit, usually): it can finish on the review so far, no more Claude
+        out["threed_finish_note"] = (fin.get("note") or "") + (" Ask the creator: try the stopped review calls again "
+                                     "(recover_video) or finish with the review so far: resume_video(id, "
+                                     "threed_review='finish'). Never choose for them.")
     if media:
         out["stuck_media"] = media
     out.update(needs_approval=bool(r.get("needs_approval")), free_to_resume=bool(r.get("free_to_resume")),
@@ -1310,6 +1318,11 @@ def tool_resume_video(args):
     presenter = str(args.get("presenter") or "").strip()
     if presenter:
         call("POST", "/cr-workspace/presenter-choice/" + _quote_path(slug), {"choice": presenter}, timeout=60)
+    threed_review = str(args.get("threed_review") or "").strip()
+    if threed_review:
+        if threed_review != "finish":
+            raise Refused("threed_review takes 'finish' (finish with the 3D review so far).")
+        call("POST", "/cr-workspace/threed-finish/" + _quote_path(slug), {"finish": True}, timeout=60)
     try:
         # a free resume only (cr_recover): one that would stop again at a step needing the creator's yes is refused;
         # while another video is made it joins Studio's queue like any Resume (cr_queue) and starts in its turn
@@ -1325,7 +1338,8 @@ def tool_resume_video(args):
             raise
     where = queue_place(result)
     return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
-            **({"presenter": presenter} if presenter else {}), **where,
+            **({"presenter": presenter} if presenter else {}),
+            **({"threed_review": threed_review} if threed_review else {}), **where,
             "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
             "next": queue_next(where) +
                     "It carries on from where it stopped and reuses everything already made (script, pictures, "
@@ -2227,8 +2241,15 @@ TOOLS = {
                      "shows presenter_choices (its AI presenter failed), ask and pass presenter: skip (finish without "
                      "the presenter) or again. Before again, read them the again choice's note: when "
                      "presenter_failed.uncertain is true, the last attempt got no clear answer and may have started, "
-                     "so again can pay for a second presenter; pass again only after they say yes to that.",
+                     "so again can pay for a second presenter; pass again only after they say yes to that. When it "
+                     "shows threed_finish_note (it stopped in its 3D picture review), ask whether to try those review "
+                     "calls again (recover_video) or finish with the review so far (threed_review: finish).",
                      _schema({"id": {"type": "string", "description": "video:<slug> from progress()."},
+                              "threed_review": {"type": "string", "enum": ["finish"],
+                                                "description": "Only for a video that stopped in its 3D picture "
+                                                               "review: finish with the review so far (the shots "
+                                                               "Claude hasn't checked go to the final render as they "
+                                                               "are; no more Claude for the review; this video only)."},
                               "presenter": {"type": "string", "enum": ["skip", "again"],
                                             "description": "Only for a video that stopped on its presenter: finish "
                                                            "without it (skip) or try it again (this video only; "

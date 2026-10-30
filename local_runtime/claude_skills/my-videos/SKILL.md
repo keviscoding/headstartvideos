@@ -28,6 +28,10 @@ Use ChannelRecipe Studio's tools (the `studio` server: `mcp__studio__…` in a S
      in, for one). When `usage_resets` is still ahead, offer
      `recover_video(id, key=recovery_key, when='after_reset')`: Studio carries it on by itself after the reset. Never
      approve for them.
+   - `threed_finish_note` (a 3D video stopped in its picture review, usually at Claude's limit): read it to them and
+     ask: try the stopped review calls again (`recover_video`, uses more Claude) or finish with the review so far
+     (`resume_video(id, threed_review='finish')`: the shots Claude hasn't checked go to the final render as they are,
+     no more Claude for the review, this video only). Never choose for them.
    - `carries_on_by_itself.would` true: Studio carries it on by itself within a minute or so (a closed Studio or a
      crash on this computer, nothing uncertain): nothing to do.
 5. To delete a video they ask to delete: say which one goes (its title from `list_videos` or `progress()`) and that

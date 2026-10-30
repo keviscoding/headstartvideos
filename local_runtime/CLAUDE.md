@@ -184,7 +184,10 @@ under Saved ideas.
   already have gone on it. Only after they say yes, `recover_video(id, key=recovery_key)` allows exactly those
   attempts and carries the video on, reusing everything else (Claude Code asks them too). `fix_first` items come
   first. When `usage_resets` is still ahead, `recover_video(id, key=recovery_key, when='after_reset')` has Studio
-  carry it on by itself after the reset. Never approve for them. A video whose voice was being made on their own
+  carry it on by itself after the reset. Never approve for them. A 3D video that stopped in its picture review shows
+  `threed_finish_note`: they may instead finish it with the review so far (`resume_video(id, threed_review='finish')`:
+  the shots Claude hasn't checked go to the final render as they are, no more Claude for the review). Ask; never
+  choose for them. A video whose voice was being made on their own
   voice account (no receipts) is never carried on by itself: offer `resume_video(id)`.
 - `make_videos` answering `resume_first`: those titles already stopped with their work saved. Offer to carry them on;
   `new_attempt=true` (a brand-new video that pays again for every step) only when they insist.
