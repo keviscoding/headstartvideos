@@ -81,13 +81,21 @@ def fingerprint(phone: str) -> str:
     return hmac.new(key, phone.encode(), hashlib.sha256).hexdigest()
 
 
+_ready: set = set()
+
+
 def initialize() -> None:
     store.initialize()
+    key = (db.IS_PG, db.DATABASE_URL if db.IS_PG else str(db.DB_PATH))   # tests swap the SQLite file
+    if key in _ready:
+        return
     real = "DOUBLE PRECISION" if db.IS_PG else "REAL"
     with db._conn() as conn:
+        db.schema_lock(conn, "creator_phone_tries")       # two containers boot together: one at a time
         conn.execute(f"""CREATE TABLE IF NOT EXISTS creator_phone_tries (
             user_id INTEGER NOT NULL, phone_hash TEXT NOT NULL, at {real} NOT NULL)""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_creator_phone_tries ON creator_phone_tries(user_id, at)")
+    _ready.add(key)
 
 
 def _tries(conn, field: str, value, since: float) -> int:

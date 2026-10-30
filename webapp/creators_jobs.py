@@ -429,17 +429,8 @@ def make_router(current_user) -> APIRouter:
     @router.post("/jobs/{job_id}/notes")
     async def post_notes(job_id: str, request: Request, user=Depends(need_user)):
         """A review round (creators/web/REVIEW.md): the creator's notes on a finished version, as multipart (a
-        "notes" JSON part, then each file under its path). Starts the next version as a child job."""
-        parent = store.get(job_id, user["id"])
-        if not parent:
-            raise HTTPException(404, "No such edit.")
-        if parent["status"] != "done":
-            raise HTTPException(409, "That edit isn't finished yet.")
-        root = parent.get("root") or parent["id"]
-        if not is_admin(user) and store.rounds(root) >= MAX_ROUNDS:
-            raise HTTPException(402, f"You've used the {MAX_ROUNDS} rounds of notes on this Reel.")
-        if store.running_for(user["id"]):
-            raise HTTPException(409, "One edit at a time: your last one is still going.")
+        "notes" JSON part, then each file under its path). Starts the next version as a child job. Only the body is
+        read here, on the event loop; the database, Spaces and Fly work runs in a worker thread (start_round)."""
         form = await request.form()
         part = form.get("notes")                     # a text field, or (review.js) a notes.json Blob part
         raw = (await part.read()).decode("utf-8", "replace") if hasattr(part, "read") else str(part or "")
@@ -461,25 +452,34 @@ def make_router(current_user) -> APIRouter:
             if len(data) > MAX_NOTE_FILE or total > MAX_NOTES_BYTES:
                 raise HTTPException(413, "The notes' recordings are too big. Keep each one under a minute.")
             files[name] = (data, getattr(part, "content_type", "") or "application/octet-stream")
+        return await run_in_threadpool(start_round, job_id, user, doc, files)
+
+    def start_round(job_id: str, user: dict, doc: dict, files: dict) -> dict:
+        parent = store.get(job_id, user["id"])
+        if not parent:
+            raise HTTPException(404, "No such edit.")
+        if parent["status"] != "done":
+            raise HTTPException(409, "That edit isn't finished yet.")
+        root = parent.get("root") or parent["id"]
+        if not is_admin(user) and store.rounds(root) >= MAX_ROUNDS:
+            raise HTTPException(402, f"You've used the {MAX_ROUNDS} rounds of notes on this Reel.")
+        if store.running_for(user["id"]):
+            raise HTTPException(409, "One edit at a time: your last one is still going.")
         j = store.create(user["id"], parent["look"], parent["take_key"], parent.get("take_name") or "",
                          parent["broll_keys"], free=False, notify=False, kind="notes", parent=parent["id"], root=root)
         base = parent["take_key"].split("/up/")[0] + f"/jobs/{j['id']}/"
-
-        def keep():
+        try:
             client, bucket = _storage()
             client.put_object(Bucket=bucket, Key=base + "notes.json", Body=json.dumps(doc).encode(),
                               ContentType="application/json")
             for name, (data, ctype) in files.items():
                 client.put_object(Bucket=bucket, Key=base + name, Body=data, ContentType=ctype)
-
-        try:
-            await run_in_threadpool(keep)
         except Exception as e:                       # noqa: BLE001 - say so now; the round isn't counted
             print(f"[creators] notes round {j['id']} couldn't store its notes: {e}")
             store.finish(j["id"], "failed", error="We couldn't save your notes. They're still here: try again.")
             raise HTTPException(503, "We couldn't save your notes. They're still here: try again.") from None
         if store.running_count() < max_running() and store.take_slot(j["id"]):
-            await run_in_threadpool(launch, j["id"])
+            launch(j["id"])
         j = store.get(j["id"])
         if j["status"] == "failed":
             raise HTTPException(503, "We couldn't start this round. Your notes are still here: try again.")
