@@ -1,5 +1,15 @@
 [
   {
+    "build": 119,
+    "date": "2026-10-30",
+    "title": "Cloned Shorts styles make their videos",
+    "items": [
+      "Fixed: a style cloned from a Shorts channel no longer blocks videos. Studio used to try writing an animation for it, which its Shorts never use, and when that failed the style said its videos wouldn't start. Now the study skips that step (less of your Claude usage), and the style's page says plainly that its Shorts are made by the recipe's own engine.",
+      "Fixed: Create shows the Shorts length for these styles. It used to show minutes, and the Short came out at the recipe's own length whatever you picked. Now you pick 15 to 60 seconds, like on the recipe itself.",
+      "Fixed: a study that can't download the channel's videos stops early. It says why (for example YouTube asking your computer to confirm it isn't a bot) instead of spending your Claude usage on an animation it can't write."
+    ]
+  },
+  {
     "build": 118,
     "date": "2026-10-30",
     "title": "Finish a stopped 3D video without waiting for Claude",

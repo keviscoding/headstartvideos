@@ -885,7 +885,7 @@ def test_youtube_listing_marks_shorts_and_says_plainly_when_a_channel_lists_noth
         assert "no long videos" not in str(error.value) and "No model request was made" in str(error.value)
 
 
-def _coded_study(approved, monkeypatch, *, frames=True):
+def _coded_study(approved, monkeypatch, *, frames=True, channel_frames=4, short=False):
     """A study written in code (Studio 109): the design, a free look at the references' frames, the art director and
     the renderer, with stand-ins for every Claude call; the motion-graphics learner fails the test if it runs."""
     events = []
@@ -893,8 +893,14 @@ def _coded_study(approved, monkeypatch, *, frames=True):
     folder.mkdir(parents=True)
     spec = clone._spec(approved.home, approved.spec)
     spec.update(style_id="cr_clone_coded", renderer="2d", look_id="lk_" + "a" * 24, answers={})
+    if short:
+        spec.pop("renderer")
+        spec["short"] = True
     sheet = folder / "frame.jpg"
     sheet.write_bytes(b"synthetic frame fixture")
+    # the channel's frames the renderer is written from (the look's stills and the study's own)
+    monkeypatch.setattr(clone, "renderer_frames", lambda folder, spec: [sheet] * channel_frames)
+    (folder / "study.log").write_text("learn: watch — not downloaded: yt-dlp: Sign in to confirm you're not a bot\n")
     monkeypatch.setattr(clone, "_look_material", lambda folder, spec: {
         "profile": {}, "media": {}, "sheets": [], "excerpts": {}, "channels": ["Reference creator"]})
 
@@ -960,6 +966,59 @@ def test_a_coded_study_whose_frames_cant_be_read_again_still_writes_its_renderer
     done = _coded_study(approved, monkeypatch, frames=False)
     assert done.events[-2:] == ["art", "renderer"], "the renderer is built from the look's frames"
     assert clone._read(done.folder / "validated-checkpoint.json")["record"]["reference"] == {}
+
+
+def test_a_coded_study_with_too_few_of_the_channels_frames_stops_before_claudes_animation(approved, monkeypatch):
+    """Lee's two Roblox clones (2026-10-30): no reference could be downloaded on his computer, yet the study ran the
+    art director and asked for a renderer that could only fail ("too few reference frames"). It now stops first and
+    says why the frames are missing."""
+    with pytest.raises(clone.StudyStopped) as stopped:
+        _coded_study(approved, monkeypatch, channel_frames=clone.RENDERER_MIN_FRAMES - 1)
+    said = str(stopped.value)
+    assert "too few of the channel's frames" in said and "confirm it isn't a bot" in said
+    assert "Claude's animation wasn't started" in said
+    folder = approved.home / "output/cr-style-clone" / ("op_" + "c" * 24)
+    assert not (folder / "validated-checkpoint.json").exists()
+
+
+def test_a_shorts_clone_writes_no_renderer_no_art_and_no_graphics_kit(approved, monkeypatch):
+    """A Shorts recipe's own engine draws every Short (cr_shorts.run_short): the study keeps the design and the free
+    look at the frames, and skips the art director, the renderer and the graphics learner, none of which its videos
+    use (Studio 119)."""
+    done = _coded_study(approved, monkeypatch, channel_frames=0, short=True)
+    assert done.events == ["design", ("watch", VIDEO)], "no art director, renderer or learner, even with no frames"
+    assert done.phases == ["design", "watch", "publish"]
+    record = clone._read(done.folder / "validated-checkpoint.json")["record"]
+    assert record["kit"] is None and record["no_kit"] == clone.SHORT_NO_KIT and record["from"] == "short"
+    assert "its recipe's engine draws every Short" in (done.folder / "study.log").read_text()
+    assert done.style["name"] == "cr_clone_coded"
+
+
+def test_a_study_on_a_shorts_recipe_is_planned_without_a_renderer(approved):
+    (approved.home / "styles/cr-shorts-roblox.json").write_text(json.dumps(
+        {"name": "cr-shorts-roblox", "label": "Roblox Story Shorts", "format": "short",
+         "shorts": {"pipeline": "roblox", "seconds": 55}}))
+    spec = clone._spec(approved.home, {**approved.spec, "base_style": "cr-shorts-roblox"})
+    assert spec["short"] is True and "renderer" not in spec
+    assert "short" not in clone._spec(approved.home, approved.spec), "a long-video recipe is planned as before"
+
+
+def test_a_shorts_style_is_never_blocked_by_a_renderer_it_doesnt_use(tmp_path):
+    """Lee's saved Roblox clone said "Videos in it won't start until you choose Use pictures instead", though every
+    Short in it is drawn by the Roblox Story Shorts engine."""
+    failed = {"look": {"visuals": "cr_animated3d", "animated2d": {"renderer": {
+        "state": "failed", "why": "too few reference frames to build a renderer from"}}}}
+    short = {**failed, "format": "short", "cr_style_clone": {"base_style": "cr-shorts-roblox"}}
+    told = clone.renderer_verdict(short, tmp_path)
+    assert told["state"] == "short" and "offer_pictures" not in told and "graphics_offered" not in told
+    assert "won't start" not in told["say"] and "recipe's own engine" in told["say"]
+    assert told["title"] == "How its videos are made"
+    assert clone.renderer_verdict(failed, tmp_path)["offer_pictures"], "a long-video style still gets the choice"
+    import cr_style_likeness
+    assert "Shorts style" in cr_style_likeness.wanted({**short, "look": {"still_suffix": "blocky", "image_model": "x"}})
+    import cr_readiness
+    assert not cr_readiness.drawn_by_renderer(short) and cr_readiness.drawn_by_renderer(failed)
+    assert not cr_readiness.drawn_by_renderer(None)
 
 
 def test_a_coded_study_is_saved_without_repeating_work_only_once_its_renderer_was_written(approved, monkeypatch):

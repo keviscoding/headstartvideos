@@ -1412,6 +1412,19 @@ def test_studio_cloud_asks_for_a_top_up_before_anything_starts(workspace):
         "Top up to render in the cloud"
 
 
+def test_a_style_cloned_from_a_shorts_recipe_is_made_as_a_short(workspace):
+    """JP (Discord, 2026-10-30): his Roblox clones showed the minutes picker (their family says My styles), he chose
+    2-3 minutes and every Short came out at the recipe's own 55 seconds. A clone of a Shorts recipe is a Short."""
+    env, page = workspace, workspace.page
+    env.catalog["channels"] += cr_presentation.presentation_catalog([
+        {"name": "cr_clone_lava", "label": "My Roblox clone", "short_seconds": 55, "own_recording": True}])
+    env.open("?cr-preset=cr_clone_lava")
+    assert page.locator("#crw-selected-name").inner_text() == "My Roblox clone"
+    assert page.locator("#crw-short-duration").is_visible() and page.locator("#crw-long-duration").is_hidden()
+    assert page.inner_text("#crw-summary-duration").endswith("seconds")
+    assert not env.errors
+
+
 def test_roblox_story_shorts_take_my_recording_and_the_other_shorts_say_they_voice_their_own(workspace):
     """Primo (Discord, 2026-10-29) pitches the Adam voice 1.3x in CapCut and uploads that take as a Roblox Story
     Short's narration, but Create refused My recording for every Short ("Shorts write and voice their own narration").

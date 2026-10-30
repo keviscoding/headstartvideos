@@ -413,6 +413,9 @@ def _spec(home, supplied):
     base_path = Path(home) / "styles" / (base + ".json")
     if not base_path.is_file() or not base_path.resolve().is_relative_to(Path(home).resolve()):
         raise ValueError("The chosen base preset is not installed.")
+    # a Shorts recipe (Roblox Story Shorts, 3D Explainer Shorts...) draws every Short with its own engine: a renderer
+    # written for the channel or a graphics kit would never be used (Studio 119)
+    short_base = _read(base_path).get("format") == "short"
     label, title = supplied.get("label"), supplied.get("title")
     if (not isinstance(label, str) or not 1 <= len(label.strip()) <= 80 or any(c in label for c in "\r\n")
             or not isinstance(title, str) or not 1 <= len(title.strip()) <= 280 or any(c in title for c in "\r\n")):
@@ -442,12 +445,14 @@ def _spec(home, supplied):
         import cr_style_map
         planned = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=base,
                                           answers=answers)
-        gap = (planned.get("route") or {}).get("medium_gap") if visual_mode != "reference_only" else ""
+        gap = (planned.get("route") or {}).get("medium_gap") if visual_mode != "reference_only" and not short_base else ""
         if gap and supplied.get("accept_medium") is not True:
             raise ValueError(gap + " Tick that you understand before starting, or wait for the update.")
         engine = (planned.get("route") or {}).get("engine")
         # "2d" / "3d": the study has the creator's Claude Code write the channel's renderer on that kit
         renderer = {"animated2d": "2d", "animated3d": "3d"}.get(engine, False) if visual_mode != "reference_only" else False
+        if short_base:
+            renderer = False
         # a style written in code draws its character in code: there is nowhere to upload one (the page offers the
         # answer only for pictures; this catches Claude Code's style tools too)
         if renderer and str(answers.get("host") or "").startswith("Yes, I'll upload"):
@@ -478,6 +483,7 @@ def _spec(home, supplied):
         "budget_minutes": budget, "max_calls": calls, "minutes": minutes,
         "visual_mode": visual_mode, "attempt_id": attempt_id, "accept_medium": supplied.get("accept_medium") is True,
         **({"renderer": renderer} if renderer else {}),
+        **({"short": True} if short_base else {}),
         **({"look_id": look_id, "answers": dict(answers)} if look_id else {})}
 
 
@@ -1160,7 +1166,11 @@ def status(home, operation_id, bridge):
                       board_available=(folder / "reflearn/board.jpg").is_file())
         learned = _read(folder / "study-result.json")
         result["reference_used"] = learned.get("reference_used", "")
-        result["captions_available"] = _read(folder / "reflearn/reference-evidence.json").get("captions_available") is True
+        evidence = _read(folder / "reflearn/reference-evidence.json")
+        result["captions_available"] = evidence.get("captions_available") is True
+        # the page said "inspected actual frames" for every study, also when no frame could be downloaded (a Roblox
+        # Shorts clone of 2026-10-30 whose references could not be downloaded)
+        result["frames_inspected"] = evidence.get("actual_frames") is True
         style = _read(Path(home) / "styles" / (saved["spec"]["style_id"] + ".json"))
         likeness = (style.get("cr_style_clone") or {}).get("likeness") or {}
         import cr_style_likeness
@@ -1194,7 +1204,7 @@ def status(home, operation_id, bridge):
                 renderer["improvement_id"] = change
             result["renderer"] = renderer
             # the page's headline; the panel below it (and the tools' what_to_tell_them) says the verdict once
-            result["message"] = ("Your style is saved." if renderer.get("state") in ("passed", "pictures", "unchecked")
+            result["message"] = ("Your style is saved." if renderer.get("state") in ("passed", "pictures", "unchecked", "short")
                                  else HEADLINES.get(renderer.get("state"))
                                  or "Your style is saved, but its animation needs your choice below.")
             if renderer.get("state") in HEADLINES:          # never "Your style is ready" for a style that isn't
@@ -1262,6 +1272,13 @@ def renderer_verdict(style, home=None) -> dict:
     {} for any other style."""
     clone = style.get("cr_style_clone") or {}
     recipe = _recipe_name(home, clone.get("base_style") or (clone.get("learned_v2") or {}).get("base"))
+    if style.get("format") == "short":
+        # a Shorts recipe's engine draws every Short (cr_shorts.run_short): a renderer or pictures never change them,
+        # so a renderer that couldn't be written never blocks them (Lee's two Roblox clones, 2026-10-30)
+        return {"state": "short", "title": "How its videos are made",
+                "say": f"Every video in this style is made by the {recipe} recipe's own engine, so it looks like "
+                       f"{recipe}: its characters, sets and lighting, not yet this channel's own. Studio doesn't "
+                       "write an animation for a Shorts style."}
     if clone.get("pictures_instead"):
         if has_kit(style):
             return {"state": "pictures", "say": "This style draws pictures in the channel's look (you chose pictures "
@@ -1900,11 +1917,26 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     genome = design["genome"]
     work = folder / learner.WORK
     work.mkdir(parents=True, exist_ok=True)
+    if spec.get("short"):
+        # a Shorts recipe's engine draws every Short: no renderer, art director or graphics kit to write (each was
+        # Claude usage for nothing, and a renderer that couldn't be written blocked the style's videos)
+        record = _coded_record(spec, clock, work, watch, log, no_kit=SHORT_NO_KIT)
+        _write(folder / "validated-checkpoint.json", {"schema": 1, "record": record,
+            "spec_sha256": _hash(spec), "assets": _validated_assets(folder, record)})
+        return finish_original(engine, folder, spec, design, record, progress,
+            learner=learner, designer=designer, log=log, report=clock.report())
     if coded_study(spec, looked):
         # Written in code: the channel's own renderer draws every picture, so the motion-graphics learner (Claude
         # writing, checking and repairing a graphics kit: 12 to 20 minutes of the creator's Claude usage in the owner's
         # test) never runs; its kit was never used. The references' frames and captions are still looked at (free).
         record = _coded_record(spec, clock, work, watch, log)
+        if len(renderer_frames(folder, spec)) < RENDERER_MIN_FRAMES:
+            # nothing to write the animation from (the references couldn't be downloaded on this computer): stop
+            # before the art director and renderer spend the creator's Claude usage on a build that can't pass
+            # (14 of 96 studies since 2026-10-25 ended so, Lee's two Roblox clones among them)
+            raise StudyStopped("Studio has too few of the channel's frames to write its animation from: "
+                               + _download_why(_study_log(folder)) + ". Claude's animation wasn't started, so no more "
+                               "of your Claude usage was spent. Look at the channel again once this is fixed.")
         progress("art")
         _art_director(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "art", prompt, images),
                       log)
@@ -1950,9 +1982,10 @@ def coded_study(spec, looked=True) -> bool:
 
 
 CODED_NO_KIT = "a style written in code has no graphics kit: its own renderer draws every picture"
+SHORT_NO_KIT = "a Shorts style has no graphics kit: its recipe's engine draws every Short"
 
 
-def _coded_record(spec, clock, work, watch, log) -> dict:
+def _coded_record(spec, clock, work, watch, log, no_kit=CODED_NO_KIT) -> dict:
     """The study record of a style written in code, with no Claude call: the references' frames and captions are
     looked at as the learner would (the look's downloaded sections are reused), for the renderer's frames and the
     study's evidence; no graphics kit is written. The first reference that gives frames is the one named as studied.
@@ -1965,9 +1998,10 @@ def _coded_record(spec, clock, work, watch, log) -> dict:
             studied = row
             break
     clock.end()
-    log("  graphics: no graphics kit for a style written in code; its own renderer draws every picture"
-        + ("" if studied else " (the references' frames couldn't be read again here: the renderer uses the look's)"))
-    return {"kit": None, "no_kit": CODED_NO_KIT, "from": "code",
+    log("  graphics: " + no_kit
+        + ("" if studied or no_kit != CODED_NO_KIT else
+           " (the references' frames couldn't be read again here: the renderer uses the look's)"))
+    return {"kit": None, "no_kit": no_kit, "from": "short" if no_kit == SHORT_NO_KIT else "code",
             "reference": {k: studied.get(k) for k in ("id", "title", "views", "ratio")} if studied else {},
             "with_brief": bool(str(spec.get("brief") or "").strip())}
 
@@ -2079,6 +2113,9 @@ def _renderer_effort():
         yield
 
 
+RENDERER_MIN_FRAMES = 3                  # cr_animated2d.build fails with fewer ("too few reference frames")
+
+
 def renderer_frames(folder, spec) -> list:
     """The channel's frames a renderer is built and checked against (at most 9, spread over its videos; the last one or
     two are held out to set the bar): the look's drawn frames, filled from the study's own when the look has few."""
@@ -2184,7 +2221,7 @@ def _apply_learned(folder, spec, style, log):
     if art.get("overrides"):
         cr_style_map._merge(learned, art["overrides"])
     cr_style_prompts.with_original_sound(learned)      # real clips are found only where the script marks them
-    if (mapping.get("route") or {}).get("engine") in ("animated2d", "animated3d"):
+    if (mapping.get("route") or {}).get("engine") in ("animated2d", "animated3d") and not spec.get("short"):
         # the characters are animated in code: no writer's words change how the video is made
         look = learned.setdefault("look", {})
         look.update(visuals=mapping["overrides"]["look"]["visuals"], animated2d=mapping["overrides"]["look"]["animated2d"])
@@ -2259,7 +2296,9 @@ def finish_original(engine, folder, spec, design, record, progress, *, learner=N
     if saved_style is not None:
         Path(saved_style).chmod(0o600)
     if record.get("no_kit"):
-        (log or print)("  graphics: no graphics kit; the style's own renderer draws its pictures")
+        (log or print)("  graphics: no graphics kit; " + ("its recipe's engine draws every Short"
+                                                          if record.get("from") == "short"
+                                                          else "the style's own renderer draws its pictures"))
     elif not designer.genkit(style, folder, log, invalidate=True):
         raise StudyStopped("The validated kit could not attach to this style. No default graphics were substituted.")
     # Original auto looks are hidden variants; make this an explicit selectable
