@@ -123,6 +123,7 @@
 .ltag { position: absolute; z-index: 2; left: 8px; top: 8px; padding: 3px 9px; border-radius: 999px; background: rgba(255, 255, 255, .94); color: var(--ink); font-size: 12px; font-weight: 600; }
 .look-card > b { margin-top: 10px; font-size: 14.5px; font-weight: 600; line-height: 1.3; }
 .lline { margin-top: 2px; min-height: 2.7em; font-size: 13px; color: var(--ink-3); line-height: 1.35; }
+.lneeds { display: block; margin: 2px 0 8px; font-size: 12px; font-weight: 550; color: var(--ink-2); }
 .look-card .btn { margin-top: 10px; }
 
 /* the bottom bar (phones and tablets): Home · New Reel · Styles, clear of the iPhone's home indicator */
