@@ -50,7 +50,8 @@ def basic(checks, *, verify_mcp=True):
             account.get("supported_versions") or [account.get("version")]),
              "A new Studio is out. Press Update now at the top of the studio page: it keeps your projects."),
         item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), checks.get("ffmpeg_reason") or
-             "Open Setup and press Fix it next to Video tools: Studio installs a full FFmpeg in its own folder."),
+             "Open Setup and press Fix it next to Video tools: Studio installs a full FFmpeg in its own folder.",
+             checks.get("ffmpeg_why") or ""),
         item("browser", "Graphics browser", checks.get("browser"), checks.get("browser_reason") or "Open Setup and press Fix it next to Graphics browser.",
              checks.get("browser_why") or ""),
         item("node", "JavaScript runtime", checks.get("node"), checks.get("node_reason") or

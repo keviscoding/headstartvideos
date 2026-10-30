@@ -1,5 +1,14 @@
 [
   {
+    "build": 122,
+    "date": "2026-10-30",
+    "title": "Trim a finished video without a prompt",
+    "items": [
+      "New: trim a finished video without a prompt. Open the video, then Trim. Drag the start and end (or cut out one part in the middle), preview it, and Studio cuts it on your computer in seconds. No AI and no cost, for long videos and Shorts. The untrimmed video is kept, and Undo trim puts it back.",
+      "Fixed: Setup names the security programs that may be holding FFmpeg. When FFmpeg's ffprobe starts but never answers, the FFmpeg check lists the antivirus and security programs running on your computer, so you know where to allow Studio's folder."
+    ]
+  },
+  {
     "build": 121,
     "date": "2026-10-30",
     "title": "Roblox Story Shorts finish more often",
