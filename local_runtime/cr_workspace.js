@@ -831,9 +831,9 @@
             toast(r.waiting ? 'It joins the queue and finishes with the review so far.' : 'Finishing with the 3D review so far. Everything already made is reused.');
             $('crw-progress-actions').replaceChildren(); await refreshActivity();
           } catch (e) {
-            // another stopped step still needs a yes: the card shows what is left
-            $('crw-progress-actions').replaceChildren();
-            if (e.details?.recovery) recoveryChoices(e.details.recovery); else text('crw-progress-note', e.message);
+            // another stopped step still needs a yes: the card shows what is left (otherwise Resume stays)
+            if (e.details?.recovery) {$('crw-progress-actions').replaceChildren(); recoveryChoices(e.details.recovery);}
+            else {text('crw-progress-note', `Saved: it finishes with the review so far. ${e.message}`); box.remove(); const plain = $('crw-progress-actions').querySelector('.crw-resume-saved'); if (plain) plain.hidden = false;}
           }
         } catch (e) {text('crw-progress-note', e.message); button.disabled = false;}
       });

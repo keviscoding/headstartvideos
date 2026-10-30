@@ -493,11 +493,13 @@ def diagnose(home, job, *, server_stages=None, allowance=None, message="", claud
     since = float(run.get("started") or 0)
     stages = stuck_stages(home, project_id, server_stages, allowance=allowance, now=now,
                           claude_ready=claude_ready) if project_id else []
+    import cr_threed_resume
     finish = threed_finish(job, stages)
     if finish["chosen"]:
         # the creator chose to finish with the 3D review so far: its stopped calls never run again (cr_threed_resume)
         for s in stages:
-            if s.get("label", "").startswith("3D picture review") and (s["needs_approval"] or s.get("fix_first")):
+            if s.get("label", "").startswith(cr_threed_resume.REVIEW_ROUND) and (s["needs_approval"]
+                                                                                  or s.get("fix_first")):
                 s.update(needs_approval=False, fix_first="", skipped=True, may_have_spent=False,
                          reason="Skipped: you chose to finish with the 3D review so far.", spent_note="")
     media = stuck_media(job, since=since, message=message)
@@ -577,13 +579,14 @@ def threed_finish(job, stages) -> dict:
     """Whether this video can finish with its 3D review so far (it stopped in the 3D picture review: Swapnil, Claude
     Pro, 2026-10-30), whether the creator chose it, and how far the review got, in words for the stopped card."""
     import cr_threed_resume
-    chosen = cr_threed_resume.finishing(job)
-    available = chosen or any(s.get("label", "").startswith("3D picture review") and
-                              (s.get("needs_approval") or s.get("fix_first")) for s in stages or [])
+    so_far = cr_threed_resume.review_so_far(job)
+    chosen = cr_threed_resume.finishing(job) and not so_far["finished"]
+    available = chosen or (not so_far["finished"] and any(
+        s.get("label", "").startswith(cr_threed_resume.REVIEW_ROUND) and (s.get("needs_approval") or s.get("fix_first"))
+        for s in stages or []))
     out = {"available": available, "chosen": chosen}
     if not available:
         return out
-    so_far = cr_threed_resume.review_so_far(job)
     cur, rounds, answered = so_far["round"], so_far["rounds"], so_far["answered"]
     done = max(0, cur - 1)
     if done:

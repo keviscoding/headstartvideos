@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
+import cr_claude  # noqa: E402
 import cr_recover  # noqa: E402
 import cr_studio_tools  # noqa: E402
 import cr_threed_resume as resume  # noqa: E402
@@ -28,7 +29,7 @@ def fake_threed(stop_at=None):
     """Shaped like threed.review, with its two Exception handlers: a review section whose call fails keeps its shots
     (_safe), and a preview round that fails sends the board on as it is."""
     mod = types.ModuleType("threed")
-    seen = {"renders": [], "calls": []}
+    seen = {"renders": [], "calls": [], "labels": []}
 
     def review_prompt(title, board, sheet_rows, words, issues, round_no, rounds, language_line="", context="",
                       checks=None, full_board=None, catalog=None, look=None):
@@ -50,6 +51,7 @@ def fake_threed(stop_at=None):
 
     def _look(engine, prompt, images, model, max_tokens):
         seen["calls"].append(prompt)
+        seen["labels"].append(cr_claude.stage_label())
         if stop_at is not None and len(seen["calls"]) == stop_at:
             raise Stop("usage limit")
         ids = prompt.split("shots ")[1].split(" rows")[0]
@@ -132,6 +134,30 @@ def test_stopped_in_the_last_round_it_finishes_with_no_claude_call_and_no_render
     fixed = {s["id"]: s.get("v", 0) for m in done["moments"] for s in m["scenes"]}
     assert fixed == {"m0s0": 2, "m0s1": 0, "m1s0": 1, "m1s1": 0, "m2s0": 1, "m2s1": 0}, \
         "rounds 1-2's fixes are kept; round 3's never-made fix isn't"
+    assert not resume.finishing(job), "the choice was for that review only"
+
+
+def test_answers_an_updated_engine_cant_reuse_stop_the_review_after_one_preview_round(job, monkeypatch):
+    stopped(job, 5)
+    resume.choose_finish(job)
+    monkeypatch.setattr(resume, "engine_version", lambda threed, what: "an updated engine")
+    again, seen = fake_threed()
+    resume.install(again)
+    run(again, job)
+    assert seen["calls"] == [] and seen["renders"] == ["previews round 1"], \
+        "round 1's answers don't match the new engine: rounds 2 and 3 aren't previewed only to be skipped"
+
+
+def test_the_clip_repair_after_the_review_is_named_apart_and_still_needs_a_yes(job, tmp_path):
+    mod, seen = fake_threed()
+    resume.install(mod)
+    mod._look(None, "frame these black clips: shots ['m0s0'] rows", [], "claude-opus", 8000)   # repair_pass
+    assert seen["labels"] == [resume.REPAIR_LABEL]
+    home = tmp_path / "home"
+    card = card_job(home)
+    resume.choose_finish(card)
+    d = cr_recover.diagnose(home, card, server_stages=stuck(home, ["3D picture review, round 3", resume.REPAIR_LABEL]))
+    assert [s["label"] for s in d["claude_stages"] if s["needs_approval"]] == [resume.REPAIR_LABEL]
 
 
 def test_a_round_with_nothing_answered_is_not_previewed(job):
@@ -211,6 +237,15 @@ def test_a_stop_outside_the_3d_review_doesnt_offer_it(tmp_path):
     job = card_job(tmp_path)
     d = cr_recover.diagnose(tmp_path, job, server_stages=stuck(tmp_path, ["3D shot planning"]))
     assert d["threed_finish"] == {"available": False, "chosen": False}
+
+
+def test_a_finished_review_doesnt_offer_it(tmp_path):
+    job = card_job(tmp_path)
+    (job / "threed" / resume.KEEP / "progress.json").write_text(json.dumps({"round": 3, "rounds": 3, "finished": True}),
+                                                                 encoding="utf-8")
+    resume.choose_finish(job)
+    d = cr_recover.diagnose(tmp_path, job, server_stages=stuck(tmp_path, ["3D picture review, round 3"]))
+    assert d["threed_finish"] == {"available": False, "chosen": False} and d["needs_approval"]
 
 
 def test_resume_video_passes_the_creators_choice(monkeypatch):
