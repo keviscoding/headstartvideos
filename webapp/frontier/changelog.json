@@ -1,5 +1,13 @@
 [
   {
+    "build": 117,
+    "date": "2026-10-30",
+    "title": "Roblox Story Shorts tell the story you asked for",
+    "items": [
+      "Fixed: Roblox Story Shorts no longer add timers or signs nobody asked for. A timer, a number on the chest or a sign above the head now appears only when your topic states a rule like that (\"In this town, everyone only has 1,000,000 steps\"). Any other topic is told as a normal story."
+    ]
+  },
+  {
     "build": 116,
     "date": "2026-10-29",
     "title": "Hindi, Fish Audio voices, video previews and your Claude use",
