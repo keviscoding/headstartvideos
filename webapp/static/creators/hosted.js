@@ -76,7 +76,6 @@
   }
   function showHostedBits() {
     $("#own-clips").hidden = false;
-    var proto = $(".proto span"); if (proto) proto.textContent = "Early access: real edits on our machines. Demo Reels belong to their creators.";
     ["#use-sample", '[data-open="qr"]', '[data-open="drive"]'].forEach(function (s) { var el = $(s); if (el) el.hidden = true; });
     var alt = $(".alt-row"); if (alt) alt.hidden = true;
     if (app()) app().preview();
