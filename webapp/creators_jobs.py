@@ -39,6 +39,8 @@ FREE_EDITS = 2
 MAX_TAKE_BYTES = 2 * 1024 ** 3            # 5 min of 4K phone video is ~1.9 GB
 MAX_CLIP_BYTES = 500 * 1024 ** 2
 MAX_CLIPS = 10
+REEL_LINK = re.compile(r"https?://((www|m|vm|vt)\.)?(tiktok\.com/|instagram\.com/(reel|reels|p)/|youtube\.com/(shorts/|watch\?)"
+                       r"|youtu\.be/)\S+$")              # what creators.learn.fetch (yt-dlp) can open
 UPLOAD_TYPES = {"video/mp4": ".mp4", "video/quicktime": ".mov", "video/x-m4v": ".m4v", "video/webm": ".webm"}
 LINK_SECONDS = 7 * 86400                  # the Reel's download link
 # A review round's files (creators/web/REVIEW.md): frames and drawings as PNG, voice notes as webm/m4a.
@@ -111,18 +113,24 @@ def _own_key(user_id: int, key: str) -> str:
 
 # ── the job, as the app sees it ───────────────────────────────────────────────────────────────────────────────
 
+def download_name(j: dict) -> str:
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", (j.get("take_name") or "reel").rsplit(".", 1)[0])[:60] or "reel"
+    return f"{name}-{j['look']}.mp4"
+
+
 def view(j: dict) -> dict:
     result = None
     if j["status"] == "done" and j.get("output_key"):
         r = j.get("result") or {}
-        name = re.sub(r"[^A-Za-z0-9._-]+", "-", (j.get("take_name") or "reel").rsplit(".", 1)[0])[:60] or "reel"
         result = {"video_url": signed_get(j["output_key"]),
-                  "download_url": signed_get(j["output_key"], filename=f"{name}-{j['look']}.mp4"),
+                  "download_url": signed_get(j["output_key"], filename=download_name(j)),
                   "poster_url": signed_get(j["poster_key"]) if j.get("poster_key") else "",
                   "take_url": signed_get(j["take_key"], 6 * 3600),
                   "seconds": r.get("seconds"), "review": r.get("review"), "summary": r.get("summary") or {},
                   "changes": r.get("changes"), "rendered": r.get("rendered", True)}
-    return {"id": j["id"], "look": j["look"], "look_name": LOOK_NAMES.get(j["look"], j["look"]), "status": j["status"],
+    style = ((j.get("result") or {}).get("summary") or {}).get("style") or {}     # a style learned from Reel links
+    return {"id": j["id"], "look": j["look"], "look_name": style.get("name") or LOOK_NAMES.get(j["look"], j["look"]),
+            "refs": j.get("refs") or [], "status": j["status"],
             "stage": j["stage"], "stages": j["stages"], "progress": j["progress"] if j["status"] != "done" else 1.0,
             "take_name": j.get("take_name") or "", "free": bool(j.get("free")), "result": result,
             "kind": j.get("kind") or "edit", "parent": j.get("parent") or "",
@@ -151,6 +159,97 @@ def check_alive(j: dict) -> dict:
     if j.get("machine_id") and j["machine_id"] != "pending" and not j["machine_id"].startswith("local-"):
         stop_machine(j["machine_id"])
     return store.get(j["id"])
+
+
+# ── projects: the creators home (big-frontier/dashboard-research.md) ─────────────────────────────────────────────
+# One take = one project = one card. Its first edit and every notes round after it (the `root` chain) are the
+# project's versions v1, v2, v3...; a round that failed or was cancelled gets no number.
+
+LIVE = ("queued", "starting", "running")
+
+
+def typical_minutes() -> int:
+    return int(_env("CREATORS_TYPICAL_MINUTES", "7") or 7)
+
+
+def minutes_left(j: dict, typical: int) -> int | None:
+    """The same estimate the editing screen shows: from the job's own pace once it's far enough in."""
+    if j["status"] not in LIVE:
+        return None
+    if not j.get("started_at"):
+        return typical
+    elapsed = max(0.0, time.time() - float(j["started_at"]))
+    p = float(j.get("progress") or 0)
+    left = elapsed / p - elapsed if p > 0.12 else typical * 60 - elapsed
+    return max(1, round(left / 60))
+
+
+def _stem(name: str) -> str:
+    return re.sub(r"\s+", " ", (name or "").rsplit(".", 1)[0].replace("_", " ")).strip()
+
+
+def _ref_style(refs: list) -> str:
+    """While an edit learns pasted Reels' style: whose ("@handle's style" from a TikTok link)."""
+    m = next((re.search(r"/@([A-Za-z0-9._]{2,40})", r) for r in refs if isinstance(r, str) and "/@" in r), None)
+    return f"@{m.group(1)}'s style" if m else "A pasted Reel's style" if refs else ""
+
+
+def project_view(chain: list[dict], typical: int) -> dict:
+    """A project as the home shows it. `chain` is its jobs in any order (check_alive already applied)."""
+    chain = sorted(chain, key=lambda j: j["created_at"])
+    first = next((j for j in chain if not j.get("parent")), chain[0])
+    root = first.get("root") or first["id"]
+    latest = chain[-1]
+    kept = [j for j in chain if j["status"] not in ("failed", "cancelled")]
+    number = {j["id"]: k + 1 for k, j in enumerate(kept)}
+    done = [j for j in kept if j["status"] == "done" and j.get("output_key")]
+    shown = done[-1] if done else None
+    summary = ((shown or {}).get("result") or {}).get("summary") or {}
+    title = (first.get("title") or "").strip() or summary.get("title") or summary.get("hook") \
+        or _stem(first.get("take_name") or "") or "Your Reel"
+    learned = next((s for s in (((j.get("result") or {}).get("summary") or {}).get("style") for j in reversed(done))
+                    if s and s.get("name")), {})                 # a style learned from Reel links (view() says it too)
+    look_name = learned.get("name") or (not done and _ref_style(latest.get("refs") or [])) \
+        or LOOK_NAMES.get(latest["look"], latest["look"])
+    live = latest["status"] in LIVE
+    in_line = store.ahead_of(latest) + 1 if latest["status"] == "queued" and not latest.get("machine_id") else 0
+    if live:
+        state = "making" if latest.get("kind") == "notes" else "queued" if in_line else "editing"
+    else:
+        state = "ready" if latest["status"] == "done" else "failed"
+    version = number.get(latest["id"]) or len(kept) + 1          # what the state talks about ("Making v3")
+    out = {"id": root, "title": title, "renamed": bool((first.get("title") or "").strip()),
+           "look": latest["look"], "look_name": look_name,
+           "state": state, "status": latest["status"], "kind": latest.get("kind") or "edit",
+           "progress": 1.0 if latest["status"] == "done" else float(latest.get("progress") or 0),
+           "in_line": in_line, "minutes_left": minutes_left(latest, typical), "notify": bool(latest.get("notify")),
+           "error": (latest.get("error") or "") if state == "failed" else "",
+           "version": version, "ready_version": number[shown["id"]] if shown else 0,
+           "versions": [{"id": j["id"], "n": number[j["id"]], "status": j["status"], "kind": j.get("kind") or "edit",
+                         "created_at": j["created_at"]} for j in kept],
+           "latest_id": latest["id"], "open_id": shown["id"] if shown else latest["id"],
+           "poster_url": "", "download_url": "", "take_url": "", "seconds": None,
+           "created_at": first["created_at"],
+           "updated_at": max(float(j.get("ended_at") or j.get("started_at") or j["created_at"]) for j in chain)}
+    if shown:
+        out.update(poster_url=signed_get(shown["poster_key"]) if shown.get("poster_key") else "",
+                   download_url=signed_get(shown["output_key"], filename=download_name(shown)),
+                   seconds=(shown.get("result") or {}).get("seconds"))
+    elif live and latest.get("take_key"):                      # still on its first edit: the raw take is the thumb
+        out["take_url"] = signed_get(latest["take_key"], 6 * 3600)
+    return out
+
+
+def projects_for(user_id: int) -> list[dict]:
+    """The creator's projects, most recently active first: one query, grouped here by `root`."""
+    groups: dict[str, list[dict]] = {}
+    for j in store.project_rows(user_id):
+        if j["status"] in LIVE:
+            j = check_alive(j)
+        groups.setdefault(j.get("root") or j["id"], []).append(j)
+    typical = typical_minutes()
+    projects = [project_view(chain, typical) for chain in groups.values()]
+    return sorted(projects, key=lambda p: p["updated_at"], reverse=True)
 
 
 def max_running() -> int:
@@ -300,6 +399,7 @@ class JobRequest(BaseModel):
     take_name: str = Field(default="", max_length=200)
     look: str = Field(max_length=40)
     broll_keys: list[str] = Field(default_factory=list, max_length=MAX_CLIPS)
+    refs: list[str] = Field(default_factory=list, max_length=3)      # Reel links: the edit learns their style first
     email: bool = True
 
 
@@ -310,6 +410,10 @@ class PhoneRequest(BaseModel):
 
 class NotifyRequest(BaseModel):
     on: bool = True
+
+
+class RenameRequest(BaseModel):
+    title: str = Field(default="", max_length=200)
 
 
 def make_router(current_user) -> APIRouter:
@@ -337,7 +441,7 @@ def make_router(current_user) -> APIRouter:
                 "looks": [{"key": k, "name": v} for k, v in LOOK_NAMES.items()], "free_edits": FREE_EDITS,
                 "phone_required": phone_required(), "max_clips": MAX_CLIPS,
                 # what the app promises at "Start": measured on the edit machines (handoffs/creators-hosted.md)
-                "typical_minutes": int(_env("CREATORS_TYPICAL_MINUTES", "7") or 7)}
+                "typical_minutes": typical_minutes()}
 
     @router.get("/me")
     def get_me(user=Depends(current_user)):
@@ -368,6 +472,9 @@ def make_router(current_user) -> APIRouter:
     def post_job(req: JobRequest, user=Depends(need_user)):
         if req.look not in LOOK_NAMES:
             raise HTTPException(400, "Pick one of the looks.")
+        refs = [r.strip() for r in req.refs if r.strip()]
+        if any(len(r) > 300 or not REEL_LINK.match(r) for r in refs):
+            raise HTTPException(400, "That link isn't a TikTok, Reel or Short. Open the video, tap Share, then Copy link.")
         take = _own_key(user["id"], req.take_key)
         clips = [_own_key(user["id"], k) for k in req.broll_keys]
         head = _head(take)
@@ -389,7 +496,7 @@ def make_router(current_user) -> APIRouter:
         if not admin and _today_count() >= cap:
             raise HTTPException(503, "We're at today's limit for free edits. Try again tomorrow.")
         name = req.take_name or take.rsplit("/", 1)[-1]
-        j = store.create(user["id"], req.look, take, name, clips, free=not admin, notify=req.email)
+        j = store.create(user["id"], req.look, take, name, clips, free=not admin, notify=req.email, refs=refs)
         if store.running_count() < max_running() and store.take_slot(j["id"]):
             launch(j["id"])                          # a free slot: its machine starts now; else it waits in line
         j = store.get(j["id"])
@@ -418,6 +525,37 @@ def make_router(current_user) -> APIRouter:
             if j.get("machine_id") and not j["machine_id"].startswith("local-"):
                 stop_machine(j["machine_id"])
         return view(store.get(job_id))
+
+    # ── the home: projects (one per take, its notes rounds as versions) ──
+    @router.get("/projects")
+    def get_projects(user=Depends(need_user)):
+        return {"projects": projects_for(user["id"])}
+
+    def own_project(root: str, user: dict) -> tuple[str, list[dict]]:
+        """The project's root id and its jobs; 404 when it isn't this creator's (or is deleted)."""
+        chain = store.project_chain(root, user["id"])
+        top = chain[0].get("root") or chain[0]["id"] if chain else ""
+        if top and top != root:                       # any version's id names its project
+            root, chain = top, store.project_chain(top, user["id"])
+        if not chain:
+            raise HTTPException(404, "No such Reel.")
+        return root, chain
+
+    @router.patch("/projects/{root}")
+    def rename_project(root: str, req: RenameRequest, user=Depends(need_user)):
+        """Rename a project (an empty title goes back to the one we wrote)."""
+        root, _ = own_project(root, user)
+        store.set_title(root, user["id"], re.sub(r"\s+", " ", req.title).strip()[:80])
+        return project_view(own_project(root, user)[1], typical_minutes())
+
+    @router.delete("/projects/{root}")
+    def delete_project(root: str, user=Depends(need_user)):
+        """Soft delete: gone from the home, files kept (a Trash view comes later)."""
+        root, chain = own_project(root, user)
+        if any(j["status"] in LIVE for j in chain):
+            raise HTTPException(409, "It's still editing. You can delete it once it's done.")
+        store.soft_delete(root, user["id"])
+        return {"ok": True, "id": root}
 
     @router.post("/jobs/{job_id}/notify")
     def notify_job(job_id: str, req: NotifyRequest, user=Depends(need_user)):

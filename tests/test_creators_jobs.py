@@ -110,6 +110,20 @@ def test_a_job_starts_one_machine_and_shows_the_workers_stages(api):
     assert disp and "my-take-energy.mp4" in disp[-1]["ResponseContentDisposition"].lower()
 
 
+def test_pasted_reel_links_ride_with_the_job_and_name_its_look(api):
+    """The owner's landing page promises "paste a Reel you love": the links reach the machine (which learns the style
+    first), anything that isn't a TikTok, Reel or Short is refused, and a learned style names the result."""
+    bad = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "energy",
+                                               "refs": ["https://example.com/tiktok.com/x"]})
+    assert bad.status_code == 400 and "TikTok" in bad.json()["detail"]
+    links = ["https://www.tiktok.com/@ahormozi/video/7689188323323120909", "https://www.instagram.com/reel/C1kzUmsRcEl/"]
+    job = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "energy", "refs": links}).json()
+    assert job["refs"] == links and store.get(job["id"])["refs"] == links and job["look_name"] == "Creator energy"
+    store.finish(job["id"], "done", output_key=f"creators/u7/jobs/{job['id']}/reel.mp4",
+                 result={"seconds": 30.0, "summary": {"style": {"name": "Your Alex Hormozi cut", "from": "bold"}}})
+    assert api.get(f"/api/creators/jobs/{job['id']}").json()["look_name"] == "Your Alex Hormozi cut"
+
+
 def test_someone_elses_upload_or_job_is_refused(api):
     up = upload(api)
     api.who["user"] = {"id": 8, "email": "other@creators.test", "plan": "free"}
@@ -360,3 +374,93 @@ def test_twilio_verify_calls_and_errors():
         raise AssertionError("should refuse")
     except phone.PhoneError as e:
         assert "can't get a text" in str(e)
+
+
+# ── the creators home: projects (one per take, its notes rounds as versions v1, v2...) ──
+
+def _round(api, parent_id, status="done"):
+    """A notes round on `parent_id`, finished with `status`."""
+    nxt = api.post(f"/api/creators/jobs/{parent_id}/notes",
+                   files=[("notes", (None, json.dumps(NOTES), "application/json"))]).json()
+    if status == "done":
+        store.finish(nxt["id"], "done", output_key=f"creators/u7/jobs/{nxt['id']}/reel.mp4",
+                     poster_key=f"creators/u7/jobs/{nxt['id']}/poster.jpg",
+                     result={"seconds": 39.0, "summary": {"title": "Three mistakes new creators make"}})
+    elif status:
+        store.finish(nxt["id"], status, error="The edit machine stopped answering. Nothing was charged: try again.")
+    return nxt
+
+
+def test_projects_group_a_take_and_its_rounds_newest_first(api):
+    first = finished_edit(api)                                      # v1, then a failed round, then v2
+    store.update(first["id"], poster_key=f"creators/u7/jobs/{first['id']}/poster.jpg")
+    _round(api, first["id"], "failed")
+    v2 = _round(api, first["id"])
+    other = api.post("/api/creators/jobs", json={"take_key": upload(api, name="IMG_4021.MOV")["key"],
+                                                 "take_name": "IMG_4021.MOV", "look": "story"}).json()
+    store.claim(other["id"], "m9")
+    store.set_stage(other["id"], "words", "done")
+    ps = api.get("/api/creators/projects").json()["projects"]
+    assert [p["id"] for p in ps] == [other["id"], first["id"]]       # the running one was active last
+    running, done = ps
+    assert running["state"] == "editing" and running["title"] == "IMG 4021" and running["version"] == 1
+    assert running["minutes_left"] >= 1 and 0.1 < running["progress"] < 1 and running["take_url"]
+    assert running["poster_url"] == "" and running["ready_version"] == 0 and running["notify"] is True
+    assert done["state"] == "ready" and done["version"] == 2 and done["ready_version"] == 2
+    assert [v["n"] for v in done["versions"]] == [1, 2]                 # the failed round got no number
+    assert done["open_id"] == done["latest_id"] == v2["id"]
+    assert done["title"] == "Three mistakes new creators make"         # written by the edit
+    assert "poster.jpg" in done["poster_url"] and v2["id"] in done["download_url"]
+    assert done["look_name"] == cj.LOOK_NAMES["energy"] and done["take_url"] == ""
+
+
+def test_project_states_making_a_version_and_one_that_did_not_finish(api):
+    first = finished_edit(api)
+    making = _round(api, first["id"], status="")                      # v2 still going
+    p = api.get("/api/creators/projects").json()["projects"][0]
+    assert p["state"] == "making" and p["version"] == 2 and p["ready_version"] == 1 and p["open_id"] == first["id"]
+    assert p["notify"] is False                                       # rounds don't email
+    store.finish(making["id"], "failed", error="The edit machine stopped answering. Nothing was charged: try again.")
+    p = api.get("/api/creators/projects").json()["projects"][0]
+    assert p["state"] == "failed" and p["version"] == 2 and p["ready_version"] == 1 and "Nothing was charged" in p["error"]
+    assert p["open_id"] == first["id"] and p["latest_id"] == making["id"]
+    api.who["user"] = {"id": 8, "email": "other@creators.test", "plan": "free"}
+    fail = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story"}).json()
+    store.finish(fail["id"], "failed", error="We couldn't start an edit machine.")
+    p = api.get("/api/creators/projects").json()["projects"][0]
+    assert p["state"] == "failed" and p["version"] == 1 and p["versions"] == [] and p["open_id"] == fail["id"]
+
+
+def test_rename_and_soft_delete_only_your_own_projects(api):
+    first = finished_edit(api)
+    v2 = _round(api, first["id"])
+    r = api.patch(f"/api/creators/projects/{first['id']}", json={"title": "  My   morning routine "})
+    assert r.status_code == 200 and r.json()["title"] == "My morning routine" and r.json()["renamed"]
+    assert api.get("/api/creators/projects").json()["projects"][0]["title"] == "My morning routine"
+    assert api.patch(f"/api/creators/projects/{v2['id']}", json={"title": ""}).json()["title"] == \
+        "Three mistakes new creators make"                                # any version names it; empty = ours again
+    api.who["user"] = {"id": 8, "email": "other@creators.test", "plan": "free"}
+    assert api.get("/api/creators/projects").json()["projects"] == []
+    assert api.patch(f"/api/creators/projects/{first['id']}", json={"title": "mine now"}).status_code == 404
+    assert api.delete(f"/api/creators/projects/{first['id']}").status_code == 404
+    api.who["user"] = USER
+    running = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "story"}).json()
+    assert api.delete(f"/api/creators/projects/{running['id']}").status_code == 409   # still editing
+    store.finish(running["id"], "done", output_key="k")
+    assert api.delete(f"/api/creators/projects/{first['id']}").json() == {"ok": True, "id": first["id"]}
+    assert [p["id"] for p in api.get("/api/creators/projects").json()["projects"]] == [running["id"]]
+    with db._conn() as conn:                                            # soft: the rows (and files) stay
+        rows = conn.execute("SELECT id, deleted_at FROM creator_jobs WHERE root=?", (first["id"],)).fetchall()
+    assert len(rows) == 2 and all(r["deleted_at"] for r in rows)
+    assert api.get("/api/creators/me").json()["free_left"] == 0          # deleting never gives an edit back
+    assert api.delete(f"/api/creators/projects/{first['id']}").status_code == 404
+
+
+def test_a_project_learned_from_pasted_reels_says_whose_style(api):
+    r = api.post("/api/creators/jobs", json={"take_key": upload(api)["key"], "look": "energy",
+                                              "refs": ["https://www.tiktok.com/@minolee/video/7301234567890123456"]})
+    job = r.json()
+    p = api.get("/api/creators/projects").json()["projects"][0]
+    assert p["state"] == "editing" and p["look_name"] == "@minolee's style"          # while it learns
+    store.finish(job["id"], "done", output_key="k", result={"summary": {"style": {"name": "Your Mino Lee cut"}}})
+    assert api.get("/api/creators/projects").json()["projects"][0]["look_name"] == "Your Mino Lee cut"

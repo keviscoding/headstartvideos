@@ -38,15 +38,20 @@ def initialize():
                 free INTEGER NOT NULL DEFAULT 0, notify INTEGER NOT NULL DEFAULT 1, emailed INTEGER NOT NULL DEFAULT 0,
                 machine_id TEXT NOT NULL DEFAULT '', created_at {real} NOT NULL, started_at {real},
                 heartbeat_at {real}, ended_at {real}, kind TEXT NOT NULL DEFAULT 'edit',
-                parent TEXT NOT NULL DEFAULT '', root TEXT NOT NULL DEFAULT '')""")
-            # a review round (kind "notes") is a child of the edit it revises; root is the first edit of the chain
+                parent TEXT NOT NULL DEFAULT '', root TEXT NOT NULL DEFAULT '', refs TEXT NOT NULL DEFAULT '[]')""")
+            # a review round (kind "notes") is a child of the edit it revises; root is the first edit of the chain;
+            # refs: the Reel links whose style the edit learns first (creators.looks.clone)
             have = {r["name"] for r in conn.execute("PRAGMA table_info(creator_jobs)").fetchall()} if not db.IS_PG \
                 else {r["column_name"] for r in conn.execute(
                     "SELECT column_name FROM information_schema.columns WHERE table_name='creator_jobs'").fetchall()}
-            for col in ("kind", "parent", "root"):
+            for col in ("kind", "parent", "root", "refs"):
                 if col not in have:
-                    default = "'edit'" if col == "kind" else "''"
+                    default = {"kind": "'edit'", "refs": "'[]'"}.get(col, "''")
                     conn.execute(f"ALTER TABLE creator_jobs ADD COLUMN {col} TEXT NOT NULL DEFAULT {default}")
+            # the creators home (projects): a title the creator gave the first edit's row, and a soft delete
+            for col, kind in (("title", "TEXT NOT NULL DEFAULT ''"), ("deleted_at", real)):
+                if col not in have:
+                    conn.execute(f"ALTER TABLE creator_jobs ADD COLUMN {col} {kind}")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_creator_jobs_user ON creator_jobs(user_id, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_creator_jobs_status ON creator_jobs(status)")
             # phone verification for free edits: only a hash of the number is kept, so one number = one account
@@ -74,15 +79,15 @@ def progress_of(stages: list[dict]) -> float:
 
 
 def create(user_id: int, look: str, take_key: str, take_name: str, broll_keys: list[str], *, free: bool,
-           notify: bool, kind: str = "edit", parent: str = "", root: str = "") -> dict:
+           notify: bool, kind: str = "edit", parent: str = "", root: str = "", refs: list[str] | None = None) -> dict:
     initialize()
     job_id = "ce_" + secrets.token_hex(8)
     with db._conn() as conn:
         conn.execute(db._q("""INSERT INTO creator_jobs (id, user_id, look, status, stages, take_key, take_name,
-            broll_keys, free, notify, created_at, kind, parent, root) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""),
+            broll_keys, free, notify, created_at, kind, parent, root, refs) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""),
                      (job_id, int(user_id), look, "queued", json.dumps(blank_stages(kind)), take_key, take_name[:200],
                       json.dumps(broll_keys), 1 if free else 0, 1 if notify else 0, time.time(), kind, parent,
-                      root or job_id))
+                      root or job_id, json.dumps(refs or [])))
     return get(job_id)
 
 
@@ -97,7 +102,7 @@ def rounds(root: str) -> int:
 
 def _parsed(row) -> dict:
     j = dict(row)
-    for k, empty in (("stages", "[]"), ("broll_keys", "[]"), ("result", "{}"), ("cost", "{}")):
+    for k, empty in (("stages", "[]"), ("broll_keys", "[]"), ("refs", "[]"), ("result", "{}"), ("cost", "{}")):
         try:
             j[k] = json.loads(j.get(k) or empty)
         except ValueError:
@@ -120,7 +125,7 @@ def get(job_id: str, user_id: int | None = None) -> dict | None:
 
 
 def update(job_id: str, **fields) -> None:
-    for k in ("stages", "broll_keys", "result", "cost"):
+    for k in ("stages", "broll_keys", "refs", "result", "cost"):
         if k in fields and not isinstance(fields[k], str):
             fields[k] = json.dumps(fields[k])
     sets = ",".join(f"{k}=?" for k in fields)
@@ -166,6 +171,34 @@ def finish(job_id: str, status: str, *, error: str = "", **fields) -> None:
 
 def list_for(user_id: int, limit: int = 20) -> list[dict]:
     return _select("user_id=?", (int(user_id), int(limit)), "ORDER BY created_at DESC LIMIT ?")
+
+
+def project_rows(user_id: int, limit: int = 2000) -> list[dict]:
+    """Every job of one creator that isn't deleted, newest first: the home groups them into projects by `root`."""
+    return _select("user_id=? AND deleted_at IS NULL", (int(user_id), int(limit)), "ORDER BY created_at DESC LIMIT ?")
+
+
+def project_chain(root: str, user_id: int) -> list[dict]:
+    """One project's jobs (the first edit and its notes rounds), oldest first; [] when it isn't theirs or is deleted."""
+    return _select("user_id=? AND (id=? OR root=?) AND deleted_at IS NULL", (int(user_id), root, root),
+                   "ORDER BY created_at")
+
+
+def set_title(root: str, user_id: int, title: str) -> bool:
+    initialize()
+    with db._conn() as conn:
+        cur = conn.execute(db._q("UPDATE creator_jobs SET title=? WHERE id=? AND user_id=? AND deleted_at IS NULL"),
+                           (title, root, int(user_id)))
+        return (cur.rowcount or 0) > 0
+
+
+def soft_delete(root: str, user_id: int) -> int:
+    """Hide a project from the home: every row of the chain gets deleted_at. Its files stay (a Trash comes later)."""
+    initialize()
+    with db._conn() as conn:
+        cur = conn.execute(db._q("UPDATE creator_jobs SET deleted_at=? WHERE user_id=? AND (id=? OR root=?) "
+                                 "AND deleted_at IS NULL"), (time.time(), int(user_id), root, root))
+        return int(cur.rowcount or 0)
 
 
 def free_used(user_id: int) -> int:

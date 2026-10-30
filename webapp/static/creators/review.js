@@ -51,6 +51,12 @@
     if (h) return { video: h.video, poster: h.poster };
     return A.cuts[k >= 2 ? 2 : 1];
   }
+  function verLabel(after) {   // a real Reel says its own version (the home opens any version); the demo has two cuts
+    var n = Math.max(1, A.S.version || 1);
+    if (hostedReel()) return after ? "New cut · v" + n : n > 1 ? "Your Reel · v" + n : "First cut · v1";
+    return after ? "Second cut · v2" : "First cut · v1";
+  }
+  function keepText() { return "Keep v" + (R.after ? Math.max(2, A.S.version || 2) : 2); }
   function vid() { return R.applied && R.ab === 1 ? v1 : R.applied ? v2 : v1; }   // the <video> on screen
   function showVid() { var v = vid(); v1.classList.toggle("on", v === v1); v2.classList.toggle("on", v === v2); }
 
@@ -124,6 +130,7 @@
     document.body.classList.add("rv-on");
     load().then(function () {
       if (!entered) { entered = true; showVid(); }
+      if (!R.applied) $("#rv-ver").textContent = verLabel(false);
       renderAll();
       if (R.applied) enterAfter(false);
       requestAnimationFrame(function () { sizeInk(); layoutStrip(); drawHead(vid().currentTime || 0); });
@@ -629,7 +636,7 @@
     var n = R.notes.length;
     $("#rv-count").textContent = n; $("#rv-count").classList.toggle("has", n > 0);
     $("#rv-finish").hidden = !n;
-    $("#rv-finish").textContent = R.applied ? "Keep v2" : "Finish review";
+    $("#rv-finish").textContent = R.applied ? keepText() : "Finish review";
     if (!R.applied) {
       $("#rv-rail-h").textContent = "Notes";
       $("#rv-tally").textContent = tally();
@@ -671,7 +678,7 @@
     R = { base: 1, notes: [], applied: false, ab: 2, reel: R.reel, after: null }; persist(); audioStore = {}; afterFrames = {};
     if (G.after) { G.after.drop(); G.after = null; }
     root.classList.remove("applied"); $("#rv-ab").hidden = true; $("#rv-restart").hidden = true; spansEl.innerHTML = ""; $("#rv-changes").hidden = true;
-    $("#rv-ver").textContent = "First cut · v1"; $("#rv-ver").classList.remove("v2");
+    $("#rv-ver").textContent = verLabel(false); $("#rv-ver").classList.remove("v2");
     v2.pause(); showVid(); clearSurface(); closeRail();
   }
   $("#rv-restart").addEventListener("click", function () {   // the demo has two real cuts, so a new round starts from the first
@@ -837,8 +844,8 @@
   function enterAfter(fresh) {
     root.classList.add("applied");
     $("#rv-ab").hidden = false; setAB(R.ab, fresh);
-    $("#rv-ver").textContent = "Second cut · v2"; $("#rv-ver").classList.add("v2");
-    $("#rv-finish").hidden = false; $("#rv-finish").textContent = "Keep v2";
+    $("#rv-ver").textContent = verLabel(true); $("#rv-ver").classList.add("v2");
+    $("#rv-finish").hidden = false; $("#rv-finish").textContent = keepText();
     var real = !!R.after;
     spansEl.innerHTML = (real ? R.notes.map(serverChange).filter(function (c) { return c && c.status === "changed"; }) : data ? data.changes : []).map(function (c) { return '<i style="left:' + (c.from / dur * 100) + "%;width:" + ((c.to - c.from) / dur * 100) + '%"></i>'; }).join("");
     $("#rv-rail-h").textContent = "What changed";
@@ -862,7 +869,7 @@
       return also.length ? '<li class="rv-also"><b>Also new in this cut</b><ul>' + also.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></li>" : "";
     })();
     $$(".rv-did svg, .rv-moment svg, .rv-badge svg", ch).forEach(function (s) { if (!s.closest(".rv-badge")) { s.setAttribute("width", "15"); s.setAttribute("height", "15"); } });
-    var b = $("#rv-apply"); b.disabled = false; b.textContent = "Keep v2"; b.dataset.mode = "keep";
+    var b = $("#rv-apply"); b.disabled = false; b.textContent = keepText(); b.dataset.mode = "keep";
     $("#rv-restart").hidden = real;
     $("#rv-proto").textContent = real ? "Your first cut stays as v1." : "Prototype: the after is our real second cut of this Reel, made from notes like these. Nothing is uploaded.";
     renderPins();
