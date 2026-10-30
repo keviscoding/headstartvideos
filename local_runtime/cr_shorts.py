@@ -409,6 +409,10 @@ def stop_message(work: Path, output: list) -> str:
     if isinstance(got, dict) and str(got.get("message") or "").strip():
         message, action = str(got["message"]).strip(), str(got.get("action") or "").strip()
         return message if not action or action in message else f"{message} {action}"
+    # a helper thread still working when the pipeline stopped fails as Python shuts down and says so AFTER the real
+    # reason ("props failed: cannot schedule new futures after interpreter shutdown"): that line never explains a stop
+    # (a customer saw it seven times on 2026-10-30 instead of what stopped their Roblox Short)
+    output = [l for l in output if "after interpreter shutdown" not in l]
     lines = [l.strip() for l in output if l.strip()]
     last = lines[-1] if lines else ""
     progress = bool(TIMESTAMP.match(last)) or "done:" in last
