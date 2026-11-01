@@ -1,99 +1,153 @@
-/* The creator kit (not filmed): what's going viral per pathway, the channels to copy, the hooks, the walkthrough
-   script with the real channel and numbers filled in, and the button that opens the Studio walkthrough to film. */
+/* The creator kit (owner, 2026-11-01: "even a grandma could do it"): today's video is already picked, a real winning
+   example plays right there, and the shots are listed with exactly what to say, filled in for today's topic. Creators
+   can switch to another video to remake or another topic; the viral channels for the topic sit below, then places to
+   find more inspiration. Data: the CDN's pathways.json + trending.json (sandbox/pathways.py, scout.py). */
 (() => {
   "use strict";
   const BASE = "/ugc-sandbox/";
   const CDN = "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/ugc-sandbox/";
-  const fresh = () => `?h=${Math.floor(Date.now() / 6e5)}`;   // the data changes daily; the CDN keeps it 10 min
+  const MEDIA = CDN + "v1/";
+  const BOT = "https://t.me/CRCreatorsBot";
+  const fresh = () => `?h=${Math.floor(Date.now() / 6e5)}`;
   const $ = (s, el = document) => el.querySelector(s);
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const views = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n || 0);
-  let data, trend;
+  const short = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n || 0);
+  const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } } };
+  let D, T, tpl, path;
 
-  function toast(t) {
-    const d = document.createElement("div");
-    d.className = "toast"; d.textContent = t; document.body.append(d);
-    setTimeout(() => d.remove(), 1400);
-  }
-  async function copy(text) {
-    try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { prompt("Copy this:", text); }
-  }
+  const toast = (t) => { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.append(d); setTimeout(() => d.remove(), 1500); };
+  async function copy(text) { try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { prompt("Copy this:", text); } }
 
-  function fill(s, p, top) {
-    return s.replaceAll("{search}", p.search).replaceAll("{channel}", top ? top.channel : "this channel")
-      .replaceAll("{views}", top ? views(top.views) : "millions of").replaceAll("{topic}", p.ideas[0] || p.topic)
-      .replaceAll("{keyword}", p.keyword).replaceAll("{n}", "1");
+  async function json(name) {
+    for (const url of [CDN + name + fresh(), BASE + name]) {
+      try { const r = await fetch(url); if (r.ok) return await r.json(); } catch (e) { /* next */ }
+    }
+    return null;
   }
 
-  function cards() {
-    $("#paths").innerHTML = data.pathways.map((p) => `
-      <button class="path" type="button" data-id="${esc(p.id)}">
-        <span class="tag">${esc(p.tag)}</span><b>${esc(p.name)}</b><p>${esc(p.why)}</p>
-        <span class="state ${p.result ? "" : "wait"}">${p.result ? "Ready to film" : "Video being made"}</span>
-      </button>`).join("");
-    $("#paths").addEventListener("click", (e) => {
-      const b = e.target.closest(".path");
-      if (b) open(b.dataset.id, true);
+  const ready = () => D.pathways.filter((p) => p.result);
+  const top = (p) => ((T.pathways || {})[p.id] || [])[0];
+  function fill(s, p) {
+    const t = top(p);
+    return String(s).replaceAll("{short}", p.short).replaceAll("{search}", p.search)
+      .replaceAll("{channel}", t ? t.channel : "this channel").replaceAll("{views}", t ? short(t.views) : "millions of")
+      .replaceAll("{topic}", p.ideas[0] || p.topic).replaceAll("{keyword}", p.keyword).replaceAll("{n}", "N");
+  }
+  const embed = (plat, id) => plat === "tt" ? `https://www.tiktok.com/embed/v2/${id}` : `https://www.instagram.com/reel/${id}/embed/`;
+  const thumb = (plat, id) => `${MEDIA}ex_${plat === "tt" ? "tt" : "ig"}-${id}.jpg`;
+
+  function pickToday() {
+    const day = Math.floor(Date.now() / 864e5);
+    const saved = new URLSearchParams(location.hash.slice(1));
+    tpl = D.templates.find((t) => t.id === saved.get("t")) || D.templates[day % D.templates.length];
+    path = ready().find((p) => p.id === saved.get("p")) || ready()[day % ready().length];
+  }
+
+  function player(ex) {
+    const [plat, id, views, who] = ex;
+    return `<div class="player" data-plat="${plat}" data-id="${esc(id)}"><img src="${thumb(plat, id)}" alt="">
+      <button type="button" aria-label="Play the example">▶</button><small>${esc(views)} views · @${esc(who)}</small></div>`;
+  }
+
+  function renderToday() {
+    const p = path, t = tpl;
+    const key = `done:${new Date().toDateString()}:${t.id}:${p.id}`;
+    const done = new Set(JSON.parse(store.get(key) || "[]"));
+    const says = t.shots.map((s) => fill(s.say, p)).filter((s) => !s.startsWith("("));
+    $("#today").innerHTML = `
+      <div>${player(t.examples[0])}
+        ${t.examples.length > 1 ? `<div class="others">${t.examples.map((e, i) => `<button type="button" data-ex="${i}">Example ${i + 1} · ${esc(e[2])}</button>`).join("")}</div>` : ""}
+      </div>
+      <div>
+        <p class="label">Today's video</p>
+        <h3>${esc(fill(t.name, p))}</h3>
+        <div class="chips"><span class="chip">About: ${esc(p.name)}</span><span class="chip plain">${esc(t.length)}</span><span class="chip plain">${esc(t.tag)}</span></div>
+        <p class="muted">${esc(t.why)} Watch the example first, then film these shots, in any order:</p>
+        <ol class="shots">${t.shots.map((s, i) => `
+          <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
+            <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">${s.kind === "screen" ? "film your laptop" : "your face"}</span></div>
+            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div></div></li>`).join("")}</ol>
+        <div class="actions">
+          <a class="btn" href="studio#${esc(p.id)}" target="_blank" rel="noopener">Open the walkthrough →</a>
+          ${t.id === "dayn" ? `<a class="btn ghost" href="${MEDIA}wheel_${esc(p.id)}.mp4" target="_blank" rel="noopener">Open the wheel</a>` : ""}
+          ${says.length ? `<button class="btn ghost" type="button" id="copy-says">Copy what to say</button>` : ""}
+          <a class="btn ghost" href="${BOT}" target="_blank" rel="noopener">Send my clips to the bot</a>
+        </div>
+        <div class="switch"><button class="btn ghost small" type="button" id="next-t">↻ Different video</button>
+          <button class="btn ghost small" type="button" id="next-p">↻ Different topic</button></div>
+      </div>`;
+    $("#today").querySelectorAll("[data-ex]").forEach((b) => b.addEventListener("click", () => {
+      $("#today .player").outerHTML = player(t.examples[+b.dataset.ex]);
+    }));
+    $("#today").querySelectorAll("[data-shot]").forEach((c) => c.addEventListener("change", () => {
+      c.checked ? done.add(+c.dataset.shot) : done.delete(+c.dataset.shot);
+      store.set(key, JSON.stringify([...done]));
+      c.closest(".shot").classList.toggle("done", c.checked);
+      if (done.size === t.shots.length) toast("All filmed: send your clips to the bot!");
+    }));
+    $("#copy-says")?.addEventListener("click", () => copy(says.join("\n\n")));
+    $("#next-t").addEventListener("click", () => choose(D.templates[(D.templates.indexOf(t) + 1) % D.templates.length], p));
+    $("#next-p").addEventListener("click", () => { const r = ready(); choose(t, r[(r.indexOf(p) + 1) % r.length]); });
+    history.replaceState(null, "", `#t=${t.id}&p=${p.id}`);
+    document.querySelectorAll(".tcard").forEach((c) => c.classList.toggle("on", c.dataset.t === t.id));
+    document.querySelectorAll(".pcard").forEach((c) => c.classList.toggle("on", c.dataset.p === p.id));
+    renderViral();
+  }
+
+  function choose(t, p, scroll = true) {
+    tpl = t; path = p; renderToday();
+    if (scroll) $("#today").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function renderTemplates() {
+    $("#templates").innerHTML = D.templates.map((t) => `
+      <button class="tcard" type="button" data-t="${esc(t.id)}"><img src="${thumb(t.examples[0][0], t.examples[0][1])}" alt="" loading="lazy">
+        <div><b>${esc(fill(t.name, path))}</b><small>${esc(t.examples[0][2])} views · ${esc(t.tag)}</small></div></button>`).join("");
+    $("#templates").addEventListener("click", (e) => {
+      const c = e.target.closest(".tcard");
+      if (c) choose(D.templates.find((t) => t.id === c.dataset.t), path);
     });
   }
 
-  function open(id, scroll) {
-    const p = data.pathways.find((x) => x.id === id);
-    if (!p) return;
-    document.querySelectorAll(".path").forEach((b) => b.classList.toggle("on", b.dataset.id === id));
-    const refs = (trend.pathways || {})[id] || [];
-    const top = refs[0];
-    const d = $("#detail");
-    d.innerHTML = `
-      <h2>${esc(p.name)}</h2><p class="muted">${esc(p.why)}</p>
-      <div class="cols">
-        <div>
-          <h3>1. What's going viral right now</h3>
-          <p class="muted">Search <code>${esc(p.search)}</code> on YouTube, or open one of these. Copy the channel's link for the walkthrough.</p>
-          <ul class="refs" id="refs"></ul>
-          <h3>2. Your hook (pick one, say it your way)</h3>
-          <ul class="hooks">${p.hooks.map((h) => `<li><div>${esc(fill(h.line, p, top))}<small>${esc(h.evidence)}</small></div>
-            <button class="btn ghost" type="button" data-copy="${esc(fill(h.line, p, top))}">Copy</button></li>`).join("")}</ul>
-        </div>
-        <div>
-          <h3>3. The walkthrough, step by step</h3>
-          <ol class="steps">${p.steps.map((s, i) => `<li><span>${i + 1}</span><div>${esc(fill(s.say, p, top))}</div></li>`).join("")}</ol>
-          <div class="callout">
-            <p><b>Film it:</b> open the walkthrough on your laptop, film the screen with your phone and point at it.</p>
-            <p>In the idea box, press <code>Tab</code> and it types <i>${esc(p.ideas[0] || p.topic)}</i> for you. <code>Esc</code> starts over.</p>
-            <p class="row">${p.result ? `<a class="btn big" href="studio#${esc(p.id)}" target="_blank" rel="noopener">Open the walkthrough →</a>`
-              : `<button class="btn big" type="button" disabled>Video being made: back soon</button>`}</p>
-          </div>
-          <h3>4. Close and caption</h3>
-          <p>Say: <b>“Comment ${esc(p.keyword)} and I'll send you the full guide.”</b></p>
-          <p class="muted">Then send your hook, your screen recording and your close to the bot in Telegram, tap Done, and post what comes back.</p>
-        </div>
-      </div>`;
-    const list = $("#refs", d), tpl = $("#t-ref");
-    if (!refs.length) list.innerHTML = `<li class="muted">Search <code>${esc(p.search)}</code> on YouTube and sort by view count.</li>`;
-    for (const r of refs) {
-      const li = tpl.content.firstElementChild.cloneNode(true);
-      li.querySelector("img").src = `https://i.ytimg.com/vi/${r.id}/mqdefault.jpg`;
-      li.querySelector("strong").textContent = r.title;
-      li.querySelector("small").textContent = `${r.channel} · ${views(r.views)} views${r.window === "month" ? " · this month" : ""}`;
-      li.querySelector("a").href = r.url;
-      li.querySelector(".copy-chan").addEventListener("click", () => copy(r.channel_url));
-      list.append(li);
-    }
-    d.addEventListener("click", (e) => { const b = e.target.closest("[data-copy]"); if (b) copy(b.dataset.copy); });
-    d.hidden = false;
-    history.replaceState(null, "", "#" + id);
-    if (scroll) d.scrollIntoView({ behavior: "smooth", block: "start" });
+  function renderPaths() {
+    $("#paths").innerHTML = D.pathways.map((p) => `
+      <button class="pcard" type="button" data-p="${esc(p.id)}" ${p.result ? "" : "disabled"}>
+        <div><small>${esc(p.tag)}</small><b>${esc(p.name)}</b><small class="state ${p.result ? "" : "wait"}">${p.result ? "Ready" : "Coming soon"}</small></div></button>`).join("");
+    $("#paths").addEventListener("click", (e) => {
+      const c = e.target.closest(".pcard");
+      if (c && !c.disabled) choose(tpl, D.pathways.find((p) => p.id === c.dataset.p));
+    });
   }
 
+  function renderViral() {
+    const refs = (T.pathways || {})[path.id] || [];
+    $("#viral").innerHTML = refs.length ? `<p class="muted"><b>${esc(path.name)}</b>: going viral this month (copy one of these channels in the walkthrough)</p>
+      <ul>${refs.map((r) => `<li><img src="https://i.ytimg.com/vi/${esc(r.id)}/mqdefault.jpg" alt="" loading="lazy">
+        <div><b>${esc(r.title)}</b><small>${esc(r.channel)} · ${short(r.views)} views</small>
+        <div class="others"><a class="btn ghost small" href="${esc(r.url)}" target="_blank" rel="noopener">Open</a>
+        <button class="btn ghost small" type="button" data-copy="${esc(r.channel_url)}">Copy channel link</button></div></div></li>`).join("")}</ul>` : "";
+  }
+
+  function renderInspo() {
+    $("#inspo").innerHTML = (D.inspiration || []).map((i) => `<li><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.name)} ↗</a><p>${esc(i.what)}</p></li>`).join("");
+  }
+
+  document.addEventListener("click", (e) => {
+    const play = e.target.closest(".player button");
+    if (play) {
+      const box = play.closest(".player");
+      box.innerHTML = `<iframe src="${embed(box.dataset.plat, box.dataset.id)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`;
+    }
+    const c = e.target.closest("[data-copy]");
+    if (c) copy(c.dataset.copy);
+  });
+
   async function main() {
-    data = await fetch(CDN + "pathways.json" + fresh()).then((r) => r.json());
-    try { trend = await fetch(CDN + "trending.json" + fresh()).then((r) => r.ok ? r.json() : null); } catch (e) { trend = null; }
-    trend = trend || { pathways: {} };
-    $("#updated").textContent = trend.updated ? `What's viral, updated ${trend.updated}` : "";
-    cards();
-    open(location.hash.replace("#", "") || data.pathways[0].id, false);
-    window.addEventListener("hashchange", () => open(location.hash.replace("#", ""), true));
+    D = await json("pathways.json");
+    T = (await json("trending.json")) || { pathways: {} };
+    if (D.tutorial) { const t = $("#tutorial"); t.hidden = false; $("video", t).src = D.tutorial; if (!store.get("seen-tutorial")) t.open = true; t.addEventListener("toggle", () => store.set("seen-tutorial", "1")); }
+    pickToday();
+    renderTemplates(); renderPaths(); renderInspo(); renderToday();
   }
   main();
 })();
