@@ -2336,21 +2336,21 @@ def _ugc_key_ok(key: str) -> bool:
 
 
 @app.get("/ugc/{key}", include_in_schema=False)
-async def ugc_sandbox_root(key: str):
+def ugc_sandbox_root(key: str):
     if not _ugc_key_ok(key):
         raise HTTPException(404)
     return RedirectResponse(f"/ugc/{key}/", status_code=308)
 
 
 @app.get("/ugc/{key}/", response_class=HTMLResponse, include_in_schema=False)
-async def ugc_sandbox_kit(key: str):
+def ugc_sandbox_kit(key: str):
     if not _ugc_key_ok(key):
         raise HTTPException(404)
     return web_assets.html_page(UGC_SANDBOX_DIR / "kit.html", cache="private, no-store", headers=_UGC_HEADERS)
 
 
 @app.get("/ugc/{key}/studio", response_class=HTMLResponse, include_in_schema=False)
-async def ugc_sandbox_studio(key: str):
+def ugc_sandbox_studio(key: str):
     if not _ugc_key_ok(key):
         raise HTTPException(404)
     return web_assets.html_page(UGC_SANDBOX_DIR / "studio.html", cache="private, no-store", headers=_UGC_HEADERS)
