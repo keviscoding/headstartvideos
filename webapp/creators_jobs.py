@@ -126,6 +126,26 @@ def download_name(j: dict) -> str:
     return f"{name}-{j['look']}.mp4"
 
 
+def share_view(j: dict, clip: dict) -> dict | None:
+    """The ready-to-post clip the edit machine made beside the Reel ("Steal their edit"): "steal" puts the Reel the
+    style came from beside your raw take, which snaps to your edit; "plain" is your raw take snapping to your edit
+    alone (a picked look, or the second version of a steal). None for edits from before the clip, or when it failed."""
+    if not clip.get("key"):
+        return None
+    stem = download_name(j).rsplit(".", 1)[0]
+
+    def one(c: dict) -> dict:
+        name = f"{stem}-{'steal' if c.get('kind') == 'steal' else 'raw-vs-edit'}.mp4"
+        return {"video_url": signed_get(c["key"]), "download_url": signed_get(c["key"], filename=name),
+                "poster_url": signed_get(c["poster_key"]) if c.get("poster_key") else "",
+                "kind": c.get("kind") or "plain", "seconds": c.get("seconds")}
+
+    out = {**one(clip), "who": clip.get("who") or ""}
+    if (clip.get("plain") or {}).get("key"):
+        out["plain"] = one(clip["plain"])
+    return out
+
+
 def view(j: dict) -> dict:
     result = None
     if j["status"] == "done" and j.get("output_key"):
@@ -135,7 +155,8 @@ def view(j: dict) -> dict:
                   "poster_url": signed_get(j["poster_key"]) if j.get("poster_key") else "",
                   "take_url": signed_get(j["take_key"], 6 * 3600),
                   "seconds": r.get("seconds"), "review": r.get("review"), "summary": r.get("summary") or {},
-                  "changes": r.get("changes"), "rendered": r.get("rendered", True)}
+                  "changes": r.get("changes"), "rendered": r.get("rendered", True),
+                  "share": share_view(j, r.get("share") or {})}
     style = learned_style(j)
     progress = 1.0 if j["status"] == "done" else float(j.get("progress") or 0)
     if j["status"] in LIVE and j.get("started_at"):                 # an active stage fills with its usual time

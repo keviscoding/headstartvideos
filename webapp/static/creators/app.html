@@ -339,6 +339,22 @@
         <p id="rs-meta"></p>
       </div>
 
+      <div class="panel stealp" id="rs-steal" hidden>
+        <button type="button" class="steal-thumb" id="rs-steal-thumb" aria-label="Play the clip with sound"><video id="rs-steal-v" muted playsinline loop preload="none"></video><span class="steal-snd"><svg width="14" height="14"><use href="icons.svg#i-sound-off"/></svg></span></button>
+        <div class="steal-text">
+          <h2 id="rs-steal-h">Show how you stole their edit</h2>
+          <p class="sub2" id="rs-steal-p"></p>
+        </div>
+        <div class="steal-ctrl">
+          <div class="seg light steal-seg" role="group" aria-label="Which clip" id="rs-steal-seg" hidden><button type="button" aria-pressed="true" data-clip="steal">With their Reel</button><button type="button" aria-pressed="false" data-clip="plain">Just yours</button></div>
+          <div class="steal-acts">
+            <button type="button" class="btn btn-sm" id="rs-steal-share" hidden><svg width="16" height="16"><use href="icons.svg#i-send"/></svg>Share clip</button>
+            <a class="btn btn-sm btn-ghost" id="rs-steal-dl" href="#"><svg width="16" height="16"><use href="icons.svg#i-download"/></svg>Save clip</a>
+            <button type="button" class="btn btn-sm btn-ghost" id="rs-steal-cap"><svg width="16" height="16"><use href="icons.svg#i-note"/></svg>Copy caption</button>
+          </div>
+        </div>
+      </div>
+
       <div class="honest" id="rs-honest" hidden>
         <h2 id="rs-honest-h">Our watch-back scored this low</h2>
         <p id="rs-honest-p"></p>
