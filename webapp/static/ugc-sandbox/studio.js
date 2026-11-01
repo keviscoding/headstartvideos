@@ -18,9 +18,15 @@
 
   async function load() {
     const id = location.hash.replace("#", "") || "gta6";
-    const data = await fetch(CDN + "pathways.json" + fresh()).then((r) => r.json());
+    const json = async (name) => {                     // the CDN on channelrecipe.com; the page's own folder in local preview
+      for (const url of [CDN + name + fresh(), BASE + name]) {
+        try { const r = await fetch(url); if (r.ok) return await r.json(); } catch (e) { /* next */ }
+      }
+      return null;
+    };
+    const data = await json("pathways.json");
     let trend = null;
-    try { trend = await fetch(CDN + "trending.json" + fresh()).then((r) => r.ok ? r.json() : null); } catch (e) { trend = null; }
+    trend = await json("trending.json");
     trend = trend || { pathways: {} };
     P = data.pathways.find((p) => p.id === id) || data.pathways[0];
     refs = (trend.pathways || {})[P.id] || [];

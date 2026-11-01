@@ -7,28 +7,46 @@
 <title>Creator kit · ChannelRecipe</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/ugc-sandbox/kit.css">
 </head>
 <body>
 <header class="top">
   <div class="brand"><strong>Channel<span>Recipe</span></strong><small>Creator kit</small></div>
-  <p id="updated" class="muted"></p>
+  <a class="btn ghost small" href="https://t.me/CRCreatorsBot" target="_blank" rel="noopener">Open the bot ↗</a>
 </header>
 <main>
-  <section class="intro">
-    <h1>Pick what's going viral. Film the walkthrough. Send it to the bot.</h1>
-    <ol class="how">
-      <li><b>Pick a pathway</b> below: each one is a faceless channel idea getting views right now.</li>
-      <li><b>Film your hook</b> (2-4 s, face to camera), then <b>film your screen</b> while you walk the method: YouTube → copy the channel → ChannelRecipe → your idea → your video.</li>
-      <li><b>Close</b> with the comment keyword, send all your clips to the bot, and get your edited video back.</li>
+  <section class="hero">
+    <h1>Your video for today, step by step.</h1>
+    <ol class="flow">
+      <li><b>1</b><span>Watch the example</span></li>
+      <li><b>2</b><span>Film the shots below</span></li>
+      <li><b>3</b><span>Send them to the bot</span></li>
+      <li><b>4</b><span>Post what comes back</span></li>
     </ol>
+    <details id="tutorial" class="tutorial" hidden><summary>▶ New here? Watch the 2-minute tutorial first</summary><video controls playsinline preload="none"></video></details>
   </section>
-  <section id="paths" class="paths" aria-label="Pathways"></section>
-  <section id="detail" class="detail" hidden></section>
+
+  <section id="today" class="today card" aria-label="Today's video"></section>
+
+  <section class="block">
+    <h2>Or pick another video to remake</h2>
+    <p class="muted">Every one of these is a real video that went viral. Tap one and the shots above change to it.</p>
+    <div id="templates" class="grid"></div>
+  </section>
+
+  <section class="block">
+    <h2>What your example channel is about</h2>
+    <p class="muted">The topic of the faceless channel you show in the walkthrough. Each one is getting views right now.</p>
+    <div id="paths" class="grid small-cards"></div>
+    <div id="viral" class="viral"></div>
+  </section>
+
+  <section class="block">
+    <h2>Want to be creative? Find inspiration here</h2>
+    <ul id="inspo" class="inspo"></ul>
+  </section>
 </main>
-<template id="t-ref"><li class="ref"><img alt="" loading="lazy"><div><strong></strong><small></small>
-  <div class="row"><a class="btn ghost" target="_blank" rel="noopener">Open on YouTube</a><button class="btn ghost copy-chan" type="button">Copy channel link</button></div></div></li></template>
 <script src="/ugc-sandbox/kit.js" defer></script>
 </body>
 </html>
