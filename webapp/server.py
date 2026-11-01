@@ -2321,6 +2321,44 @@ async def creators_page():
 app.mount("/creators", web_assets.RevalidatedStatic(directory=str(STATIC_DIR / "creators")), name="creators")
 
 
+# The UGC creator sandbox (owner, 2026-11-01), for our paid UGC creators only: a creator kit (what's going viral per
+# pathway, the hooks, the walkthrough script) and Studio's own style-clone page driven with videos made ahead, so a
+# creator films the whole method in a minute. The link carries a key from UGC_SANDBOX_KEY (comma-separated; unset =
+# closed to everyone). noindex. Built by big-frontier/faceless-ugc/sandbox/publish.py (workspace, not this repo).
+UGC_SANDBOX_DIR = STATIC_DIR / "ugc-sandbox"
+_UGC_HEADERS = {"X-Robots-Tag": "noindex, nofollow"}
+
+
+def _ugc_key_ok(key: str) -> bool:
+    import hmac
+    keys = [k.strip() for k in (os.getenv("UGC_SANDBOX_KEY") or "").split(",") if k.strip()]
+    return any(hmac.compare_digest(key, k) for k in keys)
+
+
+@app.get("/ugc/{key}", include_in_schema=False)
+def ugc_sandbox_root(key: str):
+    if not _ugc_key_ok(key):
+        raise HTTPException(404)
+    return RedirectResponse(f"/ugc/{key}/", status_code=308)
+
+
+@app.get("/ugc/{key}/", response_class=HTMLResponse, include_in_schema=False)
+def ugc_sandbox_kit(key: str):
+    if not _ugc_key_ok(key):
+        raise HTTPException(404)
+    return web_assets.html_page(UGC_SANDBOX_DIR / "kit.html", cache="private, no-store", headers=_UGC_HEADERS)
+
+
+@app.get("/ugc/{key}/studio", response_class=HTMLResponse, include_in_schema=False)
+def ugc_sandbox_studio(key: str):
+    if not _ugc_key_ok(key):
+        raise HTTPException(404)
+    return web_assets.html_page(UGC_SANDBOX_DIR / "studio.html", cache="private, no-store", headers=_UGC_HEADERS)
+
+
+app.mount("/ugc-sandbox", web_assets.RevalidatedStatic(directory=str(UGC_SANDBOX_DIR)), name="ugc-sandbox")
+
+
 # Find My Money Niche: the free quiz (webapp/money_niche.py). A shared result opens on its own page with its own
 # share picture; what anyone sees there is only the taste (niche #1 and one proof channel).
 @app.get("/money-niche", response_class=HTMLResponse)
