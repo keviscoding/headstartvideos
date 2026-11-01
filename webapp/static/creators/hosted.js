@@ -454,14 +454,16 @@
     return !!((j.refs || []).length && !j.style_name && !j.style_error && ["queued", "starting", "running"].indexOf(j.status) >= 0 &&
               w.state !== "done" && (!w.state || w.state === "todo" || w.detail === "Learning their style"));
   }
-  function profileOf(url) {                         // a pasted profile, not a Reel: {handle, ...} or null
+  // (not "profileOf": that name is the B-roll profile field's parser above, and a second function declaration of
+  // the same name replaced it for the whole file, so Start threw on an empty field: 2026-10-30 to 2026-11-01)
+  function pastedProfile(url) {                     // a pasted profile, not a Reel: {handle, ...} or null
     var p = url && window.CRReel && window.CRReel.parse(url);
     return p && p.profile ? p : null;
   }
   function drawRef(j) {
     var A = app(), box = $("#ed-ref"), url = (j.refs || [])[0];
     if (!url) { box.hidden = true; return; }
-    var prof = profileOf(url);
+    var prof = pastedProfile(url);
     var r = refInfo(j) || {}, name = r.author || (r.handle ? r.handle.replace(/^@?/, "@") : "") || (prof ? prof.handle : "");
     var kind = /tiktok/.test(url) ? "tiktok" : /instagram/.test(url) ? "instagram" : "youtube";
     box.hidden = false;
@@ -475,7 +477,7 @@
   }
   function drawEditing(j) {
     var A = app();
-    var lead = $("#ed-lead"), refs = (j.refs || []).length, r = refInfo(j) || {}, prof = profileOf((j.refs || [])[0]);
+    var lead = $("#ed-lead"), refs = (j.refs || []).length, r = refInfo(j) || {}, prof = pastedProfile((j.refs || [])[0]);
     var who = r.author || (r.handle ? r.handle.replace(/^@?/, "@") : "") || (prof ? prof.handle : "");
     lead.innerHTML = refs && learning(j) ? "Learning " + (who ? "<b>" + A.esc(who) + "</b>'s style" : "the style of the Reel you pasted") + ", then cutting yours the same way."
       : refs && j.style_name ? "In <b>" + A.esc(j.style_name) + "</b>, learned from the Reel you pasted."
