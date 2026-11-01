@@ -322,10 +322,10 @@ BOT_CHECK = re.compile(r"not a bot|sign in to confirm|429|too many requests", re
 
 def _lost_note(ref, lost, total) -> str:
     """What the creator reads when parts of a reference couldn't be downloaded: its cuts, motion and sound then come
-    from the other parts and references only (Gemini's watching runs on ChannelRecipe's server and is unaffected)."""
+    from the other parts and references only (Gemini's watching runs on ChannelRecipe's server and is unaffected).
+    What to do about a bot check is said once, after the notes (cr_style_clone.html)."""
     name = ref.get("title") or ref["id"]
-    why = ("YouTube asked this computer to sign in; it usually lets downloads through again within an hour"
-           if any(BOT_CHECK.search(e) for _, _, e in lost) else "the download failed")
+    why = "YouTube asked this computer to sign in" if any(BOT_CHECK.search(e) for _, _, e in lost) else "the download failed"
     part = "none of it" if len(lost) >= total else f"{len(lost)} of its {total} parts"
     return f"{name}: {part} could be measured ({why})"
 

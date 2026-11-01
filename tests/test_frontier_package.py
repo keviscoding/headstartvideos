@@ -595,7 +595,7 @@ def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
               b"pure-ffmpeg fallback without it\n"
               b'# YouTube footage\nyt-dlp>=2025.10.22; python_version >= "3.10"\nrequests\n')
     patched = package.patch_engine("requirements.txt", engine).decode()
-    assert 'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"' in patched and "requests" in patched
+    assert 'yt-dlp[default,curl-cffi]>=2026.10.26; python_version >= "3.10"' in patched and "requests" in patched
     # one OpenCV: RapidOCR needs the full opencv-python, so the engine's headless copy isn't installed beside it
     assert "\nopencv-python>=4.8 " in "\n" + patched and "opencv-python-headless" not in patched
     # one RapidOCR for every Python: 1.3+ caps Python below 3.13 and renamed the detector the Studio calls
