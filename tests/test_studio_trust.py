@@ -166,8 +166,38 @@ def test_the_wrapper_trusts_the_computer_before_ytdlp_loads_and_hides_the_engine
     fake.main = lambda: order.append(("yt-dlp", list(sys.path))) or 0
     monkeypatch.setitem(sys.modules, "yt_dlp", fake)
     monkeypatch.setattr(sys, "path", [cr_ytdlp.HERE, "/elsewhere"])
+    monkeypatch.setattr(sys, "argv", ["cr_ytdlp.py", "--version"])
+    monkeypatch.setattr(cr_ytdlp.shutil, "which", lambda name: None)
     assert cr_ytdlp.main() == 0
     assert order == ["trust", ("yt-dlp", ["/elsewhere"])]
+
+
+def test_the_wrapper_hands_ytdlp_the_computers_node_when_there_is_no_deno(monkeypatch):
+    """Lee, 2026-11-01: without a JavaScript runtime yt-dlp asks YouTube through one client, and a bot check on it
+    stopped every reference download of a style clone. yt-dlp uses Deno by itself; Node or Bun only when told."""
+    import cr_ytdlp
+    seen = []
+    fake = types.ModuleType("yt_dlp")
+    fake.main = lambda: seen.append(list(sys.argv[1:])) or 0
+    monkeypatch.setitem(sys.modules, "yt_dlp", fake)
+    monkeypatch.setattr(cr_trust, "install", lambda: True)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    have = {"node": "/usr/bin/node"}
+    monkeypatch.setattr(cr_ytdlp.shutil, "which", lambda name: have.get(name))
+    for argv, expected in [
+            (["-J", "u"], ["--js-runtimes", "node", "-J", "u"]),
+            (["--js-runtimes", "bun", "-J", "u"], ["--js-runtimes", "bun", "-J", "u"]),   # the engine's own choice
+            (["--js-runtimes=deno", "u"], ["--js-runtimes=deno", "u"]),
+            (["--no-js-runtimes", "u"], ["--no-js-runtimes", "u"])]:
+        monkeypatch.setattr(sys, "argv", ["cr_ytdlp.py", *argv])
+        assert cr_ytdlp.main() == 0
+        assert seen[-1] == expected
+    have = {"bun": "/usr/bin/bun"}
+    assert cr_ytdlp.js_runtime(["u"]) == ["--js-runtimes", "bun"]
+    have = {"deno": "/usr/bin/deno", "node": "/usr/bin/node"}
+    assert cr_ytdlp.js_runtime(["u"]) == [], "yt-dlp finds Deno by itself"
+    have = {}
+    assert cr_ytdlp.js_runtime(["u"]) == []
 
 
 def test_the_wrapper_runs_the_real_ytdlp():

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.122"
+VERSION = "5.3-admin.123"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -403,7 +403,7 @@ ENGINE_PATCHES = {
     # Folders that already have both keep them (pip removes nothing); the Studio Cloud image keeps its own list.
     "requirements.txt": [
         ('yt-dlp>=2025.10.22; python_version >= "3.10"',
-         'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"\n'
+         'yt-dlp[default,curl-cffi]>=2026.10.26; python_version >= "3.10"\n'
          'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove\n'
          'truststore>=0.10.5; python_version >= "3.10"   # Studio trusts this computer\'s certificates, as the browser does\n'
          'uharfbuzz>=0.39; python_version >= "3.10"   # Hindi (Devanagari) text shaped where Pillow draws it (cr_script_text)'),

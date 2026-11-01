@@ -1,5 +1,8 @@
 """Looking at references before a study, the art director, and the study applying what was learned."""
 import json
+import re
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -97,6 +100,33 @@ def test_a_failed_download_is_reported_and_the_rest_carries_on(home):
     assert done["profile"]["edit"]["median_shot_s"]["value"] is None
     assert len(done["not_measured"]) == 1 and "none of it could be measured" in done["not_measured"][0]
     assert "asked this computer to sign in" in done["not_measured"][0]
+
+
+def test_the_look_card_says_once_what_beats_youtubes_bot_check(home):
+    """Lee (2026-11-01): every reference blocked, and the card said their cuts came "from the rest" (there was none)
+    and told the hour three times. Now: all or part, and the remedy once."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node runs the page's helper")
+    page = (Path(clone.__file__).parent / "cr_style_clone.html").read_text(encoding="utf-8")
+    helper = re.search(r"^function lookUnmeasured\(data\)\{.*\}$", page, re.M).group(0)
+    blocked = "{}: none of it could be measured (YouTube asked this computer to sign in)"
+
+    def card(data):
+        done = subprocess.run([node, "-e", helper + "\nprocess.stdout.write(lookUnmeasured(" + json.dumps(data) + "))"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        assert done.returncode == 0, done.stderr
+        return done.stdout
+
+    refs = [{"id": "a"}, {"id": "b"}]
+    every = card({"references": refs, "not_measured": [blocked.format("A"), blocked.format("B")]})
+    assert every.startswith("Studio couldn’t download the references, so their cuts, motion and sound weren’t")
+    assert every.count("phone hotspot") == 1 and "come from the rest" not in every
+    some = card({"references": refs, "not_measured": [blocked.format("A")]})
+    assert "come from the rest" in some and "phone hotspot" in some
+    failed = card({"references": refs, "not_measured": ["A: 1 of its 2 parts could be measured (the download failed)"]})
+    assert "phone hotspot" not in failed and failed.endswith("Look again later for a fuller reading.")
+    assert card({"references": refs, "not_measured": []}) == ""
 
 
 def test_a_download_that_fails_once_is_tried_again(home):

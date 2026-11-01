@@ -1,5 +1,14 @@
 [
   {
+    "build": 123,
+    "date": "2026-11-01",
+    "title": "Cloning a style gets past YouTube's bot check more often",
+    "items": [
+      "Fixed: Studio's YouTube downloader now uses the Node.js that Studio installs. Before, it asked YouTube one way only, so a single \"sign in to confirm you're not a bot\" stopped every reference download of a style clone. Now it tries three ways in turn, and the downloader updates to its newest version.",
+      "Fixed: when YouTube blocks the reference downloads, the look says so plainly and what to do once: switch to another network (a phone hotspot works) or wait about an hour, then look again."
+    ]
+  },
+  {
     "build": 122,
     "date": "2026-10-30",
     "title": "Trim a finished video without a prompt",
