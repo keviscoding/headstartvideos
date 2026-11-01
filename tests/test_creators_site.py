@@ -51,3 +51,11 @@ def test_unversioned_creators_files_are_revalidated_so_a_deploy_never_mixes_old_
         assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", rel
         again = client.get("/creators/" + rel, headers={"if-none-match": r.headers["etag"]})
         assert again.status_code == 304, rel
+
+
+def test_no_page_script_declares_the_same_function_twice():
+    """Two `function x()` declarations in one script's scope: the later silently replaces the earlier everywhere
+    (hosted.js had two profileOf, so "Start my free edit" threw from 2026-10-30 to 2026-11-01)."""
+    for f in (server.STATIC_DIR / "creators").glob("*.js"):
+        names = re.findall(r"^  function ([A-Za-z_$][\w$]*)\(", f.read_text(), flags=re.M)
+        assert not {n for n in names if names.count(n) > 1}, f.name
