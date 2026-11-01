@@ -594,6 +594,7 @@
     $("#rs-tag-t").textContent = "Your Reel · v" + (A.S.version || 1); $("#rs-tag").classList.add("good");
     var dl = $("#rs-dl"); dl.href = r.download_url || r.video_url; dl.removeAttribute("download");
     var sh = $("#rs-share"); sh.hidden = !shareable();
+    H.steal(r.share);
     // The checks, and an honest head (owner's Loom 2026-10-30, section H: "Ready, and watched back ✓" with green
     // ticks sat over a 4/10 watch-back). Green only when the watch-back says it's ready to post; under 7 (or "redo")
     // the page says the score, what it noticed, and offers notes or another look.
@@ -698,6 +699,86 @@
       return j;
     });
   };
+
+  // ---------- the ready-to-post clip ("Steal their edit", big-frontier/ugc-masterclass-notes.md) ----------
+  // The edit machine makes it beside the Reel (creators/share.py). "steal": their Reel beside your raw take, which
+  // snaps into your edit at 1.5 s, then yours full screen; "plain": your raw take snapping into the edit alone (a
+  // picked look, or the steal's second version for a creator who'd rather not show whose edit it is). The file is
+  // fetched once the card is on screen, so Share hands it to the share sheet straight from the tap: iPhone Safari
+  // refuses a share that waits on a download. Copy caption names the creator and us, for "what app is this?".
+  var steal = { url: "", blob: null, loading: null, seen: null, clip: null, sp: null };
+  function stealFile() {
+    if (steal.blob) return Promise.resolve(steal.blob);
+    if (!steal.loading) {
+      var url = steal.url;
+      steal.loading = fetch(url).then(function (res) { if (!res.ok) throw new Error(); return res.blob(); })
+        .then(function (b) { if (steal.url === url) steal.blob = b; return b; })
+        .catch(function (e) { steal.loading = null; throw e; });
+    }
+    return steal.loading;
+  }
+  function stealCaption() {
+    var sp = steal.sp || {}, theirs = steal.clip && steal.clip.kind === "steal";
+    return (theirs ? (sp.who ? "i stole " + sp.who + "’s edit for my video" : "i stole their edit for my video")
+      : "my raw take vs the edit") + "\n\nedited with ChannelRecipe: channelrecipe.com/creators";
+  }
+  function stealShow(clip) {                      // one of the clips into the card: text, thumbnail, links
+    var v = $("#rs-steal-v"), theirs = clip.kind === "steal", secs = Math.round(clip.seconds || 0), sp = steal.sp;
+    steal.clip = clip; steal.url = clip.video_url; steal.blob = null; steal.loading = null;
+    $("#rs-steal-h").textContent = sp.kind === "steal" ? "Show how you stole their edit" : "Your raw take vs the edit";
+    $("#rs-steal-p").textContent = (secs ? secs + " seconds, " : "") + "ready to post. " + (theirs
+      ? (sp.who || "Their") + (sp.who ? "’s" : "") + " Reel beside your raw take, which snaps into your edit."
+      : "Your raw take snaps into the edit mid-sentence" + (sp.kind === "steal" ? ", without their Reel." : "."));
+    $$("#rs-steal-seg [data-clip]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.clip === clip.kind)); });
+    v.pause(); v.muted = true; $("#rs-steal-thumb .steal-snd use").setAttribute("href", "icons.svg#i-sound-off");
+    v.poster = clip.poster_url || ""; v.src = clip.video_url;
+    $("#rs-steal-dl").href = clip.download_url || clip.video_url;
+    var card = $("#rs-steal"), box = card.getBoundingClientRect();
+    if (box.bottom > 0 && box.top < innerHeight) { v.play().catch(function () {}); if (!$("#rs-steal-share").hidden) stealFile().catch(function () {}); }
+  }
+  H.steal = function (sp) {
+    var card = $("#rs-steal"), v = $("#rs-steal-v");
+    if (!card) return;
+    if (steal.seen) { steal.seen.disconnect(); steal.seen = null; }
+    steal.url = ""; steal.blob = null; steal.loading = null; steal.sp = sp || null;
+    card.hidden = !sp || !sp.video_url;
+    if (card.hidden) { v.pause(); v.removeAttribute("src"); return; }
+    $("#rs-steal-seg").hidden = !(sp.kind === "steal" && sp.plain);
+    var share = $("#rs-steal-share"); share.hidden = !shareable(); share.disabled = false;
+    stealShow(sp);
+    if (!("IntersectionObserver" in window)) { v.play().catch(function () {}); return; }
+    steal.seen = new IntersectionObserver(function (es) {
+      var on = es.some(function (x) { return x.isIntersecting; });
+      if (on) { v.play().catch(function () {}); if (!share.hidden) stealFile().catch(function () {}); }
+      else v.pause();
+    }, { threshold: 0.4 });
+    steal.seen.observe(card);
+  };
+  document.addEventListener("click", function (e) {
+    var thumb = e.target.closest("#rs-steal-thumb");
+    if (thumb) {                                  // tap the thumbnail: from the top, with sound; again: muted
+      var v = $("#rs-steal-v"), on = v.muted;
+      v.muted = !on; if (on) v.currentTime = 0;
+      v.play().catch(function () {});
+      thumb.querySelector(".steal-snd use").setAttribute("href", "icons.svg#" + (on ? "i-sound-on" : "i-sound-off"));
+      return;
+    }
+    var pick = e.target.closest("#rs-steal-seg [data-clip]");
+    if (pick && steal.sp) { stealShow(pick.dataset.clip === "plain" ? steal.sp.plain : steal.sp); return; }
+    if (e.target.closest("#rs-steal-cap")) {
+      var text = stealCaption(), done = function () { toast("Caption copied. Paste it when you post."); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { window.prompt("Copy your caption:", text); });
+      else window.prompt("Copy your caption:", text);
+      return;
+    }
+    if (!e.target.closest("#rs-steal-share") || !steal.url) return;
+    var b = $("#rs-steal-share"), name = steal.clip && steal.clip.kind === "steal" ? "steal-their-edit.mp4" : "raw-vs-edit.mp4";
+    var go = function (blob) { return navigator.share({ files: [new File([blob], name, { type: "video/mp4" })] }); };
+    b.disabled = true;
+    (steal.blob ? go(steal.blob) : (toast("Getting the clip ready…"), stealFile().then(go)))
+      .catch(function (err) { if (!err || err.name !== "AbortError") toast("Sharing didn't work here. Tap Save clip, then post it from your phone."); })
+      .then(function () { b.disabled = false; });
+  });
 
   document.addEventListener("click", function (e) {
     if (!e.target.closest("#rs-share") || !H.job || !H.job.result) return;

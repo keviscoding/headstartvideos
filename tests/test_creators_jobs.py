@@ -694,3 +694,15 @@ def test_a_creators_profile_can_be_pasted_to_learn_their_style(api, monkeypatch)
                                                "refs": ["https://www.instagram.com/sunnywallacee/"]}).json()
     assert job["refs"] == ["https://www.instagram.com/sunnywallacee"]
     assert cj._ref_style(job["refs"]) == "@sunnywallacee's style"
+
+
+def test_the_ready_to_post_clips_are_signed_with_their_own_names(api):
+    j = {"take_name": "my take.mov", "look": "ref-abc"}
+    assert cj.share_view(j, {}) is None                              # an edit from before the clip, or it failed
+    clip = {"key": "c/u7/jobs/j/share.mp4", "poster_key": "c/u7/jobs/j/share.jpg", "kind": "steal", "seconds": 13.5,
+            "who": "@sunnywallacee", "plain": {"key": "c/u7/jobs/j/share_plain.mp4", "kind": "plain", "seconds": 13.5}}
+    v = cj.share_view(j, clip)
+    assert v["kind"] == "steal" and v["who"] == "@sunnywallacee" and "share.mp4" in v["video_url"]
+    assert v["poster_url"] and v["plain"]["kind"] == "plain" and v["plain"]["poster_url"] == ""
+    names = [p[1].get("ResponseContentDisposition", "") for p in api.s3.signed if "ResponseContentDisposition" in p[1]]
+    assert any("my-take-ref-abc-steal.mp4" in n for n in names) and any("my-take-ref-abc-raw-vs-edit.mp4" in n for n in names)
