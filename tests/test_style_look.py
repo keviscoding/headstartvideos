@@ -114,7 +114,7 @@ def test_the_look_card_says_once_what_beats_youtubes_bot_check(home):
 
     def card(data):
         done = subprocess.run([node, "-e", helper + "\nprocess.stdout.write(lookUnmeasured(" + json.dumps(data) + "))"],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         assert done.returncode == 0, done.stderr
         return done.stdout
 
