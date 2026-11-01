@@ -110,6 +110,8 @@
     if (!o) return;
     var n = o.dataset.open;
     if (n === "plans") return openPlans();
+    // on a phone the clip is already here: open its own picker, not a QR code for the phone you're holding
+    if (n === "qr" && window.matchMedia && matchMedia("(hover: none) and (pointer: coarse)").matches) return $("#file").click();
     if (n === "qr") return openModal("qr", function (ov) { drawQR($("#qr-code", ov)); });
     if (n === "drive") return openModal("drive", function (ov) { $("[data-drive]", ov).addEventListener("click", function () { closeModal(); toast("Drive picking switches on with the real backend."); }); });
   });
