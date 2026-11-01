@@ -3,7 +3,8 @@
 (() => {
   "use strict";
   const BASE = "/ugc-sandbox/";
-  const CDN_TRENDING = "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/ugc-sandbox/trending.json";
+  const CDN = "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/ugc-sandbox/";
+  const fresh = () => `?h=${Math.floor(Date.now() / 6e5)}`;   // the data changes daily; the CDN keeps it 10 min
   const $ = (s, el = document) => el.querySelector(s);
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const views = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n || 0);
@@ -86,9 +87,9 @@
   }
 
   async function main() {
-    data = await fetch(BASE + "pathways.json").then((r) => r.json());
-    try { trend = await fetch(`${CDN_TRENDING}?h=${Math.floor(Date.now() / 36e5)}`).then((r) => r.ok ? r.json() : null); } catch (e) { trend = null; }
-    if (!trend) trend = await fetch(BASE + "trending.json").then((r) => r.json()).catch(() => ({ pathways: {} }));
+    data = await fetch(CDN + "pathways.json" + fresh()).then((r) => r.json());
+    try { trend = await fetch(CDN + "trending.json" + fresh()).then((r) => r.ok ? r.json() : null); } catch (e) { trend = null; }
+    trend = trend || { pathways: {} };
     $("#updated").textContent = trend.updated ? `What's viral, updated ${trend.updated}` : "";
     cards();
     open(location.hash.replace("#", "") || data.pathways[0].id, false);

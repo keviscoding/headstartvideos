@@ -1,7 +1,5 @@
 """channelrecipe.com/ugc/<key>: the UGC creator sandbox (a creator kit and Studio's style-clone page driven with videos
 made ahead), open only with a key from UGC_SANDBOX_KEY and never indexed."""
-import json
-
 from fastapi.testclient import TestClient
 
 import webapp.server as server
@@ -27,7 +25,8 @@ def test_a_creator_with_the_key_gets_the_kit_and_the_studio_walkthrough(monkeypa
     studio = client.get("/ugc/k3y-one/studio")
     assert studio.status_code == 200 and "Which channel inspires you?" in studio.text      # Studio's own page
     assert "/ugc-sandbox/studio.js" in studio.text and "<script>" not in studio.text.replace('<script src', '')
-    for f in ("kit.js", "kit.css", "studio.js", "pathways.json", "trending.json"):
+    for f in ("kit.js", "kit.css", "studio.js"):
         assert client.get("/ugc-sandbox/" + f).status_code == 200, f
-    paths = json.loads(client.get("/ugc-sandbox/pathways.json").text)["pathways"]
-    assert any(p["result"] for p in paths) and all(p["hooks"] and p["steps"] for p in paths)
+    for f in ("pathways.json", "trending.json"):         # the hooks and scripts live on the CDN, not in this repo
+        assert client.get("/ugc-sandbox/" + f).status_code == 404, f
+    assert "public/ugc-sandbox/" in client.get("/ugc-sandbox/kit.js").text
