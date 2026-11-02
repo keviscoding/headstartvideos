@@ -63,7 +63,8 @@
   // the bot opens the kit straight from this link. RICH_LINK adds the format, clip and hook ("__" parts) once the bot
   // parses them (asked of the editor session, 2026-11-02); until then the plain kit link, which the bot reads today.
   const RICH_LINK = false;
-  const botLink = (t, p, h, c) => `${BOT}?start=kit_walk-${p.pathway || p.id}` + (!RICH_LINK ? "" : `__${t.id}` +
+  const botKit = (p) => (D.pathways || []).some((x) => x.id === p.pathway && x.result);   // the bot's walk-<pathway> kits
+  const botLink = (t, p, h, c) => !botKit(p) ? BOT : `${BOT}?start=kit_walk-${p.pathway}` + (!RICH_LINK ? "" : `__${t.id}` +
     (c ? `__${c.id}` : "") + (h ? `__h${(D.hooks || []).indexOf(h)}` : ""));
 
   function pickToday() {
