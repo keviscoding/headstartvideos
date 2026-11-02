@@ -52,7 +52,8 @@
     const fams = t.hook_families || [];
     const afterClip = (t.shots || []).some((s, i) => s.kind === "added" && i < t.hook_shot);   // the hook answers the clip
     return (D.hooks || []).filter((h) => fams.includes(h.family) && (h.lanes.includes("any") || h.lanes.includes(lane()))
-      && (h.slot !== "after_clip" || afterClip));      // an answering line never opens a video
+      && (h.slot !== "after_clip" || afterClip)        // an answering line never opens a video
+      && (h.clip !== "person" || ["claim", "hustle"].includes(t.react)));   // "she's living in 2099" needs a person
   }
   function pick(list, key) {
     if (!list.length) return null;
