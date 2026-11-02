@@ -150,3 +150,105 @@ def test_a_video_with_a_trial_style_keeps_it_before_anything_is_queued(tmp_path,
     assert client.post("/api/run", json={"title": "Battle of Hastings", "steps": ["video"],
                                          "style": STYLE}).status_code == 200
     assert kept.calls == [("style-clones/keep", {"project_id": PROJECT})] and len(studio.QUEUE) == 1
+
+
+def test_the_trial_follows_the_release_a_study_was_begun_on(tmp_path):
+    """Review 2026-11-02: a study prepared on 123 and begun on 124 is counted by ChannelRecipe as 124's."""
+    prepared_on_123 = {"proof": {"local_version": "5.3-admin.123"}, "begun_version": "5.3-admin.124"}
+    keep.start_trial(prepared_on_123)
+    assert keep.on_trial(prepared_on_123)
+
+
+def test_a_study_tells_its_begin_which_style_it_makes(tmp_path):
+    assert keep.begin_options({"spec": {"style_id": STYLE}}) == {"learns_style": STYLE}
+    graphics = {"spec": {"style_id": "cr_clone_war_maps_g"}, "graphics_of": OP, "source_style": STYLE}
+    assert keep.begin_options(graphics) == {"learns_style": "cr_clone_war_maps_g", "counts_with": STYLE}
+    assert keep.begin_options({"spec": {"style_id": STYLE}, "renderer_improve": True}) == {}
+    assert keep.begin_options({"spec": {"style_id": "Not A Style"}}) == {}
+
+
+def test_the_numbers_match_the_servers():
+    sys.path.insert(0, str(Path(__file__).parents[1]))
+    from webapp import frontier_studio
+    assert keep.KEEPS_FROM == frontier_studio.KEEPS_ITS_STYLES
+    assert keep.LEARNED.pattern == frontier_studio.LEARNED_STYLE + r"\Z"
+
+
+def test_a_keep_made_meanwhile_is_never_written_back_to_trial(tmp_path):
+    """Review: the likeness check runs for minutes after the style is saved and then writes its own copy of the
+    study's state; a keep made in that window must survive it."""
+    import cr_style_clone
+    folder = study(tmp_path, other="before")
+    stale = json.loads((folder / "operation.json").read_text())
+    keep.keep(tmp_path, STYLE, Bridge())
+    cr_style_clone._write(folder / "operation.json", {**stale, "likeness": "done"})
+    now = json.loads((folder / "operation.json").read_text())
+    assert now["keep"]["state"] == "kept" and now["likeness"] == "done"
+
+
+def test_keeping_changes_nothing_else_in_the_study(tmp_path):
+    import cr_style_clone
+    folder = study(tmp_path)
+    saved = json.loads((folder / "operation.json").read_text())
+    stale_hash = {**saved, "style_sha256": "new"}
+    cr_style_clone._write(folder / "operation.json", stale_hash)
+    keep.keep(tmp_path, STYLE, Bridge())
+    assert json.loads((folder / "operation.json").read_text())["style_sha256"] == "new"
+
+
+def test_a_discarded_style_can_not_be_kept_until_it_is_restored(tmp_path):
+    study(tmp_path)
+    (tmp_path / "styles" / (STYLE + ".json")).unlink()
+    with pytest.raises(ValueError, match="Restore it from Recently deleted"):
+        keep.keep(tmp_path, STYLE, Bridge())
+
+
+def test_the_graphics_copy_of_a_trial_style_keeps_its_source(tmp_path):
+    """Review: Use pictures, then Study its graphics, made a copy that was never on trial: a free clone."""
+    folder = study(tmp_path)
+    copy_op = "op_" + "c" * 24
+    copy_style = "cr_clone_" + "c" * 12
+    copy = tmp_path / "output" / "cr-style-clone" / copy_op
+    copy.mkdir(parents=True)
+    copy_saved = {"operation_id": copy_op, "project_id": "crv_" + "d" * 24, "graphics_of": OP, "source_style": STYLE,
+                  "proof": {"local_version": "5.3-admin.124"}, "spec": {"style_id": copy_style}}
+    keep.start_trial(copy_saved)
+    assert "keep" not in copy_saved, "the copy itself is never on trial"
+    (copy / "operation.json").write_text(json.dumps(copy_saved), encoding="utf-8")
+    (tmp_path / "styles" / (copy_style + ".json")).write_text(
+        json.dumps({"name": copy_style, "cr_style_clone": {"operation_id": copy_op}}), encoding="utf-8")
+    assert keep.style_on_trial(tmp_path, copy_style)
+    bridge = Bridge()
+    keep.before_video(tmp_path, copy_style, bridge)
+    assert bridge.calls == [("style-clones/keep", {"project_id": PROJECT})], "the source study is kept"
+    assert json.loads((folder / "operation.json").read_text())["keep"]["state"] == "kept"
+    assert not keep.style_on_trial(tmp_path, STYLE) and not keep.style_on_trial(tmp_path, copy_style)
+
+
+def test_a_refusal_says_what_actually_went_wrong(tmp_path):
+    study(tmp_path)
+    with pytest.raises(ValueError, match="another ChannelRecipe account"):
+        keep.before_video(tmp_path, STYLE, Bridge("That style study wasn't found on your account."))
+    with pytest.raises(ValueError) as offline:
+        keep.before_video(tmp_path, STYLE, Bridge("Could not reach ChannelRecipe. Your work is saved; check your connection."))
+    assert "couldn't record that" in str(offline.value) and "free style clone" not in str(offline.value)
+
+
+def test_a_broken_style_file_never_breaks_the_library(tmp_path):
+    (tmp_path / "styles").mkdir()
+    (tmp_path / "styles" / (STYLE + ".json")).write_text(json.dumps({"cr_style_clone": "not a dict"}))
+    assert keep.style_on_trial(tmp_path, STYLE) is False
+
+
+def test_a_video_the_engine_refuses_never_keeps_the_style(tmp_path, monkeypatch):
+    """Review: the keep ran before the engine's own checks, so a video refused there still used a clone."""
+    import cr_submission
+    from test_frontier_submission import studio_with_original
+    study(tmp_path)
+    monkeypatch.setattr(cr_submission, "HOME", tmp_path)
+    bridge = Bridge()
+    monkeypatch.setattr(cr_bridge, "call", bridge.call)
+    studio, _, _ = studio_with_original()
+    cr_submission.install(studio)
+    refused = studio.app.test_client().post("/api/run", json={"title": "", "steps": ["video"], "style": STYLE})
+    assert refused.status_code == 422 and bridge.calls == [] and keep.style_on_trial(tmp_path, STYLE)

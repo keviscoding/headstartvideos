@@ -118,15 +118,6 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             return studio.app.make_response((jsonify(error=str(error)), 400))
         if len([t for t in str(payload.get("title") or "").split("\n") if t.strip()]) > 1:
             return studio.app.make_response((jsonify(error="Use one title for a set of panels."), 400))
-    # a style on trial (cr_style_keep) is kept by its first video: one style clone, after every other check passed,
-    # refused here (nothing queued) when the plan has none left
-    import cr_bridge
-    import cr_style_keep
-    try:
-        cr_style_keep.before_video(HOME, str(payload.get("style") or ""), cr_bridge)
-    except ValueError as error:
-        from flask import jsonify
-        return studio.app.make_response((jsonify(error=str(error)), 400))
     staged = []
     staged_jobs = {}
     globals_ = {**original.__globals__, "QUEUE": staged, "JOBS": staged_jobs, "_ensure_dispatcher": lambda: None}
@@ -143,6 +134,15 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
         return response
     if not staged:
         raise RuntimeError("Frontier did not construct a queued job.")
+    # a style on trial (cr_style_keep) is kept by its first video: one style clone, only once the engine took the video
+    # too (still private here); refused with nothing queued when the plan has none left
+    import cr_bridge
+    import cr_style_keep
+    try:
+        cr_style_keep.before_video(HOME, str(payload.get("style") or ""), cr_bridge)
+    except ValueError as error:
+        from flask import jsonify
+        return studio.app.make_response((jsonify(error=str(error)), 400))
     import cr_attempts
     import cr_video_cancel
     saved_slug = job_slug or (cr_attempts.owned_slug(studio.mv, project_id)
