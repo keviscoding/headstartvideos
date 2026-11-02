@@ -23,10 +23,10 @@ def test_a_creator_with_the_key_gets_the_kit_and_the_studio_walkthrough(monkeypa
     assert kit.status_code == 200 and "Creator kit" in kit.text
     assert kit.headers["x-robots-tag"].startswith("noindex") and "no-store" in kit.headers["cache-control"]
     studio = client.get("/ugc/k3y-one/studio")
-    assert studio.status_code == 200 and "Which channel inspires you?" in studio.text      # Studio's own page
-    assert "/ugc-sandbox/studio.js" in studio.text and "<script>" not in studio.text.replace('<script src', '')
-    for f in ("kit.js", "kit.css", "studio.js"):
+    assert studio.status_code == 200 and "ChannelRecipe Studio" in studio.text      # the sandbox Studio
+    assert "/ugc-sandbox/studio2.js" in studio.text and "<script>" not in studio.text.replace('<script src', '')
+    for f in ("kit.js", "kit.css", "studio2.js", "studio2.css"):
         assert client.get("/ugc-sandbox/" + f).status_code == 200, f
-    for f in ("pathways.json", "trending.json"):         # the hooks and scripts live on the CDN, not in this repo
+    for f in ("pathways.json", "trending.json", "strategies.json"):   # the data lives on the CDN, not in this repo
         assert client.get("/ugc-sandbox/" + f).status_code == 404, f
     assert "public/ugc-sandbox/" in client.get("/ugc-sandbox/kit.js").text
