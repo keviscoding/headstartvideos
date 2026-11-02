@@ -232,8 +232,10 @@ def choose_base(profile: dict, installed) -> tuple:
     real = fam.get("footage", 0) + fam.get("photo", 0) + fam.get("document", 0)
     picks = []
     if profile.get("_rendered_3d"):
-        picks.append(("stories", f"{round(fam.get('3d', 0) * 100)}% of the pictures are 3D scenes with the channel's own "
-                                 "characters, rendered in real 3D by its own renderer over a narrated story recipe"))
+        picks.append(("stories", f"{round(fam.get('3d', 0) * 100)}% of the pictures are 3D scenes, rendered in real 3D by "
+                                 "the channel's own renderer" + (", timed to a timeline of years and events with music"
+                                                                if no_narrator(profile) else
+                                                                " over a narrated story recipe")))
     if fam.get("3d", 0) >= 0.3 and designed_3d(profile):
         picks.append(("3d", f"{round(fam['3d'] * 100)}% of the pictures are 3D scenes with a designed cast, which "
                             "Studio's 3D engine builds and animates"))
@@ -867,8 +869,9 @@ def coded_route(profile, kit: str = "") -> dict:
             "why": "written in code: during the study your Claude Code writes this channel's own animation ("
                    + ("in real 3D" if three else "in 2D") + ") from its frames, whatever they show (characters, "
                    "graphics, maps, text, effects, camera), and checks its test shots against the channel's own frames "
-                   f"({coded_time()}). Every video then reuses it: Claude directs it to the narration and Studio draws "
-                   "every frame on this computer"
+                   f"({coded_time()}). Every video then reuses it: Claude directs it "
+                   + ("beat by beat to a timeline of years and events it writes for the video, with music and no voice,"
+                      if no_narrator(profile) else "to the narration") + " and Studio draws every frame on this computer"
                    + (". Your videos are vertical Shorts with its captions, like the channel's" if vertical(profile) else "")
                    + "."}
 
