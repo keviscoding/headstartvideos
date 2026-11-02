@@ -24,9 +24,12 @@ def user(uid, plan, email=None):
     return {"id": uid, "email": email or f"user{uid}@example.com", "plan": plan}
 
 
-def study(env, n, *, begin_id=None):
+def study(env, n, *, begin_id=None, version="5.3-admin.123"):
+    """A style study begun by Studio 123 unless said otherwise: counted the way studies were before Studio 124
+    (KEEPS_ITS_STYLES), when a study counted by itself; the keep tests move theirs to 124."""
     return studio.NativeBegin(begin_id=begin_id or f"style_study_{n:04d}", title=f"Style study: Channel {n}",
-                              style="history", setup={**env.proof, "purpose": "creative"}, max_calls=40)
+                              style="history", setup={**env.proof, "purpose": "creative", "local_version": version},
+                              max_calls=40)
 
 
 @pytest.mark.parametrize("plan", ["daily", "studio_pro", "studio_max", "daily_trial", "pro"])
