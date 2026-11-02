@@ -14,7 +14,7 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const short = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n || 0);
   const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } } };
-  let D, T, S, R, tpl, path, method;
+  let D, T, S, R, O, tpl, path, method;
 
   const toast = (t) => { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.append(d); setTimeout(() => d.remove(), 1500); };
   async function copy(text) { try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { prompt("Copy this:", text); } }
@@ -50,7 +50,11 @@
   const lane = (m = method) => (m.id === "clipping" ? "clipping" : m.id === "kids" ? "kids" : "any");
   function hooksFor(t) {
     const fams = t.hook_families || [];
-    return (D.hooks || []).filter((h) => fams.includes(h.family) && (h.lanes.includes("any") || h.lanes.includes(lane())));
+    const afterClip = (t.shots || []).some((s, i) => s.kind === "added" && i < t.hook_shot);   // the hook answers the clip
+    return (D.hooks || []).filter((h) => fams.includes(h.family) && (h.lanes.includes("any") || h.lanes.includes(lane()))
+      && (h.slot !== "after_clip" || afterClip)        // an answering line never opens a video
+      && (h.clip !== "person" || ["claim", "hustle"].includes(t.react))   // "she's living in 2099" needs a person
+      && (!h.method || h.method === method.id));        // a line naming Claude only over the Claude walkthrough
   }
   function pick(list, key) {
     if (!list.length) return null;
@@ -60,9 +64,9 @@
   }
   const feedOf = (t) => (method.id === "clipping" && t.react ? "clipping" : t.react);
   const clipsFor = (t) => (R && t.react && R.feeds[feedOf(t)] ? R.feeds[feedOf(t)].clips : []);
-  // the bot opens the kit straight from this link. RICH_LINK adds the format, clip and hook ("__" parts) once the bot
-  // parses them (asked of the editor session, 2026-11-02); until then the plain kit link, which the bot reads today.
-  const RICH_LINK = false;
+  // the bot opens the kit straight from this link; RICH_LINK adds the format, clip and hook ("__" parts), which the bot
+  // pins to the creator's next video (bot 509f57b, 2026-11-02). false falls back to the plain kit link.
+  const RICH_LINK = true;
   const botKit = (p) => (D.pathways || []).some((x) => x.id === p.pathway && x.result);   // the bot's walk-<pathway> kits
   const botLink = (t, p, h, c) => !botKit(p) ? BOT : `${BOT}?start=kit_walk-${p.pathway}` + (!RICH_LINK ? "" : `__${t.id}` +
     (c ? `__${c.id}` : "") + (h ? `__h${(D.hooks || []).indexOf(h)}` : ""));
@@ -104,8 +108,10 @@
         ${hook ? `<div class="hook"><span>Your hook · ${hook.how === "screen" ? "we put it on screen" : t.hook_shot ? `say it in shot ${t.hook_shot + 1}` : "say it first"}</span>
           <b>${esc(fill(hook.line, p))}</b>${hooks.length > 1 ? `<button class="btn ghost small" type="button" id="next-h">↻ Another hook</button>` : ""}</div>` : ""}
         ${clip ? `<div class="react"><span>The clip you react to · we add it, you don't film it</span>
-          <div class="yt"><iframe src="https://www.youtube.com/embed/${esc(clip.id)}?start=${clip.start || 0}&end=${clip.end || 8}&rel=0" allow="encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe></div>
-          <small>${esc(clip.title)} · ${esc(clip.channel)} · ${short(clip.views)} views</small>
+          <div class="yt ${clip.kind === "cr" && !clip.tall ? "wide" : ""}">${clip.kind === "cr"
+            ? `<video src="${esc(clip.url)}" poster="${esc(clip.poster || "")}" muted autoplay loop playsinline controls></video>`
+            : `<iframe src="https://www.youtube.com/embed/${esc(clip.id)}?start=${clip.start || 0}&end=${clip.end || 8}&rel=0" allow="encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`}</div>
+          <small>${esc(clip.title)} · ${clip.kind === "cr" ? "made with ChannelRecipe" : `${esc(clip.channel)} · ${short(clip.views)} views`}</small>
           ${clips.length > 1 ? `<button class="btn ghost small" type="button" id="next-c">↻ Another clip</button>` : ""}</div>` : ""}
         <ol class="shots">${shots.map((s, i) => s.kind === "added" ? `
           <li class="shot we-add"><span class="plus">＋</span>
@@ -191,6 +197,48 @@
         <button class="btn ghost small" type="button" data-copy="${esc(r.channel_url)}">Copy channel link</button></div></div></li>`).join("")}</ul>` : "";
   }
 
+  /* ---------- the outliers library (outliers.json: sandbox/outliers.py) ---------- */
+  const ago = (iso) => { const d = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 864e5)); return d === 0 ? "today" : d === 1 ? "yesterday" : d < 60 ? `${d} days ago` : `${Math.round(d / 30)} months ago`; };
+  const FORMAT_NAME = { watch: "Watch this", school: "Why don't they teach this", formula: "X + Shorts = 💰", lost: "If I lost everything",
+    millionaire: "First millionaire", confess: "Embarrassing side hustle", tier: "Tier list", dayn: "Day N", pov: "POV", cook: "Watch me cook", none: "Other", "": "Other" };
+  const ol = { sort: "x", format: "", plat: "", shown: 24 };
+  function renderOutliers() {
+    if (!O || !O.videos || !O.videos.length) return;
+    $("#outliers-sec").hidden = false;
+    const sel = $("#ol-format");
+    if (sel.options.length === 1) {
+      const counts = {}; O.videos.forEach((v) => { const f = v.format || "none"; counts[f] = (counts[f] || 0) + 1; });
+      Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([f, n]) => sel.add(new Option(`${FORMAT_NAME[f] || f} (${n})`, f)));
+    }
+    let list = O.videos.filter((v) => (!ol.format || (v.format || "none") === ol.format) && (!ol.plat || v.plat === ol.plat));
+    list = list.slice().sort(ol.sort === "views" ? (a, b) => b.views - a.views : ol.sort === "new" ? (a, b) => b.posted.localeCompare(a.posted) : (a, b) => b.x - a.x);
+    $("#outliers").innerHTML = list.slice(0, ol.shown).map((v, i) => `
+      <div class="ol-card"><button type="button" class="ol-thumb" data-ol="${O.videos.indexOf(v)}"><img src="${esc(v.thumb)}" alt="" loading="lazy">
+        <span class="ol-x">${v.x >= 2 ? `${v.x}× their usual` : "steady"}</span><span class="ol-play">▶</span></button>
+        <div class="ol-meta"><b>${short(v.views)} views</b><small>${ago(v.posted)} · ${v.plat === "tt" ? "TikTok" : "Instagram"} · @${esc(v.handle)}</small>
+        ${v.hook ? `<p>“${esc(v.hook.replace(/\s+/g, " ").slice(0, 90))}”</p>` : ""}
+        <div class="ol-acts"><span class="chip plain">${esc(FORMAT_NAME[v.format || "none"] || v.format)}</span>
+        ${D.templates.some((t) => t.id === v.format) ? `<button type="button" class="btn ghost small" data-remake="${esc(v.format)}">Remake this →</button>` : ""}</div></div></div>`).join("");
+    $("#ol-more").hidden = list.length <= ol.shown;
+  }
+  function wireOutliers() {
+    $("#ol-sort").addEventListener("click", (e) => { const b = e.target.closest("[data-s]"); if (!b) return; ol.sort = b.dataset.s; ol.shown = 24;
+      $("#ol-sort").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); renderOutliers(); });
+    $("#ol-format").addEventListener("change", (e) => { ol.format = e.target.value; ol.shown = 24; renderOutliers(); });
+    $("#ol-plat").addEventListener("change", (e) => { ol.plat = e.target.value; ol.shown = 24; renderOutliers(); });
+    $("#ol-more").addEventListener("click", () => { ol.shown += 24; renderOutliers(); });
+    $("#outliers").addEventListener("click", (e) => {
+      const play = e.target.closest("[data-ol]");
+      if (play) { const v = O.videos[+play.dataset.ol];
+        $("#ol-play").innerHTML = `<iframe src="${embed(v.plat, v.id)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+          <a class="btn ghost small" href="${esc(v.url)}" target="_blank" rel="noopener">Open on ${v.plat === "tt" ? "TikTok" : "Instagram"} ↗</a>`;
+        $("#ol-modal").hidden = false; }
+      const rm = e.target.closest("[data-remake]");
+      if (rm) choose(D.templates.find((t) => t.id === rm.dataset.remake), path);
+    });
+    $("#ol-modal").addEventListener("click", (e) => { if (e.target.id === "ol-modal" || e.target.closest(".ol-x")) { $("#ol-modal").hidden = true; $("#ol-play").innerHTML = ""; } });
+  }
+
   function renderInspo() {
     $("#inspo").innerHTML = (D.inspiration || []).map((i) => `<li><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.name)} ↗</a><p>${esc(i.what)}</p></li>`).join("");
   }
@@ -209,9 +257,11 @@
     D = await json("pathways.json");
     S = await json("strategies.json");
     R = await json("react.json");
+    O = await json("outliers.json");
     if (D.tutorial) { const t = $("#tutorial"); t.hidden = false; $("video", t).src = D.tutorial; $("video", t).poster = D.tutorial.replace(/\.mp4$/, ".jpg"); if (!store.get("seen-tutorial")) t.open = true; t.addEventListener("toggle", () => store.set("seen-tutorial", "1")); }
     pickToday();
     renderTemplates(); renderPaths(); renderInspo(); renderToday();
+    if (O) { wireOutliers(); renderOutliers(); }
     document.querySelectorAll(".pcard").forEach((c) => c.classList.toggle("on", c.dataset.p === path.id));
   }
   main();
