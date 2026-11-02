@@ -594,6 +594,10 @@ def lead_character(profile: dict):
     return max(leads, key=lambda c: _num(c.get("screen_share"))) if leads else None
 
 
+MUSIC_ONLY = "Music only, like the channel: timed to a timeline of years and events (recommended)"
+ADD_NARRATOR = "Add a narrator who tells it"
+
+
 def questions(profile: dict) -> list:
     """Short questions only where the profile is unsure or the creator has a real choice."""
     out = []
@@ -631,6 +635,12 @@ def questions(profile: dict) -> list:
                                                                               "qr code", "link"}:
         out.append({"id": "cta", "ask": "The reference promotes something in the video. Add your own calls to "
                     "action?", "options": ["Yes", "No"]})
+    narration = (profile.get("format", {}).get("narration") or {})
+    if str(narration.get("value") if isinstance(narration, dict) else narration or "").lower() == "none":
+        # no voice in the references (a city growing over centuries, music only): its videos are timed to a timeline
+        # (cr_timeline) unless the creator wants a narrator added
+        out.append({"id": "voice", "ask": "Your references have no narrator: only music and what's on screen (years, "
+                    "captions, labels). How should your videos sound?", "options": [MUSIC_ONLY, ADD_NARRATOR]})
     music = profile.get("sound", {}).get("music", {})
     if music.get("references_disagree"):
         level = music.get("level")

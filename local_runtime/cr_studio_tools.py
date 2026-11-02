@@ -341,6 +341,9 @@ def coded_usd(row: dict, minutes: float) -> float:
     if not coded:
         return 0.0
     pieces = max(1, -(-int(round(float(minutes) * 60)) // max(10, int(coded.get("piece_seconds") or 35))))
+    if row.get("audio") == "music_only":
+        # no narrator (cr_timeline): a scored section for each era of the timeline, about every 2 to 3 minutes
+        pieces = max(2, -(-int(round(float(minutes) * 60)) // 150))
     return float(coded.get("plates_usd") or 0) + pieces * float(coded.get("music_usd_per_piece") or 0)
 
 
@@ -379,6 +382,9 @@ def media_estimate(cat: dict, row: dict, minutes: int, features: dict, thumbnail
                                                                                                              "roblox")
     if fish_reads:
         voice = float(fish.get("usd_per_min") or 0)               # the creator's own Fish Audio key reads it
+    music_only = row.get("audio") == "music_only"
+    if music_only:
+        voice, fish_reads = 0.0, False                            # no narrator: music and pictures only (cr_timeline)
     total = voice + sum(float((per.get(k) or {}).get("per_min") or 0) for k, on in features.items() if on)
     each = total * minutes + coded_usd(row, minutes)
     if kind(row) == "short" and isinstance(row.get("short_cost_usd"), (int, float)):
@@ -393,6 +399,10 @@ def media_estimate(cat: dict, row: dict, minutes: int, features: dict, thumbnail
     out = {"per_video_usd": round(each, 2), "thumbnails": thumbs, "recipe_note": one_line(row.get("cost"), 260),
            "note": "Media runs on your own accounts (pictures, voice, footage watching). Claude's writing and "
                    "directing run on your Claude Code plan, not billed per video."}
+    if music_only:
+        out["voice"] = {"provider": "none", "note": "No narrator: this style's videos are music and pictures, timed "
+                                                    "to a timeline of years and events Claude writes for each video. "
+                                                    "The music is scored on the creator's Kie account."}
     if fish_reads:
         out["voice"] = {"provider": "fish", "model": fish.get("model"), "usd_per_min": fish.get("usd_per_min"),
                         "note": f"Narration: Fish Audio {fish.get('model')} on the creator's own Fish Audio API "

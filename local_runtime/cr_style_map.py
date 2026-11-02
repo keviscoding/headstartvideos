@@ -766,6 +766,11 @@ def _drawn_2d(profile) -> float:
     return sum(float(sources.get(k) or 0) for k in DRAWN_2D)
 
 
+def no_narrator(profile) -> bool:
+    """The references have no voice at all (their narration was watched as "none"), and the creator didn't add one."""
+    return str(_v(_get(profile, "format", "narration"), "") or "").lower() == "none"
+
+
 def _narrator_carries(profile) -> bool:
     """A narrator tells the story (an explainer), rather than the animation itself (a fight, a short film with a few
     lines of voice)."""
@@ -1218,6 +1223,16 @@ def _sound(plan: Plan, profile: dict):
         # each picture brings its own place
         snd["ambience"] = {"scenes": True, "db": -14.0 if snd.get("music") is False else -18.0, "default": ""}
         why += f"; the sound of each place under the pictures ({', '.join(_v(amb, [])[:3])})"
+    if no_narrator(profile):
+        # a channel with no voice (cr_timeline): every video is music and pictures, timed to a written timeline; the
+        # music is scored for it and carries it alone
+        snd["music"] = True
+        snd.setdefault("score", {"genres": [g for g in (music.get("genres") or []) if g and g.lower() != "none"][:2]
+                                 or ["cinematic orchestral score"], "moods": (music.get("moods") or [])[:5],
+                                 "instruments": (music.get("instruments") or [])[:5]})["lead"] = True
+        plan.set("look.audio", "music_only", area="Sound", label="No narrator",
+                 why="the references have no voice: videos are music and pictures, timed to a timeline of years and "
+                     "events written for each video", source="watched", show="music only, timed to a timeline")
     plan.set("look.sound", snd, area="Sound", label="Music and effects",
              why=why + f"; effects {sfx or 'unknown'}" + (f"; mood {vibe.replace('_', ' ')}" if vibe else ""),
              source="measured,watched",
@@ -1318,6 +1333,9 @@ def answer(profile: dict, answers: dict) -> dict:
         presenter.update(value=0.0, who=[])
     if str(answers.get("cta") or "") == "No":
         fmt["cta"] = {"value": [], "kinds": [], "confidence": 1.0, "from": ["asked"]}
+    if str(answers.get("voice") or "").startswith("Add a narrator"):
+        # no narrator in the references, one added on the creator's word: a narrated clone like any other
+        fmt["narration"] = {"value": "voiceover", "confidence": 1.0, "from": ["asked"]}
     music = str(answers.get("music") or "")
     if music:
         level = "score" if music.startswith("A story score") else "bed" if music.startswith("Light") else "none"
