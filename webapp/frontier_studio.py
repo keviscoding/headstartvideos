@@ -201,6 +201,11 @@ SAVE_COMPLETED_PREFIX = "Save completed style: "
 # themselves, so theirs always count until that finish (no holding back a done finish to get a clone back).
 STALE_STUDY_S = 6 * 3600
 SETTLES_ITS_STUDIES = 112
+# From this Studio on a study counts only when the creator keeps the style it made (owner, 2026-11-02: "only styles
+# they keep"): the study and its Save completed style no longer count by themselves; Studio sends the keep (Keep on
+# the study's page, or the first video made with the style) and that kept study counts from then on, once. A
+# discarded style never counts. Studies begun by earlier Studios count as before. Must equal the release it ships in.
+KEEPS_ITS_STYLES = 124
 
 
 def _release_number(setup_json) -> int:
@@ -235,7 +240,8 @@ def style_clone_usage(user: dict) -> dict:
     unfinished with no activity for STALE_STUDY_S, begun by a Studio before
     112 (closed mid-study, it never said so). A finished study always counts,
     and so does a completed study's separate save (SAVE_COMPLETED_PREFIX)
-    begun by Studio 112 or later.
+    begun by Studio 112 or later. A study begun by Studio 124 or later counts
+    only once its style is kept (style_clone_keeps).
     """
     initialize()
     with db._conn() as conn:
@@ -246,14 +252,19 @@ def style_clone_usage(user: dict) -> dict:
             LEFT JOIN frontier_native_sessions s ON s.project_id = p.id
             WHERE p.user_id=? AND (p.title LIKE ? OR p.title LIKE ?) AND p.created_at > ? AND p.status != 'failed'"""),
             (user["id"], STYLE_STUDY_PREFIX + "%", SAVE_COMPLETED_PREFIX + "%", since)).fetchall()
+        kept = conn.execute(db._q("SELECT COUNT(*) AS total FROM style_clone_keeps WHERE user_id=? AND kept_at > ?"),
+                            (user["id"], since)).fetchone()["total"]
     stale = time.time() - STALE_STUDY_S
 
     def counts(row) -> bool:
-        settles = _release_number(row["setup_json"]) >= SETTLES_ITS_STUDIES
+        release = _release_number(row["setup_json"])
+        if release >= KEEPS_ITS_STYLES:                # counted by its keep instead
+            return False
+        settles = release >= SETTLES_ITS_STUDIES
         if row["title"].startswith(SAVE_COMPLETED_PREFIX):
             return settles
         return row["status"] == "done" or float(row["updated_at"]) > stale or settles
-    used = sum(1 for row in rows if counts(row))
+    used = sum(1 for row in rows if counts(row)) + int(kept or 0)
     limit = plans.style_clone_limit(user.get("plan"), is_admin=is_admin(user))
     if limit is not None:
         limit += extra
@@ -295,6 +306,31 @@ class StyleCloneGrant(BaseModel):
     reset: bool = False
     note: str = ""
     give_back: int = 0
+
+
+class StyleCloneKeep(BaseModel):
+    project_id: str
+
+
+def keep_style_clone(user: dict, project_id: str) -> dict:
+    """The creator keeps the style a study made (Studio 124 and later): from now on that study uses one of the plan's
+    style clones, once. Keeping it again changes nothing, and a study begun by an older Studio already counts. Refused
+    with the plan's upgrade message when every clone is used, before anything is recorded."""
+    initialize()
+    with db._conn() as conn:
+        row = conn.execute(db._q("""SELECT p.id, p.title, s.setup_json FROM frontier_projects p
+            LEFT JOIN frontier_native_sessions s ON s.project_id = p.id WHERE p.id=? AND p.user_id=?"""),
+            (str(project_id or ""), user["id"])).fetchone()
+        if not row or not str(row["title"]).startswith((STYLE_STUDY_PREFIX, SAVE_COMPLETED_PREFIX)):
+            raise HTTPException(404, "That style study wasn't found on your account.")
+        counted = _release_number(row["setup_json"]) < KEEPS_ITS_STYLES or conn.execute(
+            db._q("SELECT 1 FROM style_clone_keeps WHERE project_id=?"), (row["id"],)).fetchone()
+    if not counted:
+        _require_style_clone_allowance(user)
+        with db._conn() as conn:
+            conn.execute(db._q("""INSERT INTO style_clone_keeps (project_id, user_id, kept_at) VALUES (?,?,?)
+                ON CONFLICT(project_id) DO NOTHING"""), (row["id"], user["id"], time.time()))
+    return {"kept": True, "style_clones": style_clone_usage(user)}
 
 
 def _require_style_clone_allowance(user: dict) -> None:
@@ -378,6 +414,9 @@ def initialize():
                 user_id INTEGER PRIMARY KEY, extra INTEGER NOT NULL DEFAULT 0,
                 counted_from DOUBLE PRECISION NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
                 updated_at DOUBLE PRECISION NOT NULL)""")
+            # the studies whose style the creator kept (Studio 124+): each counts as one style clone
+            conn.execute("""CREATE TABLE IF NOT EXISTS style_clone_keeps (
+                project_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, kept_at DOUBLE PRECISION NOT NULL)""")
         _schema_ready.add(schema_key)
 
 
@@ -1391,6 +1430,10 @@ def make_router(session_user, *, prefix="/api/frontier"):
     options = {"route_class": _BrandedWorkflowRoute} if prefix == "/api/studio" else {}
     router = APIRouter(prefix=prefix, tags=["ChannelRecipe Studio"], **options)
     access = studio_access(session_user)
+
+    @router.post("/style-clones/keep")
+    def post_style_clone_keep(req: StyleCloneKeep, user=Depends(access)):
+        return JSONResponse(keep_style_clone(user, req.project_id), headers={"Cache-Control": "private, no-store"})
 
     @router.post("/admin/style-clones")
     def post_style_clone_grant(req: StyleCloneGrant, user=Depends(access)):

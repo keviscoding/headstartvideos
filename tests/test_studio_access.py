@@ -167,6 +167,72 @@ def test_saving_a_completed_study_counts_as_its_clone_from_studio_112(env):
     assert studio.style_clone_usage(creator)["used"] == 0, "a save that failed saved nothing"
 
 
+def test_from_studio_124_a_study_counts_only_when_its_style_is_kept(env):
+    """Owner, 2026-11-02: "only styles they keep". A finished study that missed is discarded and costs nothing; the
+    kept one counts once, however often Studio says keep."""
+    creator = user(1, "daily")
+    kept, missed = (studio.native_begin(creator, study(env, n))["project_id"] for n in range(2))
+    for project in (kept, missed):
+        _release(project, f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+        _age(project, 0, "done")
+    assert studio.style_clone_usage(creator)["used"] == 0, "done studies alone no longer count"
+    assert studio.keep_style_clone(creator, kept)["style_clones"]["used"] == 1
+    assert studio.keep_style_clone(creator, kept)["style_clones"]["used"] == 1, "keeping again changes nothing"
+    saved = _save_completed(env, creator, 9, f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+    _age(saved, 0, "done")
+    assert studio.style_clone_usage(creator)["used"] == 1, "a 124 save counts only through its study's keep"
+
+
+def test_keeping_needs_a_free_clone_and_an_older_study_already_counts(env):
+    creator = user(1, "daily")
+    projects = []
+    for n in range(4):                                   # each saved as begun by its Studio before the next begins
+        projects.append(studio.native_begin(creator, study(env, n))["project_id"])
+        _release(projects[-1], "5.3-admin.123" if n == 0 else f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+    old = projects[0]
+    _age(old, 0, "done")
+    assert studio.keep_style_clone(creator, old)["style_clones"]["used"] == 1, "already counted: nothing added"
+    for project in projects[1:3]:
+        studio.keep_style_clone(creator, project)
+    assert studio.style_clone_usage(creator)["used"] == 3
+    with pytest.raises(HTTPException) as err:
+        studio.keep_style_clone(creator, projects[3])
+    assert err.value.status_code == 402 and "3 style clones" in err.value.detail
+    assert studio.style_clone_usage(creator)["used"] == 3, "a refused keep records nothing"
+    with pytest.raises(HTTPException) as err:
+        studio.keep_style_clone(user(2, "daily"), projects[1])
+    assert err.value.status_code == 404, "only your own studies"
+    video = studio.native_begin(creator, studio.NativeBegin(begin_id="a_video_0001", title="A video",
+                                                            style="history", setup=env.proof))["project_id"]
+    with pytest.raises(HTTPException):
+        studio.keep_style_clone(creator, video)
+
+
+def test_a_reset_count_leaves_earlier_keeps_behind(env, monkeypatch):
+    creator = user(1, "daily")
+    monkeypatch.setattr(studio.db, "get_user_by_email", lambda email: creator if email == creator["email"] else None)
+    project = studio.native_begin(creator, study(env, 0))["project_id"]
+    _release(project, f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+    studio.keep_style_clone(creator, project)
+    assert studio.style_clone_usage(creator)["used"] == 1
+    studio.time.sleep(0.01)
+    studio.grant_style_clones(user(9, "daily", "owner@example.com"), creator["email"], 0, True)
+    assert studio.style_clone_usage(creator)["used"] == 0
+
+
+def test_studio_sends_the_keep_through_its_route(env):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    creator = user(1, "daily")
+    project = studio.native_begin(creator, study(env, 0))["project_id"]
+    _release(project, f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: creator, prefix="/api/studio"))
+    got = TestClient(app).post("/api/studio/style-clones/keep", json={"project_id": project})
+    assert got.status_code == 200 and got.json()["style_clones"]["used"] == 1
+    assert "no-store" in got.headers["cache-control"]
+
+
 def test_an_older_studios_save_never_counts_so_no_count_jumps_on_deploy(env):
     creator = user(1, "daily")
     begun = studio.native_begin(creator, study(env, 0))["project_id"]
