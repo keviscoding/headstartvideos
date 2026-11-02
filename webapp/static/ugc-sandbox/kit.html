@@ -42,6 +42,20 @@
     <div id="viral" class="viral"></div>
   </section>
 
+  <section class="block" id="outliers-sec" hidden>
+    <h2>Outliers in our space right now</h2>
+    <p class="muted">Real videos from creators in our niche that blew past their usual views. Sort them, watch them, then
+      tap "Remake this" to film one in the same format.</p>
+    <div class="ol-bar">
+      <div class="seg" id="ol-sort"><button type="button" data-s="x" class="on">Biggest outliers</button><button type="button" data-s="views">Most views</button><button type="button" data-s="new">Newest</button></div>
+      <select id="ol-format" aria-label="Format"><option value="">Every format</option></select>
+      <select id="ol-plat" aria-label="Platform"><option value="">TikTok + Instagram</option><option value="tt">TikTok</option><option value="ig">Instagram</option></select>
+    </div>
+    <div id="outliers" class="ol-grid"></div>
+    <div class="row-c"><button class="btn ghost" type="button" id="ol-more" hidden>Show more</button></div>
+  </section>
+  <div class="ol-modal" id="ol-modal" hidden><div class="ol-box"><button type="button" class="ol-x" aria-label="Close">✕</button><div id="ol-play"></div></div></div>
+
   <section class="block">
     <h2>Want to be creative? Find inspiration here</h2>
     <ul id="inspo" class="inspo"></ul>
