@@ -35,7 +35,9 @@ FREE_TOOLS = ("setup_check", "fix_graphics_browser", "fix_speech_model", "fix_ff
 # carry_on_queue starts held videos again (paid work), or removes them: always asked. recover_video allows a stopped
 # video's stuck Claude steps and uncertain paid tasks one more attempt (cr_recover): always asked
 PAID_TOOLS = ("make_videos", "clone_style", "build_product", "resume_video", "style_sample", "carry_on_queue",
-              "recover_video")
+              "recover_video",
+              # keeps a style on trial: one of the plan's style clones (Studio 124), always asked
+              "keep_style")
 # a video or a learned style moved into Studio's trash (cr_trash): the creator approves each one
 DESTRUCTIVE_TOOLS = ("delete_video", "delete_style")
 # ChannelRecipe's hosted niche database (the account's `channelrecipe` server beside `studio`): reading it is free

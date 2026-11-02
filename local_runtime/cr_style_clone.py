@@ -108,6 +108,9 @@ def _read(path):
 
 def _write(path, value):
     import cr_claude
+    if Path(path).name == "operation.json":
+        import cr_style_keep
+        value = cr_style_keep.held(Path(path), value)   # a keep made meanwhile is never written back to trial
     cr_claude._private_write(Path(path), value)
 
 
@@ -1171,6 +1174,13 @@ def status(home, operation_id, bridge):
         # the page said "inspected actual frames" for every study, also when no frame could be downloaded (a Roblox
         # Shorts clone of 2026-10-30 whose references could not be downloaded)
         result["frames_inspected"] = evidence.get("actual_frames") is True
+        import cr_style_keep
+        style_id = saved["spec"]["style_id"]
+        if (Path(home) / "styles" / (style_id + ".json")).is_file():     # a discarded style offers nothing here
+            # on trial (Keep or Discard) or kept; a graphics copy says its source study's
+            keep = cr_style_keep.state(cr_style_keep.counting_study(home, style_id)[1] or saved)
+            if keep:
+                result["keep"] = keep
         style = _read(Path(home) / "styles" / (saved["spec"]["style_id"] + ".json"))
         likeness = (style.get("cr_style_clone") or {}).get("likeness") or {}
         import cr_style_likeness
@@ -2509,9 +2519,11 @@ def _finish_metadata_recovery(home, folder, saved, bridge, readiness, *, engine=
         raise RuntimeError("Keep the completed study's original Claude model profile.")
     if saved["state"] == "prepared":
         bridge.prepare_runtime(proof)
+        import cr_style_keep
+        saved["begun_version"] = proof.get("local_version")    # the release ChannelRecipe counts this save by
         response = bridge._mcp_tool("local_studio_begin", {"begin_id": saved["begin_id"],
             "title": "Save completed style: " + saved["spec"]["title"], "style": saved["spec"]["base_style"],
-            "minutes": 1, "features": {}, "options": {}, "setup": proof,
+            "minutes": 1, "features": {}, "options": cr_style_keep.begin_options(saved), "setup": proof,
             "max_calls": 1, "platform": "windows" if os.name == "nt" else "mac"})
         saved.update(project_id=response["project"]["id"], state="running", started_at=time.time(), pid=os.getpid())
         _write(folder / "operation.json", saved)
@@ -2587,6 +2599,8 @@ def _publish(home, folder, saved):
     _write(report, {"operation_id": folder.name, "style": style["name"], "validated": True,
                     "references": [r["id"] for r in saved["spec"]["references"]]})
     saved.update(state="complete_local", phase="complete", completed_at=time.time(), style_sha256=_file_hash(target))
+    import cr_style_keep
+    cr_style_keep.start_trial(saved)                   # Studio 124+: on trial until the creator keeps or discards it
     saved["finish_receipt"] = {"project_id": saved["project_id"], "status": "done", "error_code": "",
         "artifacts": [{"name": "learned-style.json", "sha256": saved["style_sha256"], "media_type": "application/json"},
                       {"name": "style-study-report.json", "sha256": _file_hash(report), "media_type": "application/json"}]}
@@ -2661,11 +2675,13 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
         if _file_hash(Path(home) / "styles" / (saved["spec"]["base_style"] + ".json")) != saved["spec"]["base_sha256"]:
             raise RuntimeError("The base preset changed after approval. Preview and approve a new study.")
         bridge.prepare_runtime(proof)
+        import cr_style_keep
+        saved["begun_version"] = proof.get("local_version")    # the release ChannelRecipe counts this study by
         response = bridge._mcp_tool("local_studio_begin", {"begin_id": saved["begin_id"],
             "title": ("Improve style: " if saved.get("renderer_improve") else "Style graphics: " if
                       saved.get("graphics_of") else "Style study: ") + saved["spec"]["title"],
             "style": saved["spec"]["base_style"],
-            "minutes": 1, "features": {}, "options": {}, "setup": proof,
+            "minutes": 1, "features": {}, "options": cr_style_keep.begin_options(saved), "setup": proof,
             "max_calls": saved["spec"]["max_calls"], "platform": "windows" if os.name == "nt" else "mac"})
         project = response["project"]
         bridge._project = project

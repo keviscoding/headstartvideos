@@ -24,9 +24,12 @@ def user(uid, plan, email=None):
     return {"id": uid, "email": email or f"user{uid}@example.com", "plan": plan}
 
 
-def study(env, n, *, begin_id=None):
+def study(env, n, *, begin_id=None, version="5.3-admin.123"):
+    """A style study begun by Studio 123 unless said otherwise: counted the way studies were before Studio 124
+    (KEEPS_ITS_STYLES), when a study counted by itself; the keep tests move theirs to 124."""
     return studio.NativeBegin(begin_id=begin_id or f"style_study_{n:04d}", title=f"Style study: Channel {n}",
-                              style="history", setup={**env.proof, "purpose": "creative"}, max_calls=40)
+                              style="history", setup={**env.proof, "purpose": "creative", "local_version": version},
+                              max_calls=40)
 
 
 @pytest.mark.parametrize("plan", ["daily", "studio_pro", "studio_max", "daily_trial", "pro"])
@@ -165,6 +168,131 @@ def test_saving_a_completed_study_counts_as_its_clone_from_studio_112(env):
     assert studio.style_clone_usage(creator)["used"] == 1, "study + save stays one clone"
     _age(saved, 30, "failed")
     assert studio.style_clone_usage(creator)["used"] == 0, "a save that failed saved nothing"
+
+
+def test_from_studio_124_a_study_counts_only_when_its_style_is_kept(env):
+    """Owner, 2026-11-02: "only styles they keep". A finished study that missed is discarded and costs nothing; the
+    kept one counts once, however often Studio says keep."""
+    creator = user(1, "daily")
+    kept, missed = (studio.native_begin(creator, study(env, n))["project_id"] for n in range(2))
+    for project in (kept, missed):
+        _release(project, f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+        _age(project, 0, "done")
+    assert studio.style_clone_usage(creator)["used"] == 0, "done studies alone no longer count"
+    assert studio.keep_style_clone(creator, kept)["style_clones"]["used"] == 1
+    assert studio.keep_style_clone(creator, kept)["style_clones"]["used"] == 1, "keeping again changes nothing"
+    saved = _save_completed(env, creator, 9, f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+    _age(saved, 0, "done")
+    assert studio.style_clone_usage(creator)["used"] == 1, "a 124 save counts only through its study's keep"
+
+
+def test_keeping_needs_a_free_clone_and_an_older_study_already_counts(env):
+    creator = user(1, "daily")
+    projects = []
+    for n in range(4):                                   # each saved as begun by its Studio before the next begins
+        projects.append(studio.native_begin(creator, study(env, n))["project_id"])
+        _release(projects[-1], "5.3-admin.123" if n == 0 else f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+    old = projects[0]
+    _age(old, 0, "done")
+    assert studio.keep_style_clone(creator, old)["style_clones"]["used"] == 1, "already counted: nothing added"
+    for project in projects[1:3]:
+        studio.keep_style_clone(creator, project)
+    assert studio.style_clone_usage(creator)["used"] == 3
+    with pytest.raises(HTTPException) as err:
+        studio.keep_style_clone(creator, projects[3])
+    assert err.value.status_code == 402 and "3 style clones" in err.value.detail
+    assert studio.style_clone_usage(creator)["used"] == 3, "a refused keep records nothing"
+    with pytest.raises(HTTPException) as err:
+        studio.keep_style_clone(user(2, "daily"), projects[1])
+    assert err.value.status_code == 404, "only your own studies"
+    video = studio.native_begin(creator, studio.NativeBegin(begin_id="a_video_0001", title="A video",
+                                                            style="history", setup=env.proof))["project_id"]
+    with pytest.raises(HTTPException):
+        studio.keep_style_clone(creator, video)
+
+
+def test_a_reset_count_leaves_earlier_keeps_behind(env, monkeypatch):
+    creator = user(1, "daily")
+    monkeypatch.setattr(studio.db, "get_user_by_email", lambda email: creator if email == creator["email"] else None)
+    project = studio.native_begin(creator, study(env, 0))["project_id"]
+    _release(project, f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+    studio.keep_style_clone(creator, project)
+    assert studio.style_clone_usage(creator)["used"] == 1
+    studio.time.sleep(0.01)
+    studio.grant_style_clones(user(9, "daily", "owner@example.com"), creator["email"], 0, True)
+    assert studio.style_clone_usage(creator)["used"] == 0
+
+
+def _learning(env, n, style, *, title="Style study: Channel", **options):
+    """A Studio 124 study that recorded the style it makes (options learns_style)."""
+    req = studio.NativeBegin(begin_id=f"learning_{n:04d}", title=f"{title} {n}", style="history",
+                             setup={**env.proof, "purpose": "creative",
+                                    "local_version": f"5.3-admin.{studio.KEEPS_ITS_STYLES}"},
+                             max_calls=40, options={"learns_style": style, **options})
+    return studio.native_begin(user(1, "daily"), req)["project_id"]
+
+
+def _video(env, n, style):
+    return studio.NativeBegin(begin_id=f"a_video_{n:04d}", title=f"A video {n}", style=style, setup=env.proof)
+
+
+def test_a_video_with_a_trial_style_keeps_it_on_the_server_too(env):
+    """The backstop for any client: Studio 124 keeps a trial style before queueing; a begin that skipped it still
+    counts, once, and is refused when no clone is left."""
+    creator = user(1, "daily")
+    _learning(env, 0, "cr_clone_war_maps")
+    _learning(env, 3, "cr_clone_one_too_many")        # begun while clones were free; its video comes last
+    assert studio.style_clone_usage(creator)["used"] == 0
+    studio.native_begin(creator, _video(env, 0, "cr_clone_war_maps"))
+    assert studio.style_clone_usage(creator)["used"] == 1
+    studio.native_begin(creator, _video(env, 0, "cr_clone_war_maps"))      # the same begin sent again
+    studio.native_begin(creator, _video(env, 1, "cr_clone_war_maps"))
+    assert studio.style_clone_usage(creator)["used"] == 1, "one style, one clone"
+    studio.native_begin(creator, _video(env, 2, "cr_clone_not_studied_here"))
+    for n in (1, 2):
+        _learning(env, n, f"cr_clone_other_{n}")
+        studio.native_begin(creator, _video(env, 10 + n, f"cr_clone_other_{n}"))
+    assert studio.style_clone_usage(creator)["used"] == 3
+    with pytest.raises(HTTPException) as refused:
+        studio.native_begin(creator, _video(env, 20, "cr_clone_one_too_many"))
+    assert refused.value.status_code == 402 and "on trial" in refused.value.detail
+    with studio.db._conn() as conn:
+        assert not conn.execute(studio.db._q("SELECT 1 FROM frontier_native_sessions WHERE begin_id=?"),
+                                ("a_video_0020",)).fetchone(), "nothing begun"
+
+
+def test_a_graphics_copy_keeps_its_source_study(env):
+    creator = user(1, "daily")
+    source = _learning(env, 0, "cr_clone_war_maps")
+    _learning(env, 1, "cr_clone_war_maps_graphics", title="Style graphics: War maps",
+              counts_with="cr_clone_war_maps")
+    studio.native_begin(creator, _video(env, 0, "cr_clone_war_maps_graphics"))
+    assert studio.style_clone_usage(creator)["used"] == 1
+    with studio.db._conn() as conn:
+        assert conn.execute(studio.db._q("SELECT project_id FROM style_clone_keeps")).fetchone()["project_id"] == source
+
+
+def test_only_a_study_may_say_which_style_it_makes(env):
+    creator = user(1, "daily")
+    with pytest.raises(HTTPException) as err:
+        studio.native_begin(creator, studio.NativeBegin(begin_id="a_video_0099", title="A video", style="history",
+                                                        setup=env.proof, options={"learns_style": "cr_clone_x"}))
+    assert err.value.status_code == 400
+    with pytest.raises(HTTPException):
+        _learning(env, 0, "../styles/x")
+
+
+def test_studio_sends_the_keep_through_its_route(env):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    creator = user(1, "daily")
+    project = studio.native_begin(creator, study(env, 0))["project_id"]
+    _release(project, f"5.3-admin.{studio.KEEPS_ITS_STYLES}")
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: creator, prefix="/api/studio"))
+    got = TestClient(app).post("/api/studio/style-clones/keep", json={"project_id": project})
+    assert got.status_code == 200 and got.json()["style_clones"]["used"] == 1
+    assert "no-store" in got.headers["cache-control"]
 
 
 def test_an_older_studios_save_never_counts_so_no_count_jumps_on_deploy(env):

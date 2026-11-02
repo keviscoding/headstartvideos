@@ -431,9 +431,14 @@ def delete_style(studio, home, style: str) -> dict:
     plan = style_plan(studio, home, style)
     if plan["blocked"]:
         raise Refused(plan["blocked"])
+    import cr_style_keep
+    trial = cr_style_keep.style_on_trial(home, style)   # discarded on trial: none of the plan's style clones used
     entry = _put_away(home, "s", {"name": plan["title"], "style": style, "goes": plan["goes"]}, plan["moves"])
     _reload_styles(studio)
-    return done(plan, entry)
+    out = done(plan, entry)
+    if trial:
+        out["message"] = "It was on trial, so it used none of your style clones. " + out["message"]
+    return out
 
 
 def public(plan: dict) -> dict:

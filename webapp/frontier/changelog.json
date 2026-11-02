@@ -1,5 +1,14 @@
 [
   {
+    "build": 124,
+    "date": "2026-11-02",
+    "title": "A style clone counts only when you keep it",
+    "items": [
+      "New: a style you clone is on trial until you keep it. Look at it, try a sample or improve it in Style Lab first. Keep it, or make your first video with it, and it uses one of your plan's style clones. If it doesn't match the channel, discard it and it costs nothing from your plan.",
+      "The study's page has Keep this style and Discard it, the Style library marks a style on trial, and Claude Code can keep one for you when you say so."
+    ]
+  },
+  {
     "build": 123,
     "date": "2026-11-01",
     "title": "Cloning a style gets past YouTube's bot check more often",

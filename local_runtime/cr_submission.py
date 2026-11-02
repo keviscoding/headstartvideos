@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import re
 import json
+from pathlib import Path
 from types import FunctionType
 
 from flask import request
+
+HOME = Path(__file__).resolve().parent              # this Studio's folder, as cr_studio's
 
 
 def submit(studio, payload, project_id, *, before_publish=None, job_slug=None, setup_proof=None):
@@ -131,6 +134,15 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
         return response
     if not staged:
         raise RuntimeError("Frontier did not construct a queued job.")
+    # a style on trial (cr_style_keep) is kept by its first video: one style clone, only once the engine took the video
+    # too (still private here); refused with nothing queued when the plan has none left
+    import cr_bridge
+    import cr_style_keep
+    try:
+        cr_style_keep.before_video(HOME, str(payload.get("style") or ""), cr_bridge)
+    except ValueError as error:
+        from flask import jsonify
+        return studio.app.make_response((jsonify(error=str(error)), 400))
     import cr_attempts
     import cr_video_cancel
     saved_slug = job_slug or (cr_attempts.owned_slug(studio.mv, project_id)
