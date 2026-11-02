@@ -190,3 +190,19 @@ def test_the_director_reads_beats_not_narration_and_the_film_carries_the_clock(t
     timed = a2d.film_spec({"duration": 10, "shots": [], "actions": [], "fx": []}, casting, {}, {},
                           extra={"clock": {"t0": 120.0, "total": 540.0}, "timeline": {"beats": []}})
     assert timed["clock"] == {"t0": 120.0, "total": 540.0} and timed["timeline"] == {"beats": []}
+
+
+def test_a_timeline_video_is_filmed_from_the_air_with_no_crowds():
+    """The Manila test (2026-11-02): the director's close shots and crowds put pill-shaped people before every place."""
+    import cr_animated2d as a2d
+    plan = {"duration": 10, "actions": [], "fx": [],
+            "shots": [{"start": 0, "set": "spanish_manila", "framing": "close:fort", "move": "push", "crowd": 40},
+                      {"start": 4, "set": "spanish_manila", "framing": "wide", "move": "pan"}],
+            "sets": {"bay_battle": {"prompt": "the bay", "crowd": 30}}}
+    out = a2d.aerial(plan)
+    assert [s["framing"] for s in out["shots"]] == ["wide", "wide"] and out["shots"][0]["move"] == "push"
+    assert out["shots"][0]["crowd"] == 0 and out["sets"]["bay_battle"]["crowd"] == 0
+    casting = {"cast": {}, "sets": {"spanish_manila": {"prompt": "walled city", "crowd": 25}}}
+    film = a2d.film_spec(out, casting, {}, {}, extra={"timeline": {"beats": []}})
+    assert "crowd" not in film["sets"]["spanish_manila"]
+    assert a2d.film_spec(out, casting, {}, {})["sets"]["spanish_manila"]["crowd"] == 25, "a narrated video is as before"

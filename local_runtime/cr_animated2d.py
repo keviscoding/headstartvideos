@@ -1529,6 +1529,9 @@ def cost_note(style: dict) -> str:
     found = (((look.get("animated2d") or {}).get("renderer") or {}).get("manifest") or {})
     music = (f", plus its own music, about ${SCORE_USD:.2f} a piece (one or two a short video)"
              if media_usd(style).get("music_usd_per_piece") else "")
+    if look.get("audio") == "music_only":                   # no narrator (cr_timeline): music and pictures only
+        return (f"No voice: its music only, about ${SCORE_USD:.2f} a section (a section every 2 to 3 minutes), timed to "
+                "a timeline Claude writes for each video. Every scene is rendered on this computer.")
     if (found.get("plates") or {}).get("draw") is False:
         if dims_of(look.get("animated2d")) == 3:
             return f"Your voice{music or ' only'}: every scene is rendered in 3D on this computer."
@@ -2444,7 +2447,23 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
         _write(request, {"key": key})
         text = engine.claude(prompt, _model("director"), max_tokens=12000, provider="claudecode")
         reply.write_text(str(text), encoding="utf-8")
-    return clean_plan(_json(text), casting["cast"], casting["sets"], t0, t1, man, new_sets=NEW_SETS if own_places else 0)
+    plan = clean_plan(_json(text), casting["cast"], casting["sets"], t0, t1, man, new_sets=NEW_SETS if own_places else 0)
+    return aerial(plan) if (Path(job) / "timeline.json").is_file() else plan
+
+
+def aerial(plan: dict) -> dict:
+    """A timeline video's plan as the channel films it (cr_timeline, the Manila test of 2026-11-02): one aerial view of
+    the place, its camera moving, never a close or medium shot of a building or a figure, and no crowds (pill-shaped
+    people stood in front of every place where the director asked for them)."""
+    for shot in plan.get("shots") or []:
+        if str(shot.get("framing") or "").split(":")[0] in ("close", "medium", "two"):
+            shot["framing"] = "wide"
+        if shot.get("crowd"):
+            shot["crowd"] = 0
+    for place in (plan.get("sets") or {}).values():
+        if isinstance(place, dict) and place.get("crowd"):
+            place["crowd"] = 0
+    return plan
 
 
 # Before the director's prompt, for a video with no narrator (cr_timeline): the channel's own words for the beats
@@ -2454,7 +2473,9 @@ card's headline and text, who rules, the population, the places labelled, what i
 camera), and its "words" are that beat's text, never speech. Read "as the narrator says it" as "when the timeline
 reaches it". Show every beat when it starts: advance the year, build or change what it says, show its card and labels
 the channel's way, move the camera as it says. Nothing is spoken: no speech bubbles, no captions of these lines beyond the
-channel's own text layers. The renderer also gets the whole timeline and the video's own clock (Kit.scene.timeline,
+channel's own text layers. FILM IT AS ONE AERIAL FLIGHT OVER THE PLACE: wide framings only, the camera pushing,
+pulling or panning across it (never a close or medium shot of a building or a figure), and no crowds: the channel
+shows no people. The renderer also gets the whole timeline and the video's own clock (Kit.scene.timeline,
 Kit.scene.clock {t0, total}), so what grows keeps growing across every stretch it draws.
 
 """
@@ -2468,6 +2489,8 @@ def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: l
     sets = {}
     for ident, s in {**casting["sets"], **(plan.get("sets") or {})}.items():
         row = {k: v for k, v in s.items() if k in SET_FIELDS}
+        if extra and extra.get("timeline"):
+            row.pop("crowd", None)                        # a timeline video shows the place, never a crowd in it
         if ident in plate_paths:
             row["image"] = str(plate_paths[ident])
             row["floor"] = floor_line(plate_paths[ident])
