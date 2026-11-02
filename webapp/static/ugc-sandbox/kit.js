@@ -60,8 +60,8 @@
   }
   const feedOf = (t) => (method.id === "clipping" && t.react ? "clipping" : t.react);
   const clipsFor = (t) => (R && t.react && R.feeds[feedOf(t)] ? R.feeds[feedOf(t)].clips : []);
-  // the bot opens the kit straight from this link. RICH_LINK adds the format, clip and hook ("__" parts) once the bot
-  // parses them (asked of the editor session, 2026-11-02); until then the plain kit link, which the bot reads today.
+  // the bot opens the kit straight from this link; RICH_LINK adds the format, clip and hook ("__" parts), which the bot
+  // pins to the creator's next video (bot 509f57b, 2026-11-02). false falls back to the plain kit link.
   const RICH_LINK = true;
   const botKit = (p) => (D.pathways || []).some((x) => x.id === p.pathway && x.result);   // the bot's walk-<pathway> kits
   const botLink = (t, p, h, c) => !botKit(p) ? BOT : `${BOT}?start=kit_walk-${p.pathway}` + (!RICH_LINK ? "" : `__${t.id}` +
