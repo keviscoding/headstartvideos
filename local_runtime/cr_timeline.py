@@ -257,6 +257,53 @@ def voiceover(engine, job, style: str, force: bool = False):
     return mp3, srt
 
 
+# What the study tells Claude while it writes such a channel's renderer (cr_style_clone, the renderer's brief)
+RENDERER_NOTE = (
+    "This channel has no narrator: its videos are music and pictures, timed to a written timeline. Every film your "
+    "renderer draws (one stretch of about a minute) also carries Kit.scene.clock {t0, total}: where the stretch starts "
+    "on the video's own clock and the video's length (the absolute time at your t is clock.t0 + t), and "
+    "Kit.scene.timeline {place, years, eras, beats}: every beat {at, until, year, headline, text, state, ruler, "
+    "population, labels, build, moving, camera} in seconds on that clock. A place channel (a city or region growing "
+    "over the years) also gets Kit.scene.map, the real place in metres around its centre (x east, y north): water "
+    "[{kind, ring, holes}] (the sea, rivers, lakes: lay the ground, then the water over it), streets [{kind, line}], "
+    "buildings [{ring, height, base}] (footprints and real heights, biggest first), parks, landuse [{kind, ring}], "
+    "landmarks and places [{name, kind, at}]. Draw from them: the real coastline and streets, buildings rising on their "
+    "footprints as the years pass (the oldest core first, outward and upward with time, landmarks when the timeline "
+    "names them), the channel's own year counter, cards and labels from the beats, and one camera flight that carries "
+    "on across stretches (derive it from the absolute time, so stretch 2 starts where stretch 1 ended). Without a map "
+    "or a timeline (the test shots), draw a convincing place of your own the same way.")
+
+
+# ── the place's real map (cr_map_data) ──────────────────────────────────────────────────────────────────────────
+
+CREDIT = "map.credit"
+
+
+def map_of(engine, job) -> dict:
+    """The timeline's place as a real map for the renderer (Kit.scene.map), fetched once and cached; {} when the
+    timeline names no place with coordinates, or the map can't be had (the renderer then draws its own place)."""
+    place = read(job).get("place") or {}
+    if not isinstance(place, dict) or "lat" not in place or "lon" not in place:
+        return {}
+    import cr_map_data
+    found = cr_map_data.map_for(Path(__file__).resolve().parent, place, log=engine.log)
+    if found:
+        (Path(job) / CREDIT).write_text(found.get("source") or cr_map_data.SOURCE, encoding="utf-8")
+    return found
+
+
+def credit(job) -> None:
+    """The map data's credit at the end of the video's description (its licence asks for it), once."""
+    job = Path(job)
+    if not (job / CREDIT).is_file():
+        return
+    line = "Map data: " + (job / CREDIT).read_text(encoding="utf-8").strip()
+    desc = job / "youtube.txt"
+    text = desc.read_text(encoding="utf-8") if desc.is_file() else ""
+    if line not in text:
+        desc.write_text(text.rstrip() + ("\n\n" if text.strip() else "") + line + "\n", encoding="utf-8")
+
+
 # ── the wrappers ───────────────────────────────────────────────────────────────────────────────────────────────
 
 def install(engine):
@@ -272,6 +319,16 @@ def install(engine):
             return write(engine, title, minutes, job, style, force)
         return original_script(title, minutes, job, force, style=style)
     engine.generate_script = generate_script
+
+    original_publish = getattr(engine, "publish_named_copy", None)
+    if original_publish is not None:
+        def publish_named_copy(job, title, fresh=""):
+            try:
+                credit(job)
+            except OSError as e:
+                engine.log(f"map credit: not added to the description ({e})")
+            return original_publish(job, title, fresh)
+        engine.publish_named_copy = publish_named_copy
 
     if original_voice is not None:
         def generate_voiceover(script, job, force=False, *args, **kwargs):

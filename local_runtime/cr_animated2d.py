@@ -2776,6 +2776,9 @@ def prepare(engine, script, job, style, force):
     code, man = _style_renderer(engine, style, job)
     casting = cast_and_sets(engine, script, job, style, _first_line(job / "title.txt"), man)
     plates(engine, job, casting, _spec(engine, style), man=man)
+    import cr_timeline
+    if cr_timeline.music_only(engine, style):
+        cr_timeline.map_of(engine, job)                     # the place's real map, while the music is scored
 
 
 def assemble(engine, job, mp3, srt, style, force, burn_subs):
@@ -2792,6 +2795,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
     import cr_timeline
     timed = cr_timeline.read(job) if cr_timeline.music_only(engine, style) else {}
     lines = cr_timeline.lines(job) if timed else narration(engine, job, srt)
+    place_map = cr_timeline.map_of(engine, job) if timed else {}   # Kit.scene.map: the place's streets and buildings
     if not lines:
         raise AnimationStopped("The narration timing is empty, so nothing could be choreographed.")
     parts = chunks(lines, total)
@@ -2809,7 +2813,8 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
         size = (int(getattr(engine, "VIDEO_W", 1920)), int(getattr(engine, "VIDEO_H", 1080)))
         # a timeline video: where this stretch sits on the video's clock, and the whole timeline (cr_timeline)
         extra = {"clock": {"t0": round(part[0], 3), "total": round(total, 3)},
-                 "timeline": {k: timed.get(k) for k in ("place", "years", "eras", "beats")}} if timed else None
+                 "timeline": {k: timed.get(k) for k in ("place", "years", "eras", "beats")},
+                 **({"map": place_map} if place_map else {})} if timed else None
         film = film_spec(plan, casting, spec, plate_paths, words, size=size, extra=extra)
         first = _digest([film, code_hash])
         record = folder_a2d / f"review-{index:03d}.json"
