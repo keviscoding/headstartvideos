@@ -41,7 +41,9 @@ Link: $ARGUMENTS
    use one now, try about 5 seconds of one on their topic first (`style_sample`, about $0.05 on their own accounts; ask
    first), or carry on with the study.
 6. **Confirm.** Explain: the study runs on their Claude Code (written in code, usually 10 to 25 minutes in all; at
-   most the study budget plus 24 minutes for the channel's animation) and uses one of their plan's style clones. Ask "Shall I start the study?".
+   most the study budget plus 24 minutes for the channel's animation). The study itself uses none of their plan's
+   style clones: its style is on trial until they keep it (one clone) or discard it (none), so a study that misses the
+   channel costs nothing from their plan. They need one clone free to start. Ask "Shall I start the study?".
 7. **Start.** After a yes, call `clone_style` with look_id, style_name, example_title, answers (and the brief
    when combining). Claude Code asks
    them to approve the tool call. If it returns a `medium_gap`, read it to them; only with their OK call again with
@@ -50,12 +52,18 @@ Link: $ARGUMENTS
    `progress(id=op_…)` when they ask. When it's ready the style appears in `list_styles(kind='mine')`; for a style
    written in code, read `animation.what_to_tell_them` first, and offer to make it closer in Style Lab (below) before
    or after a first video (the make-videos skill). Styles learned from a channel render on this computer.
+9. **Keep or discard.** A new study's style is on trial (`progress` shows `keep.state` "trial", `list_styles` shows
+   `on_trial`): read `keep.what_to_tell_them`. They can look at it, try a sample or improve it in Style Lab first.
+   When they say to keep it, call `keep_style(id)`: one of their plan's style clones. Their first video with it keeps
+   it too, so say that before they make one. If it doesn't match the channel, `delete_style` discards it: into the
+   trash, none of their clones used. Never keep or discard it for them.
 
 To change a style after it's saved (its name, description, creative direction, character or the options Create
 starts from), use `edit_style`; nothing is studied again. To study it again with other videos, run this skill again
 with the new links and `edit_style`'s `study_again` (a new style; the old one stays).
 
-If the plan's style clones are used up, Studio says so: point them to https://channelrecipe.com/app#billing.
+If the plan's style clones are used up, Studio says so (at a new study or at a keep): suggest discarding a trial style
+they don't want, or point them to https://channelrecipe.com/app#billing.
 If a study stops, read what Studio said; never start it again by yourself.
 
 ## Style Lab: improve a style's renderer

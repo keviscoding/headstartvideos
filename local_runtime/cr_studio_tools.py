@@ -280,7 +280,14 @@ def style_card(row: dict, thumb: str = "") -> dict:
             # its recurring character (options.character / character_picture change it for a video)
             "character": one_line(row.get("character"), 300) if isinstance(row.get("character"), str) else "",
             # the language its videos speak by its own file (options.language makes one in another)
-            "language": language_name(row.get("language") or "en")}
+            "language": language_name(row.get("language") or "en"),
+            # Studio 124+: a cloned style not kept yet (keep_style keeps it, and so does its first video)
+            "on_trial": bool(row.get("custom")) and _on_trial(row["name"])}
+
+
+def _on_trial(style: str) -> bool:
+    import cr_style_keep                  # standard library only, like this file
+    return cr_style_keep.style_on_trial(HOME, style)
 
 
 def language_name(lang_id) -> str:
@@ -1534,7 +1541,31 @@ def clone_progress(operation: str) -> dict:
             out["next"] = ("This style draws pictures because Use pictures instead was chosen; its animation is kept. If "
                            "they want it back, open the page (open_in_studio page='style_clone' id=<this op id>) and "
                            "press Use Claude's animation again; never choose for them.")
+    keep = d.get("keep") or {}
+    if keep.get("state") == "trial":
+        # Studio 124+: the study used none of their style clones yet; keeping the style (or its first video) uses one
+        out["keep"] = {"state": "trial", "what_to_tell_them": keep.get("say") or ""}
+        out["next"] = ((out.get("next") or "") + " The style is on trial: read keep.what_to_tell_them. When they say to "
+                       "keep it, call keep_style(id=<the style id>); if it doesn't match the channel and they want it "
+                       "gone, delete_style moves it to the trash and uses none of their clones. Never keep or discard it "
+                       "for them.").strip()
+    elif keep.get("state") == "kept":
+        out["keep"] = {"state": "kept"}
     return out
+
+
+def tool_keep_style(args):
+    """Keep a style on trial (one of the plan's style clones); refused when the plan has none left."""
+    same_studio()
+    style = str(args.get("id") or "").strip()
+    if not _STYLE.fullmatch(style) or not style.startswith("cr_clone_"):
+        raise Refused("Use the id of a style the creator cloned (list_styles kind='mine', cr_clone_…).")
+    if not _on_trial(style):
+        return {"kept": True, "already": True, "message": "This style isn't on trial: it's already theirs to use."}
+    out = call("POST", "/cr-style-keep/" + _quote_path(style), {}, timeout=60)
+    left = (out.get("style_clones") or {}).get("remaining")
+    return {**out, "message": "Kept: it used one of their plan's style clones"
+            + (f" ({left} left)." if left is not None else ".")}
 
 
 def tool_claude_usage(args):
@@ -2318,7 +2349,8 @@ TOOLS = {
                               "id": {"type": "string"}}),
                      {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "clone_style": (tool_clone_style, "Step 2: study the looked-at references and build a new reusable style. Uses "
-                    "the creator's Claude Code for 15-30 minutes and one of their plan's style clones. Needs look_id, a "
+                    "the creator's Claude Code for 15-30 minutes; its style is on trial until they keep it (keep_style: one of "
+                    "their plan's style clones) or discard it (none), and one clone must be free to start. Needs look_id, a "
                     "style_name, an example_title and the creator's answers to the look's questions. accept_medium: "
                     "only after the creator read and accepted the medium_gap this returns (what Studio can't make yet). "
                     "budget_minutes: the Claude study budget (15-30, default 22); raise it only when a study stopped "
@@ -2424,10 +2456,17 @@ TOOLS = {
                                                                          "progress() shows it. It must match the "
                                                                          "video, so the approval names what goes."}},
                              ["id", "title"]), _DELETES),
+    "keep_style": (tool_keep_style, "Keep a cloned style that is on trial (list_styles shows on_trial; a study's "
+                   "progress shows keep.state 'trial'). From Studio 124 a style clone counts against the creator's plan "
+                   "only when they keep the style or make their first video with it. Uses one of their plan's style "
+                   "clones; refused with the plan's message when none is left. Call it only when the creator says to "
+                   "keep it; Claude Code asks them to approve.",
+                   _schema({"id": {"type": "string", "description": "The style's id from list_styles (cr_clone_…)."}},
+                           ["id"]), {"readOnlyHint": False, "idempotentHint": True, "openWorldHint": True}),
     "delete_style": (tool_delete_style, "Delete a style the creator cloned (list_styles kind='mine', id cr_clone_…), "
                      "only when they ask: its recipe moves to Studio's trash and Recently deleted restores it for 30 "
                      "days. Videos made with it, their voice library and the study's notes stay; their plan's style "
-                     "clone count doesn't change. Studio's own recipes can't be deleted. Tell the creator which style "
+                     "clone count doesn't change (a style on trial never used one: deleting it discards it). Studio's own recipes can't be deleted. Tell the creator which style "
                      "goes first; Claude Code asks them to approve.",
                      _schema({"id": {"type": "string", "description": "The style's id from list_styles (cr_clone_…)."},
                               "name": {"type": "string", "description": "The style's name as list_styles shows it. It "

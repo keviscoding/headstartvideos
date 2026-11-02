@@ -98,6 +98,9 @@ def _details(channel, style_info):
     return value if isinstance(value, dict) else style_info
 
 
+TRIAL_CHIP = "On trial: your first video keeps it (one style clone)"
+
+
 def present(channel, style_info=None, *, automatic=False):
     """Return an enriched copy of a catalogue row, retaining its stable identity."""
     if not isinstance(channel, dict):
@@ -140,6 +143,12 @@ def present(channel, style_info=None, *, automatic=False):
         row.update(family="Animation", capabilities=["Learned animation", "Reference-led", "Animation only"],
                    description="Your learned animation style carries the whole film, using its saved visual language and pacing.",
                    tagline="Your learned animation style carries the whole film, using its saved visual language and pacing.")
+    if custom:
+        import cr_style_keep
+        if cr_style_keep.style_on_trial(Path(__file__).resolve().parent, name):
+            # Studio 124: not kept yet; the chip says what its first video does before Create is pressed
+            row["on_trial"] = True
+            row["capabilities"] = [TRIAL_CHIP] + [c for c in row.get("capabilities") or [] if c != TRIAL_CHIP]
     row.update(art_url=ART_BASE + "/" + artwork + ".svg",
                art_label="Recipe artwork", art_is_conceptual=True,
                visual_policy="reference_only" if reference_only else "recipe_defaults",

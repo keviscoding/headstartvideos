@@ -265,6 +265,42 @@ def install(studio, activity, setup_status, *, token, home=None):
         except Exception as error:
             return error_response(error)
 
+    @app.post("/cr-style-clone/<operation>/keep")
+    def cr_style_keep_style(operation):
+        """Keep the style a study made (Studio 124+): it uses one of the plan's style clones from now on."""
+        try:
+            data()
+            import cr_style_keep
+            _, saved = cr_style_clone._saved(home, operation, cr_bridge)
+            cr_style_keep.keep(home, saved["spec"]["style_id"], cr_bridge)
+            return no_store(jsonify(safe_status(operation)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-keep/<style>")
+    def cr_style_keep_by_name(style):
+        """Keep a style on trial by its id (the keep_style tool): one of the plan's style clones."""
+        try:
+            data()
+            import cr_style_keep
+            return no_store(jsonify(cr_style_keep.keep(home, style, cr_bridge)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/<operation>/discard")
+    def cr_style_discard_style(operation):
+        """Discard a style on trial: into Studio's trash, none of the plan's style clones used."""
+        try:
+            data()
+            import cr_style_keep
+            with activity.lock:
+                if activity.busy():
+                    raise RuntimeError("Finish the current studio work before discarding this style.")
+                _, saved = cr_style_clone._saved(home, operation, cr_bridge)
+                return no_store(jsonify(cr_style_keep.discard(studio, home, saved["spec"]["style_id"])))
+        except Exception as error:
+            return error_response(error)
+
     @app.post("/cr-style-clone/<operation>/use-animation")
     def cr_style_use_animation(operation):
         """Use pictures instead, undone on the creator's word: Claude's animation draws the style again."""

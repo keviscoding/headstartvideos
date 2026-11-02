@@ -944,6 +944,12 @@ def install_routes(studio, token: str, home: Path = HOME) -> None:
             return jsonify(error=q.get("why") or "Studio Cloud isn't available.", quote=q), 409
         if q.get("short_by_usd"):
             return jsonify(error=short_message(q), quote=q, top_up=True), 402
+        try:                                                # a style on trial is kept by its first video (cr_style_keep)
+            import cr_bridge
+            import cr_style_keep
+            cr_style_keep.before_video(home, str(p.get("style") or ""), cr_bridge)
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
         threading.Thread(target=start, args=(app.test_client(), token, p), daemon=True, name="cr-cloud-start").start()
         return jsonify(started=True), 202
 

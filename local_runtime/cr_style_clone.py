@@ -1171,6 +1171,10 @@ def status(home, operation_id, bridge):
         # the page said "inspected actual frames" for every study, also when no frame could be downloaded (a Roblox
         # Shorts clone of 2026-10-30 whose references could not be downloaded)
         result["frames_inspected"] = evidence.get("actual_frames") is True
+        import cr_style_keep
+        keep = cr_style_keep.state(saved)              # on trial (Keep or Discard) or kept
+        if keep:
+            result["keep"] = keep
         style = _read(Path(home) / "styles" / (saved["spec"]["style_id"] + ".json"))
         likeness = (style.get("cr_style_clone") or {}).get("likeness") or {}
         import cr_style_likeness
@@ -2587,6 +2591,8 @@ def _publish(home, folder, saved):
     _write(report, {"operation_id": folder.name, "style": style["name"], "validated": True,
                     "references": [r["id"] for r in saved["spec"]["references"]]})
     saved.update(state="complete_local", phase="complete", completed_at=time.time(), style_sha256=_file_hash(target))
+    import cr_style_keep
+    cr_style_keep.start_trial(saved)                   # Studio 124+: on trial until the creator keeps or discards it
     saved["finish_receipt"] = {"project_id": saved["project_id"], "status": "done", "error_code": "",
         "artifacts": [{"name": "learned-style.json", "sha256": saved["style_sha256"], "media_type": "application/json"},
                       {"name": "style-study-report.json", "sha256": _file_hash(report), "media_type": "application/json"}]}

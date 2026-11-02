@@ -49,7 +49,7 @@ Then ask which one they want, with a multiple-choice question.
 ## 4. Then act (only what they choose)
 
 - Combine or clone the look: the clone-style skill (`clone_style_look` takes `youtube_urls` with two or three
-  channels to combine). Studying a style uses their Claude Code and one of their plan's style clones; it asks first.
+  channels to combine). Studying a style uses their Claude Code, and one of their plan's style clones only if they keep it; it asks first.
 - First videos: the make-videos skill, with the candidate's titles and style. It shows the cost and asks first.
 - A product: the digital-product skill.
 

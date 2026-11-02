@@ -351,8 +351,11 @@ learner as its own creative project. The validated style becomes a
 local recipe. Study actual frames, use captions when available, and report
 evidence gaps; never substitute metadata for a viewed reference. Keep the learned
 visual language separate from copying the reference script or footage. Each plan
-includes a number of style clones; if the studio reports the limit is reached,
-point the customer to https://channelrecipe.com/app#billing.
+includes a number of style clones. From Studio 124 a study's style is on trial:
+it uses one of them only when the creator keeps it (`keep_style`, Keep on its page,
+or their first video with it); discarding it (`delete_style`) uses none. If the
+studio reports the limit is reached, suggest discarding a trial style they don't
+want, or point the customer to https://channelrecipe.com/app#billing.
 
 ## Ranking Shorts and the Clip Board
 
