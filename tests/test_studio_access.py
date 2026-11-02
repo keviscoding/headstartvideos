@@ -223,6 +223,65 @@ def test_a_reset_count_leaves_earlier_keeps_behind(env, monkeypatch):
     assert studio.style_clone_usage(creator)["used"] == 0
 
 
+def _learning(env, n, style, *, title="Style study: Channel", **options):
+    """A Studio 124 study that recorded the style it makes (options learns_style)."""
+    req = studio.NativeBegin(begin_id=f"learning_{n:04d}", title=f"{title} {n}", style="history",
+                             setup={**env.proof, "purpose": "creative",
+                                    "local_version": f"5.3-admin.{studio.KEEPS_ITS_STYLES}"},
+                             max_calls=40, options={"learns_style": style, **options})
+    return studio.native_begin(user(1, "daily"), req)["project_id"]
+
+
+def _video(env, n, style):
+    return studio.NativeBegin(begin_id=f"a_video_{n:04d}", title=f"A video {n}", style=style, setup=env.proof)
+
+
+def test_a_video_with_a_trial_style_keeps_it_on_the_server_too(env):
+    """The backstop for any client: Studio 124 keeps a trial style before queueing; a begin that skipped it still
+    counts, once, and is refused when no clone is left."""
+    creator = user(1, "daily")
+    _learning(env, 0, "cr_clone_war_maps")
+    _learning(env, 3, "cr_clone_one_too_many")        # begun while clones were free; its video comes last
+    assert studio.style_clone_usage(creator)["used"] == 0
+    studio.native_begin(creator, _video(env, 0, "cr_clone_war_maps"))
+    assert studio.style_clone_usage(creator)["used"] == 1
+    studio.native_begin(creator, _video(env, 0, "cr_clone_war_maps"))      # the same begin sent again
+    studio.native_begin(creator, _video(env, 1, "cr_clone_war_maps"))
+    assert studio.style_clone_usage(creator)["used"] == 1, "one style, one clone"
+    studio.native_begin(creator, _video(env, 2, "cr_clone_not_studied_here"))
+    for n in (1, 2):
+        _learning(env, n, f"cr_clone_other_{n}")
+        studio.native_begin(creator, _video(env, 10 + n, f"cr_clone_other_{n}"))
+    assert studio.style_clone_usage(creator)["used"] == 3
+    with pytest.raises(HTTPException) as refused:
+        studio.native_begin(creator, _video(env, 20, "cr_clone_one_too_many"))
+    assert refused.value.status_code == 402 and "on trial" in refused.value.detail
+    with studio.db._conn() as conn:
+        assert not conn.execute(studio.db._q("SELECT 1 FROM frontier_native_sessions WHERE begin_id=?"),
+                                ("a_video_0020",)).fetchone(), "nothing begun"
+
+
+def test_a_graphics_copy_keeps_its_source_study(env):
+    creator = user(1, "daily")
+    source = _learning(env, 0, "cr_clone_war_maps")
+    _learning(env, 1, "cr_clone_war_maps_graphics", title="Style graphics: War maps",
+              counts_with="cr_clone_war_maps")
+    studio.native_begin(creator, _video(env, 0, "cr_clone_war_maps_graphics"))
+    assert studio.style_clone_usage(creator)["used"] == 1
+    with studio.db._conn() as conn:
+        assert conn.execute(studio.db._q("SELECT project_id FROM style_clone_keeps")).fetchone()["project_id"] == source
+
+
+def test_only_a_study_may_say_which_style_it_makes(env):
+    creator = user(1, "daily")
+    with pytest.raises(HTTPException) as err:
+        studio.native_begin(creator, studio.NativeBegin(begin_id="a_video_0099", title="A video", style="history",
+                                                        setup=env.proof, options={"learns_style": "cr_clone_x"}))
+    assert err.value.status_code == 400
+    with pytest.raises(HTTPException):
+        _learning(env, 0, "../styles/x")
+
+
 def test_studio_sends_the_keep_through_its_route(env):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

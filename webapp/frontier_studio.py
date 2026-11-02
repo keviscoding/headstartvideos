@@ -195,6 +195,9 @@ STYLE_STUDY_PREFIX = "Style study: "
 # 112+ is what counts as its clone (never refused at begin: the creator's paid work is always saved). Saves by older
 # Studios never count, so nobody's count jumps when this deploys.
 SAVE_COMPLETED_PREFIX = "Save completed style: "
+# The opt-in graphics study of a pictures style saves a copy; from Studio 124 a video with the copy keeps its source.
+STYLE_GRAPHICS_PREFIX = "Style graphics: "
+LEARNED_STYLE = r"cr_clone_[a-z0-9_-]{1,60}"
 # A study begun by a Studio before 112 and closed mid-study died with no finish, so it stayed "running" and counted
 # forever. Such a study, not done and with no activity (a Claude stage asked or answered, its finish) for this long,
 # stops counting; it counts again the moment it does anything. Studio 112 and later send a stopped study's finish
@@ -245,15 +248,20 @@ def style_clone_usage(user: dict) -> dict:
     """
     initialize()
     with db._conn() as conn:
-        grant = conn.execute(db._q("SELECT extra, counted_from FROM style_clone_grants WHERE user_id=?"),
-                             (user["id"],)).fetchone()
-        extra, since = (int(grant["extra"]), float(grant["counted_from"])) if grant else (0, 0.0)
-        rows = conn.execute(db._q("""SELECT p.title, p.status, p.updated_at, s.setup_json FROM frontier_projects p
-            LEFT JOIN frontier_native_sessions s ON s.project_id = p.id
-            WHERE p.user_id=? AND (p.title LIKE ? OR p.title LIKE ?) AND p.created_at > ? AND p.status != 'failed'"""),
-            (user["id"], STYLE_STUDY_PREFIX + "%", SAVE_COMPLETED_PREFIX + "%", since)).fetchall()
-        kept = conn.execute(db._q("SELECT COUNT(*) AS total FROM style_clone_keeps WHERE user_id=? AND kept_at > ?"),
-                            (user["id"], since)).fetchone()["total"]
+        return _clone_usage(conn, user)
+
+
+def _clone_usage(conn, user: dict) -> dict:
+    """style_clone_usage on an open connection (a keep counts and records in one transaction)."""
+    grant = conn.execute(db._q("SELECT extra, counted_from FROM style_clone_grants WHERE user_id=?"),
+                         (user["id"],)).fetchone()
+    extra, since = (int(grant["extra"]), float(grant["counted_from"])) if grant else (0, 0.0)
+    rows = conn.execute(db._q("""SELECT p.title, p.status, p.updated_at, s.setup_json FROM frontier_projects p
+        LEFT JOIN frontier_native_sessions s ON s.project_id = p.id
+        WHERE p.user_id=? AND (p.title LIKE ? OR p.title LIKE ?) AND p.created_at > ? AND p.status != 'failed'"""),
+        (user["id"], STYLE_STUDY_PREFIX + "%", SAVE_COMPLETED_PREFIX + "%", since)).fetchall()
+    kept = conn.execute(db._q("SELECT COUNT(*) AS total FROM style_clone_keeps WHERE user_id=? AND kept_at > ?"),
+                        (user["id"], since)).fetchone()["total"]
     stale = time.time() - STALE_STUDY_S
 
     def counts(row) -> bool:
@@ -318,30 +326,70 @@ def keep_style_clone(user: dict, project_id: str) -> dict:
     with the plan's upgrade message when every clone is used, before anything is recorded."""
     initialize()
     with db._conn() as conn:
+        _lock_clone_count(conn, user)
         row = conn.execute(db._q("""SELECT p.id, p.title, s.setup_json FROM frontier_projects p
             LEFT JOIN frontier_native_sessions s ON s.project_id = p.id WHERE p.id=? AND p.user_id=?"""),
             (str(project_id or ""), user["id"])).fetchone()
         if not row or not str(row["title"]).startswith((STYLE_STUDY_PREFIX, SAVE_COMPLETED_PREFIX)):
             raise HTTPException(404, "That style study wasn't found on your account.")
-        counted = _release_number(row["setup_json"]) < KEEPS_ITS_STYLES or conn.execute(
-            db._q("SELECT 1 FROM style_clone_keeps WHERE project_id=?"), (row["id"],)).fetchone()
-    if not counted:
-        _require_style_clone_allowance(user)
-        with db._conn() as conn:
-            conn.execute(db._q("""INSERT INTO style_clone_keeps (project_id, user_id, kept_at) VALUES (?,?,?)
-                ON CONFLICT(project_id) DO NOTHING"""), (row["id"], user["id"], time.time()))
-    return {"kept": True, "style_clones": style_clone_usage(user)}
+        _keep_locked(conn, user, row)
+        usage = _clone_usage(conn, user)
+    return {"kept": True, "style_clones": usage}
+
+
+def _lock_clone_count(conn, user: dict) -> None:
+    """One keep at a time per account (two web instances; parallel keeps of different studies must not both pass the
+    allowance). Released with the transaction."""
+    if db.IS_PG:
+        conn.execute("SELECT pg_advisory_xact_lock(%s, %s)", (726346121, int(user["id"])))
+    else:
+        conn.execute("BEGIN IMMEDIATE")
+
+
+def _keep_locked(conn, user: dict, row) -> None:
+    """Count one 124+ study's keep on an open, locked connection; refused (402) when every clone is used."""
+    if _release_number(row["setup_json"]) < KEEPS_ITS_STYLES or conn.execute(
+            db._q("SELECT 1 FROM style_clone_keeps WHERE project_id=?"), (row["id"],)).fetchone():
+        return
+    usage = _clone_usage(conn, user)
+    if usage["limit"] is not None and usage["used"] >= usage["limit"]:
+        raise HTTPException(402, _allowance_message(user, usage))
+    conn.execute(db._q("""INSERT INTO style_clone_keeps (project_id, user_id, kept_at) VALUES (?,?,?)
+        ON CONFLICT(project_id) DO NOTHING"""), (row["id"], user["id"], time.time()))
+
+
+def _study_making(conn, user: dict, style: str, depth: int = 0):
+    """The 124+ style study (project row with setup_json) that made this learned style, from the style id its begin
+    recorded (options learns_style); a graphics copy's study points at its source style (counts_with). None for a
+    recipe, an older Studio's style or another account's."""
+    if depth > 2 or not re.fullmatch(LEARNED_STYLE, style or ""):
+        return None
+    rows = conn.execute(db._q("""SELECT p.id, p.title, s.setup_json, s.spec_json FROM frontier_projects p
+        JOIN frontier_native_sessions s ON s.project_id = p.id
+        WHERE p.user_id=? AND (p.title LIKE ? OR p.title LIKE ?) ORDER BY p.created_at DESC"""),
+        (user["id"], STYLE_STUDY_PREFIX + "%", STYLE_GRAPHICS_PREFIX + "%")).fetchall()
+    for row in rows:
+        spec = json.loads(row["spec_json"] or "{}")
+        if spec.get("learns_style") != style:
+            continue
+        if str(row["title"]).startswith(STYLE_GRAPHICS_PREFIX):
+            return _study_making(conn, user, str(spec.get("counts_with") or ""), depth + 1)
+        return row
+    return None
+
+
+def _allowance_message(user: dict, usage: dict) -> str:
+    plan = plans.label(user.get("plan"))
+    more = (f" Upgrade to {usage['upgrade_label']} at {UPGRADE_URL} to clone more channels."
+            if usage["upgrade_label"] else "")
+    return (f"Your {plan} plan includes {usage['limit']} style clone{'s' if usage['limit'] != 1 else ''}, and you've "
+            f"used {usage['used']}.{more}")
 
 
 def _require_style_clone_allowance(user: dict) -> None:
     usage = style_clone_usage(user)
     if usage["limit"] is not None and usage["used"] >= usage["limit"]:
-        plan = plans.label(user.get("plan"))
-        more = (f" Upgrade to {usage['upgrade_label']} at {UPGRADE_URL} to clone more channels."
-                if usage["upgrade_label"] else "")
-        raise HTTPException(402, f"Your {plan} plan includes {usage['limit']} style "
-                                 f"clone{'s' if usage['limit'] != 1 else ''}, and you've used "
-                                 f"{usage['used']}.{more}")
+        raise HTTPException(402, _allowance_message(user, usage))
 
 
 def initialize():
@@ -1117,9 +1165,16 @@ def native_begin(user, req: NativeBegin):
             _require_style_clone_allowance(user)
     allowed = {"steps", "script", "burn_subs", "thumb_count", "use_motion", "character", "character_image",
                "maps", "headlines", "spotlight", "objects", "depth", "extra", "avatar_id", "avatar_s",
-               "avatar_count", "auto_style", "offer", "offer_plugs", "desc", "chapters", "sources", "byo_audio", "mix", "render_backend", "manimgx_identity"}
+               "avatar_count", "auto_style", "offer", "offer_plugs", "desc", "chapters", "sources", "byo_audio", "mix", "render_backend", "manimgx_identity",
+               # a style study's (Studio 124+): the style it makes, and a graphics copy's source (keep at a video)
+               "learns_style", "counts_with"}
     if set(req.options) - allowed or len(json.dumps(req.options)) > 200000:
         raise HTTPException(400, "Use valid original video options without account credentials.")
+    if any(key in req.options and (req.setup.purpose != "creative" or not re.fullmatch(LEARNED_STYLE, str(req.options[key])))
+           for key in ("learns_style", "counts_with")):
+        raise HTTPException(400, "Use a learned style's id for a style study.")
+    if req.setup.purpose != "creative" and re.fullmatch(LEARNED_STYLE, req.style):
+        _keep_for_video(user, req)
     if req.options.get("render_backend", "original") not in {"original", "manimgx"}:
         raise HTTPException(400, "Choose the standard renderer or ManimGX.")
     if req.options.get("render_backend") == "manimgx" and not re.fullmatch(r"[a-f0-9]{64}",str(req.options.get("manimgx_identity", ""))):
@@ -1150,6 +1205,25 @@ def native_begin(user, req: NativeBegin):
                 (project_id, user["id"], req.title.strip(), req.style, VERSION, req.max_calls, now, now))
         session = dict(row)
     return _native_begin_result(user, session, req.platform, resumed=not bool(changed))
+
+
+def _keep_for_video(user: dict, req: NativeBegin) -> None:
+    """A video begun with a style still on trial keeps it (Studio 124 keeps it before queueing; this holds for any
+    client): one style clone, refused with the plan's message when none is left. A begin sent again keeps nothing."""
+    with db._conn() as conn:
+        _lock_clone_count(conn, user)
+        if conn.execute(db._q("SELECT 1 FROM frontier_native_sessions WHERE user_id=? AND begin_id=?"),
+                        (user["id"], req.begin_id)).fetchone():
+            return
+        study = _study_making(conn, user, req.style)
+        if study is None:
+            return
+        try:
+            _keep_locked(conn, user, study)
+        except HTTPException as refused:
+            raise HTTPException(402, refused.detail + " This style is on trial: making a video with it keeps it, which "
+                                                      "needs a free style clone. Discard a style you don't use, or "
+                                                      "upgrade.") from None
 
 
 def native_progress(user, project_id):
