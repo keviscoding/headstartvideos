@@ -119,7 +119,9 @@ def test_same_approval_reuses_one_private_operation_and_pins_actual_session_limi
     assert result["state"] == "done" and result["style_ready"]
     begin = next(payload for name, payload in approved.events if name == "begin")
     assert begin["setup"]["purpose"] == "creative" and begin["max_calls"] == 40
-    assert begin["style"] == "documentary" and begin["options"] == {} and begin["features"] == {}
+    assert begin["style"] == "documentary" and begin["features"] == {}
+    # Studio 124: the begin names the style the study makes, so a video with it is kept on the server too
+    assert begin["options"] == {"learns_style": result["style"]}
     finish = next(payload for name, payload in approved.events if name == "finish")
     assert finish["status"] == "done" and {x["name"] for x in finish["artifacts"]} == {"learned-style.json", "style-study-report.json"}
     assert str(approved.home) not in json.dumps(finish) and "synthetic_account" not in json.dumps(finish)
