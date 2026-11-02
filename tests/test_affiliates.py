@@ -146,3 +146,68 @@ console.log(JSON.stringify(anchors.map(a => a._h)));
     out = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == ["/app?via=kev-tester", "/app?via=kev-tester#local-studio", "/app?signin=1#local-studio"]
+
+
+def test_the_logs_say_whether_a_checkout_carried_a_referral(checkout, capsys):
+    """Never the id or the account: a test that missed shows as 'without' (yami's, 2026-11-02, had to be traced by hand)."""
+    checkout(REF)
+    checkout("")
+    said = capsys.readouterr().out
+    assert "[affiliate] checkout with a referral" in said and "[affiliate] checkout without a referral" in said
+    assert REF not in said
+
+
+def _referral_js(setup: str, run: str) -> object:
+    """Runs cr-affiliate.js in node with a fake browser (setup), then `run`, and returns what it prints as JSON."""
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    js = (ROOT / "webapp" / "static" / "cr-affiliate.js").read_text(encoding="utf-8")
+    harness = """
+const store = {};
+global.window = global;
+global.fetch = () => new Promise(() => {});
+global.sessionStorage = { getItem: k => store[k] || null, setItem: (k, v) => { store[k] = String(v); } };
+global.location = { search: '' };
+global.document = { cookie: '', createElement: () => ({ setAttribute() {} }), head: { appendChild() {} } };
+%s
+%s
+(async () => { console.log(JSON.stringify(await (%s))); })();
+""" % (setup, js, run)
+    out = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+COOKIE = "rewardful.referral=" + __import__("urllib.parse").parse.quote(
+    '{"id":"428c2f13-b18b-4a87-8902-749f449ff475","created_at":"2026-11-02","affiliate":{"token":"yami"}}')
+
+
+def test_checkout_reads_rewardfuls_cookie_before_its_tracker_loads_on_this_page():
+    """yami's test (2026-11-02): Pay pressed before Rewardful's tracker loaded on the page sent no referral, though
+    the cookie it saved on the link visit held it."""
+    assert _referral_js(f"document.cookie = 'other=1; {COOKIE}';", "crReferral()") == \
+        "428c2f13-b18b-4a87-8902-749f449ff475"
+    assert _referral_js(f"document.cookie = '{COOKIE}'; global.Rewardful = {{referral: 'aaaaaaaa-live'}};",
+                        "crReferral()") == "aaaaaaaa-live", "the tracker's own id, when it has one"
+
+
+def test_no_cookie_and_no_tracker_means_no_referral():
+    assert _referral_js("", "crReferral()") == ""
+    assert _referral_js("document.cookie = 'rewardful.referral=not-json';", "crReferral()") == ""
+    assert _referral_js("document.cookie = 'rewardful.referral=' + encodeURIComponent('{\"id\":\"<script>\"}');",
+                        "crReferral()") == "", "only an id the server would accept"
+
+
+def test_after_an_affiliate_link_checkout_waits_briefly_for_the_tracker():
+    late = (f"global.location = {{search: '?via=yami'}}; "
+            f"setTimeout(() => {{ document.cookie = '{COOKIE}'; }}, 300);")
+    assert _referral_js(late, "crReferralReady(3000)") == "428c2f13-b18b-4a87-8902-749f449ff475"
+    never = "global.location = {search: '?via=yami'};"
+    assert _referral_js(never, "(async () => { const t = Date.now(); const id = await crReferralReady(600); "
+                               "return [id, Date.now() - t >= 550]; })()") == ["", True]
+    assert _referral_js("", "(async () => { const t = Date.now(); const id = await crReferralReady(3000); "
+                            "return [id, Date.now() - t < 200]; })()") == ["", True], "an organic visitor never waits"
