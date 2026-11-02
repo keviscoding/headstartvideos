@@ -1297,6 +1297,8 @@ def create_checkout(req: CheckoutRequest, request: Request):
         session_kwargs["success_url"] = f"{base_url}/app?welcome=1#{req.return_to}"
 
     referral = _referral(req.referral)
+    # whether this checkout carried an affiliate referral (never the id or the account): a missed one shows in the logs
+    print(f"[affiliate] checkout {'with' if referral else 'without'} a referral", flush=True)
     if referral:
         # Rewardful credits the affiliate from the Checkout session's client_reference_id, and from the customer's
         # "referral" metadata for later invoices; both are only labels for Stripe, so a failure never stops a checkout

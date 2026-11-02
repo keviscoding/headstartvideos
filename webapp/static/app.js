@@ -1867,7 +1867,8 @@ async function _doCheckout(plan = 'daily_monthly') {
                 plan,
                 skip_trial: !!_checkoutSkipTrial,
                 return_to: state.page === 'pipeline' ? 'pipeline' : 'local-studio',
-                referral: (window.crReferral && window.crReferral()) || '',
+                referral: (window.crReferralReady ? await window.crReferralReady(3000)
+                           : window.crReferral && window.crReferral()) || '',
             }),
         });
         let data;
