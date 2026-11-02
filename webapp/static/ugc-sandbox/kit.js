@@ -53,7 +53,8 @@
     const afterClip = (t.shots || []).some((s, i) => s.kind === "added" && i < t.hook_shot);   // the hook answers the clip
     return (D.hooks || []).filter((h) => fams.includes(h.family) && (h.lanes.includes("any") || h.lanes.includes(lane()))
       && (h.slot !== "after_clip" || afterClip)        // an answering line never opens a video
-      && (h.clip !== "person" || ["claim", "hustle"].includes(t.react)));   // "she's living in 2099" needs a person
+      && (h.clip !== "person" || ["claim", "hustle"].includes(t.react))   // "she's living in 2099" needs a person
+      && (!h.method || h.method === method.id));        // a line naming Claude only over the Claude walkthrough
   }
   function pick(list, key) {
     if (!list.length) return null;
