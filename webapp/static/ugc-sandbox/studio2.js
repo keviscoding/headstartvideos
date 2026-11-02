@@ -73,7 +73,7 @@
 
   function nav() {
     $("#methods").innerHTML = D.methods.map((m) => `<button type="button" data-m="${m.id}" class="${m === M ? "on" : ""}" ${m.soon ? "disabled" : ""}>
-      <span class="ic">${{ clone: "⧉", ranking: "🏆", clipping: "✂︎", amazon: "📦" }[m.id] || "•"}</span>${esc(m.name)}${m.soon ? "<small>soon</small>" : ""}</button>`).join("");
+      <span class="ic">${{ clone: "⧉", claude: "✳︎", ranking: "🏆", clipping: "✂︎", amazon: "📦" }[m.id] || "•"}</span>${esc(m.name)}${m.soon ? "<small>soon</small>" : ""}</button>`).join("");
     $("#methods").onclick = (e) => { const b = e.target.closest("button[data-m]"); if (b && !b.disabled) { location.hash = `${b.dataset.m}/`; } };
   }
 
@@ -181,6 +181,72 @@
     await build(my, T.name, "ranking");
   }
 
+  /* ---------- ChannelRecipe in Claude (the corpus's biggest angle: "connect it to Claude") ---------- */
+  async function claudeFlow(my) {
+    const refs = T.refs || [], ref = refs[0] || {};
+    const chan = ref.channel || "a viral channel";
+    const poss = (n) => (/s$/i.test(n) ? `${n}'` : `${n}'s`);
+    const ask = `Use ChannelRecipe: copy ${poss(chan)} style and make me a video about "${OUT.title}"`;
+    steps(1, 4);
+    screen(`<div class="cl"><div class="cl-top"><b>Claude</b><span class="conn"><i></i>ChannelRecipe connected</span></div>
+      <div class="cl-chat" id="chat"><div class="cl-hello">How can I help you today?</div></div>
+      <div class="cl-box"><input id="ask" placeholder="Reply to Claude…" autocomplete="off"><button class="go" id="send" type="button">↑</button></div>
+      <p class="hint">Tab types the request · Enter sends it</p></div>`);
+    const input = $("#ask"), typeAsk = typer(input);
+    input.onkeydown = (e) => { if (e.key === "Tab" && !input.value) { e.preventDefault(); typeAsk(ask); } if (e.key === "Enter") $("#send").click(); };
+    input.focus();
+    await new Promise((res) => { $("#send").onclick = () => { if (input.value.trim()) res(); else input.focus(); }; });
+    if (my !== run) return;
+    const said = typeAsk.value() || input.value.trim() || ask;
+    input.value = ""; input.disabled = true;
+    const chat = $("#chat");
+    const add = (cls, html) => { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; chat.append(d); chat.scrollTop = chat.scrollHeight; return d; };
+    $(".cl-hello")?.remove();
+    add("msg me", esc(said));
+    steps(2, 4);
+    await wait(700);
+    const intro = add("msg ai", "");
+    await typeText(intro, "I'll use ChannelRecipe to study the channel's style, then make your video in it.", 60);
+    // tool 1: study the channel
+    const t1 = add("tool", `<div class="th"><span class="ic">⧉</span><b>ChannelRecipe</b><code>clone_style</code><em>running…</em></div>
+      <div class="tb"><small>Studying ${esc(poss(chan))} videos</small><div class="mini">${(refs.length >= 3 ? refs.slice(0, 6).map((r) => yt(r.id)) : (OUT.frames || [])).map((u) => `<img src="${esc(u)}" alt="">`).join("")}</div></div>`);
+    for (const img of t1.querySelectorAll(".mini img")) { img.classList.add("in"); await wait(240); }
+    await wait(500);
+    $("em", t1).textContent = `✓ style learned · ${92 + Math.floor(Math.random() * 7)}% match`; t1.classList.add("done");
+    // tool 2: make the video
+    steps(3, 4);
+    const t2 = add("tool", `<div class="th"><span class="ic">▶</span><b>ChannelRecipe</b><code>make_video</code><em>running…</em></div>
+      <div class="tb"><small id="stage">Writing the script</small><div class="doc" id="doc"></div>
+      <div class="wave small" id="wave" hidden>${"<i></i>".repeat(36)}</div>
+      <div class="mini" id="scenes" hidden>${(OUT.frames || []).map((f) => `<img src="${esc(f)}" alt="">`).join("")}</div>
+      <div class="bar" id="barw" hidden><i id="bar"></i></div></div>`);
+    const lines = (OUT.script && OUT.script.length ? OUT.script : [OUT.title + "."]).slice(0, 3);
+    for (const l of lines) { await typeText($("#doc", t2), l + " ", 60); chat.scrollTop = chat.scrollHeight; }
+    $("#stage", t2).textContent = "Recording the voice"; $("#wave", t2).hidden = false;
+    const bars = [...t2.querySelectorAll("#wave i")];
+    const iv = setInterval(() => bars.forEach((b) => { b.style.height = `${12 + Math.random() * 86}%`; }), 110);
+    await wait(1800); clearInterval(iv);
+    $("#stage", t2).textContent = "Making every scene"; $("#scenes", t2).hidden = false; chat.scrollTop = chat.scrollHeight;
+    for (const img of t2.querySelectorAll("#scenes img")) { img.classList.add("in"); await wait(240); }
+    $("#stage", t2).textContent = "Music, captions & render"; $("#barw", t2).hidden = false; chat.scrollTop = chat.scrollHeight;
+    for (let q = 0; q <= 100; q += 3 + Math.floor(Math.random() * 5)) { $("#bar", t2).style.width = q + "%"; await wait(60); }
+    $("#bar", t2).style.width = "100%";
+    $("em", t2).textContent = "✓ video ready"; t2.classList.add("done");
+    if (my !== run) return;
+    // the answer, with the real video in the chat
+    steps(4, 4);
+    const tall = OUT.tall;
+    const out = add("msg ai", "");
+    await typeText(out, `Done! Here's "${OUT.title}" in ${poss(chan)} style:`, 60);
+    add("cl-video", `<div class="player ${tall ? "" : "wide"}"><video id="v" src="${esc(OUT.video)}" poster="${esc(OUT.poster)}" playsinline autoplay muted loop controls></video><button class="unmute" id="um" type="button">🔊 Sound on</button></div>
+      <div class="row"><button class="go" id="dl" type="button">Download</button><button class="ghost" id="again" type="button">Make another</button></div>`);
+    chat.scrollTop = chat.scrollHeight;
+    const v = $("#v");
+    $("#um").onclick = () => { v.muted = false; v.currentTime = 0; v.play(); $("#um").remove(); };
+    $("#again").onclick = () => start();
+    $("#dl").onclick = (e) => { e.target.textContent = "✓ Saved to Downloads"; e.target.disabled = true; };
+  }
+
   /* ---------- building and the reveal (both flows) ---------- */
   async function build(my, title, kind) {
     steps(4, 5);
@@ -235,7 +301,7 @@
     OUT = pickOutput();
     $("#crumb").textContent = M.name;
     nav();
-    (M.flow === "ranking" ? ranking : clone)(run);
+    ({ ranking, claude: claudeFlow }[M.flow] || clone)(run);
   }
 
   async function main() {
