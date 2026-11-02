@@ -63,3 +63,4 @@ h2{font-size:20px;margin:0 0 4px}
 .inspo a{font-weight:700;color:var(--accent);text-decoration:none}
 .inspo p{margin:4px 0 0;color:var(--muted);font-size:14px}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 14px;border-radius:999px;font-size:13px;z-index:9}
+.added{margin:12px 0 14px;padding:10px 12px;border:1px dashed var(--accent);border-radius:12px;background:var(--accent-soft);font-size:14px;color:var(--muted)}.added b{color:var(--text)}
