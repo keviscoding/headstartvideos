@@ -159,6 +159,8 @@ def install(studio, activity, *, token, home=None):
             # a style drawn by its own renderer: its background pictures and its own music score, for quotes
             import cr_animated2d
             row["coded_media"] = cr_animated2d.media_usd(info) if isinstance(info, dict) else {}
+            if isinstance(info, dict) and (info.get("look") or {}).get("audio") == "music_only":
+                row["audio"] = "music_only"                 # no narrator: no voice to pay for (cr_timeline)
             # a coded style's frame check before each minute is drawn (Studio 109): Create says the Claude time it adds
             # and keeps its switch, which is Studio's own setting
             drawn = isinstance(info, dict) and isinstance(info.get("look"), dict) and \

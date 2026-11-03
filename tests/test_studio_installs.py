@@ -779,3 +779,86 @@ def test_setup_status_reports_node_for_youtube_apart_from_node_at_all(monkeypatc
     monkeypatch.setattr(cr_installs, "node_status", lambda **k: {"ready": False, "version": "",
                                                                  "reason": "Node.js isn't installed."})
     assert cr_studio.tool_checks()["node"] is False
+
+
+def second_build(monkeypatch):
+    """A fake of the second Windows build (small programs beside their DLLs), pinned by its own hash."""
+    top = cr_installs._BTBN
+    data = zip_bytes({f"{top}/bin/{name}": b"MZ " + name.encode() for name in cr_installs._BTBN_BIN} |
+                     {top + "/bin/ffplay.exe": b"MZ ffplay"})
+    url = "https://btbn.example/" + top + ".zip"
+    monkeypatch.setitem(cr_installs.FFMPEG_SECOND, "windows-x64",
+                        [item([url], data, {n: f"{top}/bin/{n}" for n in cr_installs._BTBN_BIN})])
+    return url, data
+
+
+def test_an_ffprobe_slow_to_start_makes_way_for_the_second_build(tmp_path, monkeypatch):
+    """Rippers280 (2026-11-03, Windows 11 build 26300): Gyan's ffprobe.exe took 40-160 s to start every time. Fix it
+    passed once inside its 120 s first-scan allowance, then Setup's 5 s check failed. Now a build must also start
+    quickly once scanned, and a slow one makes way for the second build."""
+    server = ffmpeg_pins(monkeypatch, "windows-x64")
+    url, data = second_build(monkeypatch)
+    server.files[url] = data
+    timed = []
+
+    def timer(ffprobe):
+        timed.append(Path(ffprobe).parent.name)
+        return 99.0 if len(timed) == 1 else 0.4
+    cr_installs.fix_ffmpeg(home=tmp_path, key="windows-x64", get=server, check=lambda f, p: "", timer=timer,
+                           background=False, environ={"PATH": "C:\\Windows"})
+    state = cr_installs.status("ffmpeg")
+    assert state["state"] == "done" and "second build" in state["message"], state
+    folder = tmp_path / "tools" / "ffmpeg"
+    assert sorted(p.name for p in folder.iterdir()) == sorted(cr_installs._BTBN_BIN), "its DLLs beside it, no ffplay"
+    assert timed == ["ffmpeg-0", "ffmpeg-1"]
+    assert [p.name for p in (tmp_path / "tools").iterdir()] == ["ffmpeg"], "no download or staging left behind"
+
+
+def test_a_first_start_past_the_scan_allowance_also_tries_the_second_build(tmp_path, monkeypatch):
+    server = ffmpeg_pins(monkeypatch, "windows-x64")
+    url, data = second_build(monkeypatch)
+    server.files[url] = data
+    hang = "FFmpeg's ffprobe won't start: it started but didn't answer within 120 seconds (an antivirus...)."
+    checks = []
+    cr_installs.fix_ffmpeg(home=tmp_path, key="windows-x64", get=server, timer=lambda p: 1.0, background=False,
+                           environ={}, check=lambda f, p: checks.append(p) or (hang if len(checks) == 1 else ""))
+    assert cr_installs.status("ffmpeg")["state"] == "done" and len(checks) == 2
+
+
+def test_when_every_build_is_slow_it_says_this_computer_holds_programs_and_installs_nothing(tmp_path, monkeypatch):
+    server = ffmpeg_pins(monkeypatch, "windows-x64")
+    url, data = second_build(monkeypatch)
+    server.files[url] = data
+    old = tmp_path / "tools" / "ffmpeg"
+    old.mkdir(parents=True)
+    (old / "ffmpeg.exe").write_bytes(b"old")
+    cr_installs.fix_ffmpeg(home=tmp_path, key="windows-x64", get=server, check=lambda f, p: "", background=False,
+                           timer=lambda p, t=iter([141.0, None]): next(t), environ={})
+    state = cr_installs.status("ffmpeg")
+    assert state["state"] == "failed", state
+    assert "build 1 took 141 seconds; build 2 never answered" in state["message"]
+    assert "Something on this computer holds every new program" in state["message"]
+    assert (old / "ffmpeg.exe").read_bytes() == b"old" and sorted(p.name for p in (tmp_path / "tools").iterdir()) == ["ffmpeg"]
+
+
+def test_a_mac_has_no_second_build_so_a_slow_start_says_so_at_once(tmp_path, monkeypatch):
+    server = ffmpeg_pins(monkeypatch, "darwin-arm64")
+    cr_installs.fix_ffmpeg(home=tmp_path, key="darwin-arm64", get=server, check=lambda f, p: "", background=False,
+                           macos=(14, 0), timer=lambda p: 30.0, environ={})
+    state = cr_installs.status("ffmpeg")
+    assert state["state"] == "failed" and "build 1 took 30 seconds" in state["message"]
+
+
+def test_start_seconds_times_the_start_and_says_none_when_it_never_answers():
+    ok = lambda cmd, **kw: SimpleNamespace(returncode=0)
+    assert cr_installs.start_seconds("ffprobe", run=ok) is not None
+    def hang(cmd, **kw):
+        raise cr_installs.subprocess.TimeoutExpired(cmd, kw["timeout"])
+    assert cr_installs.start_seconds("ffprobe", run=hang) is None
+    assert cr_installs.start_seconds("ffprobe", run=lambda cmd, **kw: SimpleNamespace(returncode=1)) is None
+
+
+def test_the_second_windows_build_is_pinned_from_a_kept_month_end_release():
+    (spec,) = cr_installs.FFMPEG_SECOND["windows-x64"]
+    assert "autobuild-2026-10-31-12-59" in spec["urls"][0] and len(spec["sha256"]) == 64
+    assert {"ffmpeg.exe", "ffprobe.exe"} <= set(spec["take"]) and "ffplay.exe" not in spec["take"]

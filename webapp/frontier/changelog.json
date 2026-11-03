@@ -1,5 +1,16 @@
 [
   {
+    "build": 125,
+    "date": "2026-11-03",
+    "title": "Clone channels with no narrator, and FFmpeg that starts on more Windows PCs",
+    "items": [
+      "New: clone a channel that has no narrator, like a city timelapse channel. Its videos are timed to a timeline and a music score instead of a voice, with the year counter, place labels and event cards the channel uses, and a 3D city drawn from the real map of the place (map data from OpenStreetMap).",
+      "When you clone a channel with no narrator, Studio asks whether you want music only or a narrator added.",
+      "Setup's FFmpeg Fix it now checks FFmpeg starts quickly after its first scan. If it is slow on your computer, Studio tries a second FFmpeg build and keeps the one that starts fast, and tells you plainly if your computer holds every one.",
+      "Studio Cloud: when Modal can't set up Studio's machines on your account, Studio now shows Modal's actual reason instead of a blank line."
+    ]
+  },
+  {
     "build": 124,
     "date": "2026-11-02",
     "title": "A style clone counts only when you keep it",

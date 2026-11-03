@@ -2185,6 +2185,9 @@ def _renderer(folder, spec, looked, see, log):
     elif tall:                                              # a 2D Shorts channel is drawn vertical, as its videos are
         size = {"width": 1080, "height": 1920}
         channel.update(format="vertical 1080x1920 Shorts with captions")
+    if cr_style_map.no_narrator(profile):
+        import cr_timeline
+        channel["no_narrator"] = cr_timeline.RENDERER_NOTE   # music only: a timeline, its clock and the place's map
     art = ((_read(folder / "art-checkpoint.json").get("art") or {}).get("overrides") or {}).get("look") or {}
     if art.get("character"):
         channel["cast_in_words"] = str(art["character"])[:1500]

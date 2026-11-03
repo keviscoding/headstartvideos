@@ -78,6 +78,24 @@ FFMPEG = {
     ],
 }
 
+# A second build, tried only when the first one installs but its ffprobe is slow to start on this computer (a customer's
+# Windows 11 build 26300 took 40-160 s to start Gyan's ffprobe.exe every time, 2026-11-03; Studio starts ffprobe for
+# every clip). Windows: BtbN's FFmpeg 9.0.2 "gpl-shared" build, the other Windows build ffmpeg.org's download page
+# links: a different toolchain (mingw-w64 cross-built on Linux) and small programs beside their DLLs. Its month-end
+# autobuild (autobuild-2026-10-31-12-59) is kept long term (BtbN prunes the daily ones, not the month-end ones; the
+# oldest kept on 2026-11-03 was 2024-12-31). SHA-256 = GitHub's asset digest, and our own download hashed the same on
+# 2026-11-03; its libraries were read that day: libass, libx264 and libmp3lame are in.
+_BTBN = "ffmpeg-n9.0.2-39-g7adfbe40dc-win64-gpl-shared-9.0"
+_BTBN_BIN = ("ffmpeg.exe", "ffprobe.exe", "avcodec-63.dll", "avdevice-63.dll", "avfilter-12.dll", "avformat-63.dll",
+             "avutil-61.dll", "swresample-7.dll", "swscale-10.dll")
+FFMPEG_SECOND = {
+    "windows-x64": [
+        {"urls": ["https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/" + _BTBN + ".zip"],
+         "size": 85920857, "sha256": "1d9823c35c7a7e2f54d1438cf61030d6efabe3278de01c191309d1e828bb74df",
+         "take": {name: _BTBN + "/bin/" + name for name in _BTBN_BIN}},
+    ],
+}
+
 # Node.js from nodejs.org (https://nodejs.org/dist/index.json, read 2026-10-26). 24.22.1 "Krypton" is the Active LTS
 # (a security release of 2026-10-20); 22.23.4 "Jod", the Maintenance LTS of the same day, only for Macs older than
 # macOS 13.5, which Node 24's Mac builds need (Node 22's run on macOS 11 and newer). yt-dlp's YouTube challenge solver
@@ -573,14 +591,34 @@ def fresh_check(ffmpeg: str, ffprobe: str) -> str:
     return video_tools_problem(ffmpeg, ffprobe, timeout=FRESH_TIMEOUT)
 
 
+EVERYDAY_TIMEOUT = 5          # seconds: Setup's everyday check, and what a build must start in after its first scan
+SLOW_PATIENCE = 300           # seconds: how long a slow build's start is timed, to say how slow it is
+
+
+def start_seconds(executable: str, *, run=None, patience: float = SLOW_PATIENCE) -> float | None:
+    """How many seconds the program takes to start and answer -version (None: it never answered, or won't start)."""
+    run, began = run or subprocess.run, time.monotonic()
+    try:
+        code = run([executable, "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=patience).returncode
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return None if code else round(time.monotonic() - began, 1)
+
+
+def _slow_words(seconds) -> str:
+    return "never answered" if seconds is None else f"took {seconds:g} seconds"
+
+
 VIDEO_RUNNING = ("A video is being made right now, and Studio never switches its {what} in the middle of one. Press "
                  "Fix it again when it's done.")
 
 
 def fix_ffmpeg(*, home: Path = HOME, key: str | None = None, get=None, check=None, background: bool = True,
-               macos: tuple | None = None, environ=None, busy=None) -> dict:
+               macos: tuple | None = None, environ=None, busy=None, timer=None) -> dict:
     """Install FFmpeg + ffprobe into tools/ffmpeg and put it first on PATH. check(ffmpeg, ffprobe) -> '' when they
-    work (video_tools_problem). busy() -> True while a video is being made: nothing is switched then (the fix tools
+    work (video_tools_problem); timer(ffprobe) -> seconds its start takes once scanned (start_seconds). A build whose
+    ffprobe is slow to start makes way for the next build, if there is one. busy() -> True while a video is being made: nothing is switched then (the fix tools
     are free, so Claude Code can run them unasked)."""
     def work(fix):
         spec_key = platform_key() if key is None else key
@@ -601,30 +639,61 @@ def fix_ffmpeg(*, home: Path = HOME, key: str | None = None, get=None, check=Non
                            f"{'.'.join(map(str, have))}. Update macOS, or install FFmpeg with Homebrew "
                            "(brew install ffmpeg-full), then reopen the launcher.")
         _room(home, NEEDS_MB["ffmpeg"])
-        items = FFMPEG[spec_key]
-        fix.update(state="downloading", done=0, total=sum(i["size"] for i in items), what=f"FFmpeg {FFMPEG_VERSION}")
+        builds = [FFMPEG[spec_key]] + ([FFMPEG_SECOND[spec_key]] if spec_key in FFMPEG_SECOND else [])
         stage = _stage(home, "ffmpeg")
+        slow = []                                              # each build's ffprobe start, when it was too slow
         try:
-            archives = stage / "downloads"
-            files = stage / "ffmpeg"
-            for item in items:
-                archive = fetch(item, archives, fix, get=get, what=f"FFmpeg {FFMPEG_VERSION}")
-                take(archive, item["take"], files)
-                archive.unlink(missing_ok=True)                # an archive is up to 115 MB: not kept
-            fix.update(state="checking", message="Checking FFmpeg can burn captions and make H.264, AAC and MP3 (its "
-                                                 "first start can take a minute while your antivirus scans it)…")
-            problem = (check or fresh_check)(str(files / _exe("ffmpeg", windows)), str(files / _exe("ffprobe", windows)))
-            if problem:
-                raise Stop(f"The downloaded FFmpeg didn't pass Studio's check ({problem.rstrip('.')}), so it wasn't "
-                           "installed. Press Copy diagnostics and paste it in Discord #help.")
+            for n, items in enumerate(builds):
+                files = stage / f"ffmpeg-{n}"
+                fix.update(state="downloading", done=0, total=sum(i["size"] for i in items),
+                           what=f"FFmpeg {FFMPEG_VERSION}" + (" (a second build)" if n else ""))
+                for item in items:
+                    archive = fetch(item, stage / "downloads", fix, get=get, what=f"FFmpeg {FFMPEG_VERSION}")
+                    take(archive, item["take"], files)
+                    archive.unlink(missing_ok=True)            # an archive is up to 115 MB: not kept
+                fix.update(state="checking", message="Checking FFmpeg can burn captions and make H.264, AAC and MP3 "
+                                                     "(its first start can take a minute while your antivirus scans it)…")
+                ffmpeg, ffprobe = str(files / _exe("ffmpeg", windows)), str(files / _exe("ffprobe", windows))
+                problem = (check or fresh_check)(ffmpeg, ffprobe)
+                hangs = video_tools_code(problem) == "ffprobe_hangs"
+                if problem and not hangs:
+                    raise Stop(f"The downloaded FFmpeg didn't pass Studio's check ({problem.rstrip('.')}), so it "
+                               "wasn't installed. Press Copy diagnostics and paste it in Discord #help.")
+                if not hangs:                                  # its first start passed: it must start fast every day
+                    fix.update(message="Checking FFmpeg starts quickly now that it has been scanned once…")
+                    seconds = (timer or (start_seconds if check is None else lambda path: 0.0))(ffprobe)
+                    if seconds is not None and seconds <= EVERYDAY_TIMEOUT:
+                        break
+                else:
+                    seconds = None
+                slow.append(seconds)
+                if n + 1 < len(builds):
+                    fix.update(message=f"This computer {_slow_words(seconds)} to start FFmpeg's ffprobe. Trying a "
+                                       "second FFmpeg build…")
+                    shutil.rmtree(files, ignore_errors=True)
+            else:
+                raise Stop(slow_message(slow))
             if busy and busy():
                 raise Stop(VIDEO_RUNNING.format(what="FFmpeg"))
             _swap(files, own, fix=fix)
         finally:
             shutil.rmtree(stage, ignore_errors=True)
         use_studio_tools(home, environ, windows)
-        return f"FFmpeg {FFMPEG_VERSION} is installed in Studio's own folder and works."
+        second = " (the second build: the first was slow to start on this computer)" if slow else ""
+        return f"FFmpeg {FFMPEG_VERSION} is installed in Studio's own folder and works{second}."
     return _start("ffmpeg", work, background=background)
+
+
+def slow_message(slow: list) -> str:
+    """Every build Studio has installs fine but starts too slowly on this computer: something on it holds each new
+    program at its start (Studio starts ffprobe for every clip, so videos would take hours)."""
+    each = "; ".join(f"build {i + 1} {_slow_words(s)}" for i, s in enumerate(slow))
+    return (f"FFmpeg downloads and passes its checks, but this computer takes far too long to start it ({each}; it "
+            f"should take under {EVERYDAY_TIMEOUT} seconds), so it wasn't installed. Something on this computer holds "
+            "every new program for a while before it runs, and Studio can't change that. Things that cause it: "
+            "security software besides Windows Security (check Apps, Installed apps), a company or school device "
+            "policy, and Windows test builds. Restart the computer, then press Fix it again; if it's still slow, "
+            "press Copy diagnostics and paste it in Discord #help.")
 
 
 # ── Node.js ───────────────────────────────────────────────────────────────────────────────────────────────────

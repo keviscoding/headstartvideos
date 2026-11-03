@@ -408,20 +408,44 @@ def ensure_deployed(home: Path = HOME, sink=None) -> None:
         except Exception:                                   # noqa: BLE001 - deleted on Modal's side: deploy again
             pass
     say("Setting up Studio's machines on your Modal account (the first time takes about 5 to 10 minutes)…")
-    env = {**os.environ, "MODAL_TOKEN_ID": tid, "MODAL_TOKEN_SECRET": secret, "PYTHONIOENCODING": "utf-8"}
+    env = {**os.environ, "MODAL_TOKEN_ID": tid, "MODAL_TOKEN_SECRET": secret, "PYTHONIOENCODING": "utf-8",
+           "COLUMNS": "400", "NO_COLOR": "1"}                 # one error line per sentence, no colour codes
     try:
         p = subprocess.run([sys.executable, "-m", "modal", "deploy", APP_FILE], cwd=home, env=env, capture_output=True,
                            text=True, encoding="utf-8", errors="replace", timeout=1800)
     except subprocess.TimeoutExpired:
         raise RuntimeError("Setting up Studio's machines on your Modal account took too long. Try again.")
     if p.returncode != 0:
-        lines = [x for x in (p.stderr or p.stdout or "").strip().splitlines() if x.strip()]
-        last = _scrub(lines[-1][:240] if lines else f"exit {p.returncode}", tid, secret)
+        last = _scrub(modal_reason((p.stderr or "") + "\n" + (p.stdout or "")) or f"exit {p.returncode}", tid, secret)
         if re.search(r"(?i)unauthenticated|invalid token|token .*(invalid|revoked|not found)|authentication", last):
             raise RuntimeError("Modal didn't accept your token (it may have been deleted in Modal). Make a new one "
                                "in Modal (Settings, API Tokens) and paste both parts in Setup, Render in the cloud.")
         raise RuntimeError("Modal couldn't set up Studio's machines on your account: " + last)
     _save_state(home, deployed=want, account=account, deployed_at=time.time())
+
+
+_BOX = re.compile(r"^[\s\u2500-\u257f]*$")                  # a line of only box drawing: a panel's top or bottom
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def modal_reason(output: str) -> str:
+    """Why Modal's command failed, in its own words. Modal prints its error inside a drawn box, so the last line of
+    its output is the box's bottom edge (a customer saw only that line, 2026-11-03): read the last box's text, else
+    the last line with words in it."""
+    lines = [_ANSI.sub("", x).rstrip() for x in str(output or "").splitlines()]
+    words = [x for x in lines if x.strip() and not _BOX.match(x)]
+    inside, box = [], []
+    for x in lines:
+        t = x.strip()
+        if t[:1] in ("\u256d", "\u250c", "\u250f"):           # a box opens (its title can name the error)
+            box = [re.sub(r"^[\u2500-\u257f\s]+|[\u2500-\u257f\s]+$", "", t)]
+        elif t[:1] in ("\u2502", "\u2503") and box:
+            box.append(t.strip("\u2502\u2503 ").strip())
+        elif t[:1] in ("\u2570", "\u2514", "\u2517") and box:
+            inside = [b for b in box if b]
+            box = []
+    text = " ".join(inside) if inside else (words[-1].strip() if words else "")
+    return re.sub(r"\s+", " ", text)[:300]
 
 
 def _scrub(text: str, *secrets_: str) -> str:
