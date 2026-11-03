@@ -6,6 +6,7 @@ Run:  python -m webapp.server
 """
 
 from __future__ import annotations
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import asyncio
 import json
 import os
@@ -105,6 +106,11 @@ if config.SENTRY_DSN:
             exc_info = hint.get("exc_info")
             if exc_info:
                 exc = exc_info[1]
+                try:                                        # out of credit: filtered below, so say so to the team
+                    from webapp import provider_alerts
+                    provider_alerts.check(str(getattr(exc, "detail", "") or exc))
+                except Exception:
+                    pass
                 # A model provider stopping an answer (overloaded, rate limited,
                 # timed out, network) is recorded for the creator to review in
                 # Studio; it isn't a product bug. Log it, don't alert on it.
@@ -264,6 +270,17 @@ _API_DOCS = os.getenv("CR_API_DOCS", "").strip() == "1"
 app = FastAPI(title="ChannelRecipe", lifespan=_app_lifespan, docs_url="/docs" if _API_DOCS else None,
               redoc_url="/redoc" if _API_DOCS else None, openapi_url="/openapi.json" if _API_DOCS else None)
 app.add_middleware(web_assets.SecurityHeaders)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _provider_credit_alerts(request: Request, exc: StarletteHTTPException):
+    """Every route's 5xx: one that says a site provider is out of credit tells the team (webapp/provider_alerts.py);
+    the answer itself is FastAPI's usual one."""
+    if exc.status_code >= 500:
+        from webapp import provider_alerts
+        provider_alerts.check(str(exc.detail or ""))
+    from fastapi.exception_handlers import http_exception_handler
+    return await http_exception_handler(request, exc)
 
 # MCP is wrapped at module end (wrap_fastapi_with_mcp) so OAuth
 # /.well-known routes live at the domain root for Claude.ai.
