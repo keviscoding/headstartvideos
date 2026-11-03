@@ -1572,6 +1572,10 @@ def install(engine):
     # through Studio's accounts without calling the engine's voiceover: wrapped inside it, no narration was measured
     import cr_length
     cr_length.install(engine)
+    # a channel with no narrator (look.audio music_only): its timeline and score, outermost, so neither the length pass
+    # nor a call to action ever touches it; every other video goes through as before
+    import cr_timeline
+    cr_timeline.install(engine)
     # These modules have independent voice entry points and media uploads.
     import wavespeed
     import vox

@@ -246,7 +246,12 @@ def preset(studio, checks, spec, ahead=0.0):
     if wanted.get("threed"):
         results.append(item("webgl","3D graphics support",checks.get("webgl"),"The graphics browser could not create a 3D canvas. Reopen the launcher and check your graphics drivers before using this preset."))
     steps = spec.get("steps") or ["script","voiceover","pexels","images","video","thumbnail"]
-    if not spec.get("byo_audio") and any(s in steps for s in ("voiceover","video")):
+    music_only = ((info or {}).get("look") or {}).get("audio") == "music_only"
+    if music_only and "video" in steps:
+        # no narrator (cr_timeline): its music is scored on Kie, and nothing is read aloud
+        results.append(item("music", "Music account (Kie.ai)", bool(os.getenv("KIE_API_KEY", "").strip()),
+                            "This style's videos are music only: connect Kie.ai in setup, step 3, for its music."))
+    if not music_only and not spec.get("byo_audio") and any(s in steps for s in ("voiceover","video")):
         voice = caps.get("base",{}).get("voice",{})
         ok, why = voice.get("ok"), voice.get("why") or "Connect narration in step 4."
         if not ok:

@@ -44,6 +44,8 @@ ROLES = {
     "turn": "a turn in the story: begins with a short drop to near silence, then a new texture builds underneath",
     "end": "finale: builds to a resolution and ends on a clean final note with a warm tail",
 }
+# a video with no narrator (cr_timeline): the music carries it alone, so its middle cues lead instead of leaving room
+LEAD = "carries the video alone with no voice over it: melodic and full, a clear theme that develops every 20 to 30 seconds"
 MOOD_WORDS = {"dramatic": "tense, dramatic", "quiet": "quiet, reflective", "inspiring": "hopeful, uplifting",
               "dark": "dark, ominous", "tense": "tense, suspenseful", "curious": "curious, light",
               "sad": "melancholic", "triumphant": "triumphant, warm", "": ""}
@@ -74,7 +76,7 @@ def style_text(cfg: dict, mood: str, role: str) -> str:
     if beat:
         parts.append(beat)
     parts.append("instrumental")
-    parts.append(ROLES.get(role, ROLES["body"]))
+    parts.append(LEAD if cfg.get("lead") and role in ("body", "turn") else ROLES.get(role, ROLES["body"]))
     return "; ".join(parts)[:950]
 
 

@@ -1529,6 +1529,9 @@ def cost_note(style: dict) -> str:
     found = (((look.get("animated2d") or {}).get("renderer") or {}).get("manifest") or {})
     music = (f", plus its own music, about ${SCORE_USD:.2f} a piece (one or two a short video)"
              if media_usd(style).get("music_usd_per_piece") else "")
+    if look.get("audio") == "music_only":                   # no narrator (cr_timeline): music and pictures only
+        return (f"No voice: its music only, about ${SCORE_USD:.2f} a section (a section every 2 to 3 minutes), timed to "
+                "a timeline Claude writes for each video. Every scene is rendered on this computer.")
     if (found.get("plates") or {}).get("draw") is False:
         if dims_of(look.get("animated2d")) == 3:
             return f"Your voice{music or ' only'}: every scene is rendered in 3D on this computer."
@@ -2389,6 +2392,8 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
     # a video in another language: the words this stretch draws on screen are in it too (none of this for English, so
     # an English video's saved plans keep their key)
     template = cr_language.screen_rule(cr_language.of_job(job) or cr_language.current()) + _prompt("director.txt")
+    if (Path(job) / "timeline.json").is_file():          # a channel with no narrator (cr_timeline)
+        template = TIMELINE_DIRECTOR + template
     beats = beats_text(lines)
     docs = {"actions": man.get("actions") or {}, "shots": man.get("shots") or [], "fx": man.get("fx") or {},
             "notes": man.get("notes") or "", "examples": man.get("examples") or {}}
@@ -2442,16 +2447,50 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
         _write(request, {"key": key})
         text = engine.claude(prompt, _model("director"), max_tokens=12000, provider="claudecode")
         reply.write_text(str(text), encoding="utf-8")
-    return clean_plan(_json(text), casting["cast"], casting["sets"], t0, t1, man, new_sets=NEW_SETS if own_places else 0)
+    plan = clean_plan(_json(text), casting["cast"], casting["sets"], t0, t1, man, new_sets=NEW_SETS if own_places else 0)
+    return aerial(plan) if (Path(job) / "timeline.json").is_file() else plan
+
+
+def aerial(plan: dict) -> dict:
+    """A timeline video's plan as the channel films it (cr_timeline, the Manila test of 2026-11-02): one aerial view of
+    the place, its camera moving, never a close or medium shot of a building or a figure, and no crowds (pill-shaped
+    people stood in front of every place where the director asked for them)."""
+    for shot in plan.get("shots") or []:
+        if str(shot.get("framing") or "").split(":")[0] in ("close", "medium", "two"):
+            shot["framing"] = "wide"
+        if shot.get("crowd"):
+            shot["crowd"] = 0
+    for place in (plan.get("sets") or {}).values():
+        if isinstance(place, dict) and place.get("crowd"):
+            place["crowd"] = 0
+    return plan
+
+
+# Before the director's prompt, for a video with no narrator (cr_timeline): the channel's own words for the beats
+TIMELINE_DIRECTOR = """THIS CHANNEL HAS NO NARRATOR: its videos are music and pictures, timed to a written timeline. Below,
+every "narration" line is a timeline beat: what the screen shows from that second (the year on the counter, the event
+card's headline and text, who rules, the population, the places labelled, what is built or changes, what moves, the
+camera), and its "words" are that beat's text, never speech. Read "as the narrator says it" as "when the timeline
+reaches it". Show every beat when it starts: advance the year, build or change what it says, show its card and labels
+the channel's way, move the camera as it says. Nothing is spoken: no speech bubbles, no captions of these lines beyond the
+channel's own text layers. FILM IT AS ONE AERIAL FLIGHT OVER THE PLACE: wide framings only, the camera pushing,
+pulling or panning across it (never a close or medium shot of a building or a figure), and no crowds: the channel
+shows no people. The renderer also gets the whole timeline and the video's own clock (Kit.scene.timeline,
+Kit.scene.clock {t0, total}), so what grows keeps growing across every stretch it draws.
+
+"""
 
 
 SET_FIELDS = ("sky", "floor_colors", "prompt", "inside", "walls", "light", "props", "crowd", "era")
 
 
-def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: list = None, size=None) -> dict:
+def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: list = None, size=None,
+              extra: dict = None) -> dict:
     sets = {}
     for ident, s in {**casting["sets"], **(plan.get("sets") or {})}.items():
         row = {k: v for k, v in s.items() if k in SET_FIELDS}
+        if extra and extra.get("timeline"):
+            row.pop("crowd", None)                        # a timeline video shows the place, never a crowd in it
         if ident in plate_paths:
             row["image"] = str(plate_paths[ident])
             row["floor"] = floor_line(plate_paths[ident])
@@ -2464,6 +2503,7 @@ def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: l
             "words": words or []}
     if spec.get("captions"):
         film["captions"] = True
+    film.update(extra or {})                              # a timeline video: its clock and timeline (cr_timeline)
     return film
 
 
@@ -2759,6 +2799,9 @@ def prepare(engine, script, job, style, force):
     code, man = _style_renderer(engine, style, job)
     casting = cast_and_sets(engine, script, job, style, _first_line(job / "title.txt"), man)
     plates(engine, job, casting, _spec(engine, style), man=man)
+    import cr_timeline
+    if cr_timeline.music_only(engine, style):
+        cr_timeline.map_of(engine, job)                     # the place's real map, while the music is scored
 
 
 def assemble(engine, job, mp3, srt, style, force, burn_subs):
@@ -2772,7 +2815,10 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
     casting = saved if saved.get("cast") and saved.get("sets") else cast_and_sets(engine, script, job, style, title, man)
     plate_paths = plates(engine, job, casting, spec, man=man)
     total = engine._audio_dur(mp3)
-    lines = narration(engine, job, srt)
+    import cr_timeline
+    timed = cr_timeline.read(job) if cr_timeline.music_only(engine, style) else {}
+    lines = cr_timeline.lines(job) if timed else narration(engine, job, srt)
+    place_map = cr_timeline.map_of(engine, job) if timed else {}   # Kit.scene.map: the place's streets and buildings
     if not lines:
         raise AnimationStopped("The narration timing is empty, so nothing could be choreographed.")
     parts = chunks(lines, total)
@@ -2788,7 +2834,11 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
         plan = direct(engine, job, casting, spec, part, index, previous, title, man)
         words = [{"w": w, "t": round(t - part[0], 3)} for _, _, _, ws in part[2] for w, t in ws]
         size = (int(getattr(engine, "VIDEO_W", 1920)), int(getattr(engine, "VIDEO_H", 1080)))
-        film = film_spec(plan, casting, spec, plate_paths, words, size=size)
+        # a timeline video: where this stretch sits on the video's clock, and the whole timeline (cr_timeline)
+        extra = {"clock": {"t0": round(part[0], 3), "total": round(total, 3)},
+                 "timeline": {k: timed.get(k) for k in ("place", "years", "eras", "beats")},
+                 **({"map": place_map} if place_map else {})} if timed else None
+        film = film_spec(plan, casting, spec, plate_paths, words, size=size, extra=extra)
         first = _digest([film, code_hash])
         record = folder_a2d / f"review-{index:03d}.json"
         rec = _read(record)
@@ -2797,7 +2847,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
                 try:
                     fixed = direct(engine, job, casting, spec, part, index, previous, title, man, fix=rec.get("fix"),
                                    before=plan)
-                    plan, film = fixed, film_spec(fixed, casting, spec, plate_paths, words, size=size)
+                    plan, film = fixed, film_spec(fixed, casting, spec, plate_paths, words, size=size, extra=extra)
                 except AnimationStopped:                    # its saved answer no longer reads: the checked plan
                     pass
         else:
@@ -2812,7 +2862,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
                     try:                                    # an unreadable re-plan, or one that trips a renderer fault:
                         fixed = direct(engine, job, casting, spec, part, index, previous, title, man,  # the checked
                                        fix=fix, before=plan)                                            # plan stands
-                        again = film_spec(fixed, casting, spec, plate_paths, words, size=size)
+                        again = film_spec(fixed, casting, spec, plate_paths, words, size=size, extra=extra)
                         after = check_stretch(engine, job, index, again, fixed, code, man, casting, spec, part, title,
                                               key=first, look_at=False)
                         plan, film = fixed, again
@@ -2845,8 +2895,10 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
     engine.step(f"{kit_name(spec)}: assembling the film")
     rendered = engine._render_astro_segments(timeline, job, force, white_fade=0.0, style=style)
     engine._concat_segments(rendered, job / "_visual.mp4")
-    burn_subs = burn_subs and not spec.get("captions")      # the renderer draws the channel's own captions
-    engine._final_mux(job, engine._with_sound_design(job, mp3, timeline, style), srt, burn_subs,
+    burn_subs = burn_subs and not spec.get("captions") and not timed   # the renderer draws the channel's own text
+    # a timeline video's audio is its score: no voice under it to set the music against (cr_timeline)
+    sound = mp3 if timed else engine._with_sound_design(job, mp3, timeline, style)
+    engine._final_mux(job, sound, srt, burn_subs,
                       add_qr=False, vignette=False, no_dust_ranges=[(0.0, total)], sub_center=False, no_sub_ranges=[])
     engine._keep_clean_visual(job, style)
     return job / "video.mp4"
