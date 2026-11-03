@@ -35,7 +35,7 @@ INSTRUCTIONS = (
     "This is ChannelRecipe's creator demo workspace: it plays real videos ChannelRecipe has already made, so results "
     "show in seconds and nothing is rendered or charged. "
     "When the user asks for a video like a channel (\"make me a GTA 6 video like Glooby\"): call clone_channel with "
-    "the channel, then make_video with their idea and the same channel. For ranking Shorts call rank_clips. To find "
+    "the channel, then make_video with their idea and the same channel. For ranking Shorts call rank_clips. To clip a stream, podcast or long video into Shorts call clip_video (with the link or the name). To find "
     "what's going viral in a niche call find_viral_channels. "
     "Each tool shows its own card with the work and the video. After a tool, reply in one short, upbeat sentence; "
     "don't repeat what the card shows. When a video is ready, end by pointing them to channelrecipe.com."
@@ -61,6 +61,7 @@ WORDS = {
     "rank-cats": ("cat", "cats", "kitten", "kitty"),
     "rank-dogs": ("dog", "dogs", "puppy", "puppies"),
     "rank-sharks": ("shark", "sharks"),
+    "clip-gta6": ("kai", "cenat", "gta", "stream", "streamer", "live reaction", "trailer"),
 }
 
 
@@ -359,17 +360,38 @@ def rank_clips(d: dict, args: dict, key: str) -> dict:
     return {"text": text, "ui": {"view": "rank", "topic": t["name"], "clips": clips, "top": top, "video": v}}
 
 
+def _yt_id(s: str) -> str:
+    m = re.search(r"(?:v=|youtu\.be/|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{11})", s or "")
+    return m.group(1) if m else ""
+
+
 def clip_video(d: dict, args: dict, key: str) -> dict:
-    link = str(args.get("url") or "").strip()
-    m = _method(d, "clipping")
-    t = find_topic(d, "clipping", link) or (_ready(m) or [None])[0]
-    if not t:
+    """A long video (link or name) -> its 10 viral moments as captioned vertical clips. Each clipping output is one
+    SOURCE the hub clipped for real (strategies.json: `source` + `clips`); a random 6-10 of its clips show each run."""
+    asked = str(args.get("video") or args.get("url") or "").strip()
+    sources = [(t, o) for t in _ready(_method(d, "clipping")) for o in t["outputs"] if o.get("clips")]
+    if not sources:
         return _not_here(d, "clipping", "Clipping")
-    outs = [_video(o) for o in t["outputs"]]
-    text = (f"Clipped: {len(outs)} Shorts from the video ({t['name']}), captioned and ready to post. "
-            + " ".join(o["video"] for o in outs) + " (Demo workspace: these are clips ChannelRecipe made earlier, "
-            "so nothing new was cut.)")
-    return {"text": text, "ui": {"view": "clips", "topic": t["name"], "clips": outs}}
+    vid, blob = _yt_id(asked), _words(asked)
+    exact = [(t, o) for t, o in sources if vid and vid == _yt_id((o.get("source") or {}).get("url", ""))]
+    named_ = [(t, o) for t, o in sources
+              if len(_norm((o.get("source") or {}).get("channel", ""))) >= 3
+              and _norm((o.get("source") or {}).get("channel", "")) in _norm(asked)]
+    t = find_topic(d, "clipping", asked)
+    pool = exact or named_ or [(tt, o) for tt, o in sources if t and tt is t] or sources
+    t, o = pool[pick(f"{key}:clip:{pool[0][0]['id']}", len(pool))] if len(pool) > 1 else pool[0]
+    src = {k: (o.get("source") or {}).get(k) for k in ("title", "channel", "url", "seconds", "views", "thumb")}
+    src["title"] = src["title"] or o.get("title")
+    every = [c for c in o["clips"] if c.get("video")]
+    shown = random.sample(every, min(len(every), random.randint(6, 10)))
+    clips = [{**{k: c.get(k) for k in ("video", "poster", "start", "end", "seconds")}, "title": _title(c, key)}
+             for c in shown]
+    text = (f"Clipped: {len(clips)} viral clips from \"{src['title']}\""
+            + (f" ({src['channel']}, {_mmss(src['seconds'])})" if src.get("channel") and src.get("seconds") else "")
+            + ", vertical and captioned, ready to post: " + "; ".join(f"\"{c['title']}\"" for c in clips) + ". "
+            f"(Demo workspace: these are clips ChannelRecipe cut earlier from that video, so nothing new was cut.)")
+    return {"text": text, "ui": {"view": "clips", "topic": t["name"], "source": src, "found": len(every),
+                                 "clips": clips}}
 
 
 _RO = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
@@ -400,11 +422,13 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "topic": {"type": "string", "description": "What to rank, e.g. \"funniest cat moments\""}},
          "required": ["topic"]}},
-    {"name": "clip_video", "title": "Clip a stream or podcast", "fn": clip_video, "needs": "clipping",
-     "description": "Cut a long stream or podcast into captioned viral Shorts: finds the moments that go viral.",
+    {"name": "clip_video", "title": "Clip a stream into viral clips", "fn": clip_video, "needs": "clipping",
+     "description": "Clip a long video (a stream, podcast or YouTube video, e.g. a Kai Cenat stream) into 10 viral "
+                    "clips: watches the whole thing, finds the moments that go viral, and cuts them into vertical, "
+                    "captioned Shorts ready to post. Takes the video's link or just its name.",
      "inputSchema": {"type": "object", "properties": {
-         "url": {"type": "string", "description": "The stream or podcast video link"}},
-         "required": ["url"]}},
+         "video": {"type": "string", "description": "The video's link, or its name (e.g. \"Kai Cenat GTA 6 stream\")"}},
+         "required": ["video"]}},
 ]
 
 

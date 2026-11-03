@@ -108,16 +108,55 @@ def test_every_tool_draws_its_card_with_the_one_mcp_apps_page(mcp):
     assert mcp("resources/read", {"uri": "ui://other"})["error"]["code"] == -32002
 
 
+KAI = "https://www.youtube.com/watch?v=kaiGTA6live"
+
+
+def _source():
+    """One clipping output as the hub publishes it: the SOURCE video and its 10 real clips."""
+    clips = [{**_out(f"clip-gta6_1_{i}", f"Hook {i}", tall=True), "start": 300 * i + 40, "end": 300 * i + 75,
+              "seconds": 35, "score": 90 - i, "titles": [f"Hook {i}", f"Hook {i} (b)"]} for i in range(10)]
+    return {**clips[0], "title": "GTA 6 EXTENDED LOOK LIVE REACTION", "seconds": 3780,
+            "source": {"title": "GTA 6 EXTENDED LOOK LIVE REACTION", "channel": "Kai Cenat", "url": KAI,
+                       "seconds": 3780, "views": 1600000, "thumb": "kaiGTA6live"}, "clips": clips}
+
+
+def _with_clipping(monkeypatch):
+    clipping = {"id": "clipping", "flow": "clipping", "topics": [
+        {"id": "clip-gta6", "name": "GTA 6 streamer clips", "search": "Kai Cenat GTA 6", "outputs": [_source()]}]}
+    monkeypatch.setattr(ugc_mcp, "_data", {"at": 0.0, "value": None})
+    monkeypatch.setattr(ugc_mcp, "_fetch", lambda: {**DATA, "methods": DATA["methods"][:2] + [clipping]})
+
+
 def test_clipping_appears_only_once_the_sandbox_has_real_clipping_videos(mcp, monkeypatch):
     names = lambda: [t["name"] for t in mcp("tools/list")["result"]["tools"]]
     assert "clip_video" not in names()
-    clipping = {"id": "clipping", "flow": "clipping", "topics": [
-        {"id": "clip-pods", "name": "Podcast clips", "outputs": [_out("clip-pods_1", "Clip one", tall=True)]}]}
-    monkeypatch.setattr(ugc_mcp, "_data", {"at": 0.0, "value": None})
-    monkeypatch.setattr(ugc_mcp, "_fetch", lambda: {**DATA, "methods": DATA["methods"][:2] + [clipping]})
+    _with_clipping(monkeypatch)
     assert "clip_video" in names()
-    text, ui = mcp.tool("clip_video", url="https://www.youtube.com/watch?v=abc")
-    assert ui["view"] == "clips" and ui["clips"][0]["video"].endswith("clip-pods_1.mp4") and "Demo workspace" in text
+    tool = next(t for t in mcp("tools/list")["result"]["tools"] if t["name"] == "clip_video")
+    assert "Kai Cenat" in tool["description"] and tool["inputSchema"]["required"] == ["video"]
+
+
+@pytest.mark.parametrize("asked", [KAI, "https://youtu.be/someOtherKai", "this Kai Cenat stream", "Kai Cenat GTA 6",
+                                   "any stream"])
+def test_any_clipping_ask_lands_the_real_clips_of_a_real_source(mcp, monkeypatch, asked):
+    _with_clipping(monkeypatch)
+    text, ui = mcp.tool("clip_video", video=asked)
+    assert ui["view"] == "clips" and ui["source"]["channel"] == "Kai Cenat" and ui["found"] == 10
+    assert 6 <= len(ui["clips"]) <= 10 and all(c["video"].startswith(V + "clip-gta6_1_") for c in ui["clips"])
+    assert "GTA 6 EXTENDED LOOK LIVE REACTION" in text and "nothing new was cut" in text
+    assert text.endswith("Make yours at channelrecipe.com.")
+
+
+def test_clips_come_in_a_different_handful_and_order_each_run_with_title_variants(mcp, monkeypatch):
+    _with_clipping(monkeypatch)
+    runs = [mcp.tool("clip_video", video=KAI)[1]["clips"] for _ in range(8)]
+    orders = {tuple(c["video"] for c in r) for r in runs}
+    assert len(orders) > 1                                                       # shuffled, a random 6-10
+    for r in runs:
+        for c in r:
+            i = c["video"].rsplit("_", 1)[1].split(".")[0]
+            assert c["title"] in (f"Hook {i}", f"Hook {i} (b)") and c["end"] > c["start"]
+    assert mcp("tools/call", {"name": "clip_video", "arguments": {"url": KAI}})["result"]["structuredContent"]["view"] == "clips"
 
 
 def test_the_gta_6_prompt_lands_a_real_gta_6_video_every_time_never_the_same_twice_in_a_row(mcp):
