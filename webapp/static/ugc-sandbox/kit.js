@@ -61,9 +61,10 @@
   const promptBox = (p) => `<div class="hook prompt-inline"><span>Paste this prompt in Claude</span><b>${esc(fill(method.prompt, p))}</b>
       <button class="btn ghost small" type="button" data-copy="${esc(fill(method.prompt, p))}">Copy the prompt</button></div>`;
   function dmBox(p) {
-    const kw = fill("{keyword}", p), pr = method.prompt ? fill(method.prompt, p) : "";
-    const msg = pr ? `Here's the prompt I use 🙌 "${pr}". Make your account at channelrecipe.com, connect ChannelRecipe to Claude (Settings → Connectors) and paste it in.`
-      : `Here you go 🙌 This is the tool I use: channelrecipe.com. Paste a channel that's blowing up, type your idea and it makes the whole video.`;
+    // the reply backs every close's promise ("the prompt I use", "my guide", "step-by-step"): the method's own steps
+    const kw = fill("{keyword}", p), steps = (method.guide || []).map((g, i) => `${i + 1}) ${fill(g, p)}`);
+    const msg = steps.length ? `Here's my step-by-step guide 🙌 ${steps.join(" ")}`
+      : `Here you go 🙌 This is the tool I use: channelrecipe.com.`;
     return `<div class="hook dm-box"><span>When people comment ${esc(kw)}, send them this</span><b>${esc(msg)}</b>
       <button class="btn ghost small" type="button" data-copy="${esc(msg)}">Copy the reply</button></div>`;
   }
