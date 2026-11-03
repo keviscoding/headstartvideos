@@ -30,6 +30,7 @@ def studio(tmp_path, monkeypatch):
     app = SimpleNamespace(features=SimpleNamespace(capabilities=lambda: original), native_capabilities=original,
                           mv=SimpleNamespace(CLAUDE_PROVIDER="channelrecipe"))
     capabilities.install(app)
+    monkeypatch.setattr(capabilities, "_connected", lambda: False)    # stock through ChannelRecipe: its own test
     return app
 
 
@@ -164,3 +165,13 @@ def test_native_brain_capability_is_untouched_when_cr_bridge_is_not_installed(st
     studio.mv.CLAUDE_PROVIDER = "claudecode"
     settings(key="")
     assert studio.features.capabilities()["base"]["claude"] == studio.native_capabilities["base"]["claude"]
+
+
+def test_stock_footage_without_a_pexels_key_is_ready_through_channelrecipe(studio, monkeypatch):
+    """Pexels paused new API keys (khay, 2026-11-03): a connected Studio searches through ChannelRecipe (cr_relay)."""
+    settings()
+    assert not studio.features.capabilities()["features"]["stock"]["ok"]
+    monkeypatch.setattr(capabilities, "_connected", lambda: True)
+    stock = studio.features.capabilities()["features"]["stock"]
+    assert stock["ok"] and stock["why"] == "" and stock["via"] == "channelrecipe"
+    assert not studio.native_capabilities["features"]["stock"]["ok"], "the engine's own answer is left as it was"

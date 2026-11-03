@@ -757,3 +757,41 @@ def test_a_failed_upload_relay_never_echoes_the_kie_key(env, monkeypatch):
     got = TestClient(app).post("/api/studio/upload-relay", params={"path": "/api/file-stream-upload"},
                                headers={"X-CR-Kie-Authorization": "Bearer kie-secret"}, content=b"x")
     assert got.status_code == 502 and "kie-secret" not in got.text and "upload host" in got.text
+
+
+def test_pexels_searches_go_through_the_sites_key_cached_and_limited_per_account(env, monkeypatch):
+    """Pexels paused new API keys (2026-11-03): a Studio without one searches here (local_runtime/cr_relay.py)."""
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    asked = []
+
+    def answer(request):
+        asked.append(request)
+        return httpx.Response(200, json={"videos": [{"id": len(asked)}], "query": request.url.params.get("query")})
+    monkeypatch.setattr(studio, "relay_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(answer)))
+    monkeypatch.setenv("PEXELS_KEY", "site-pexels-key")
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: user(int(req.headers["x-test-user"]), "daily") if req.headers.get("x-test-user") else None,
+                                          prefix="/api/studio"))
+    client = TestClient(app)
+    q = {"query": "city at night", "per_page": "15", "kind": "videos", "secret": "dropped"}
+    assert client.get("/api/studio/pexels-search", params=q).status_code == 401
+    got = client.get("/api/studio/pexels-search", params=q, headers={"x-test-user": "1"})
+    assert got.status_code == 200 and got.json()["videos"] == [{"id": 1}]
+    sent = asked[-1]
+    assert str(sent.url).startswith("https://api.pexels.com/videos/search?") and sent.headers["Authorization"] == "site-pexels-key"
+    assert "secret" not in str(sent.url) and "kind" not in str(sent.url)
+    assert client.get("/api/studio/pexels-search", params=q, headers={"x-test-user": "2"}).json()["videos"] == [{"id": 1}]
+    assert len(asked) == 1, "the same search is answered from the cache"
+    client.get("/api/studio/pexels-search", params={"query": "x", "kind": "photos"}, headers={"x-test-user": "1"})
+    assert str(asked[-1].url).startswith("https://api.pexels.com/v1/search?")
+    assert client.get("/api/studio/pexels-search", params={"kind": "videos"}, headers={"x-test-user": "1"}).status_code == 400
+    for n in range(300):
+        last = client.get("/api/studio/pexels-search", params={"query": f"q{n}"}, headers={"x-test-user": "3"})
+        if last.status_code != 200:
+            break
+    assert last.status_code == 429 and n == 240, "one account can't spend the site's Pexels quota"
+    monkeypatch.delenv("PEXELS_KEY")
+    monkeypatch.delenv("PEXELS_API_KEY", raising=False)
+    assert client.get("/api/studio/pexels-search", params={"query": "new"}, headers={"x-test-user": "1"}).status_code == 503

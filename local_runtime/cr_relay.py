@@ -11,6 +11,11 @@ way through /api/studio/upload-relay when that host can't be reached. An upload 
 Kie key, so only for that relayed upload the key travels to ChannelRecipe in X-CR-Kie-Authorization; the site passes
 it to Kie for that one request and never keeps or logs it.
 
+Pexels searches go through /api/studio/pexels-search when this Studio has no Pexels key of its own: Pexels stopped
+issuing new API keys (a creator saw "New API key issuance is currently paused", 2026-11-03), so a video without one got
+no stock b-roll. The engine is given PEXELS_RELAY_KEY instead of a key (cr_media.install); a search sent with it goes
+to ChannelRecipe, which asks Pexels with its own key. The clips themselves download straight from Pexels' file hosts.
+
 install() wraps requests' transport once per process (Studio, its video workers and the Shorts pipelines), so every
 downloader and uploader in the engine is covered without changing it. Only these hosts are touched: GETs of Kie's
 files, and POSTs to Kie's two upload addresses. Kie's key is never sent with a relayed download. It first has the
@@ -31,6 +36,8 @@ RELAY_SUFFIXES = ("aiquickdraw.com", "redpandaai.co")      # Kie's result and up
 UPLOAD_HOST = "kieai.redpandaai.co"
 UPLOAD_PATHS = ("/api/file-stream-upload", "/api/file-base64-upload")
 BLOCKED_FILE = HOME / ".cr-relay-hosts.json"
+PEXELS_RELAY_KEY = "channelrecipe-relay"                   # stands in for a Pexels key: searches go to ChannelRecipe
+PEXELS_SEARCHES = ("/v1/search", "/videos/search")
 BLOCKED_SECONDS = 24 * 3600
 _lock = threading.Lock()
 
@@ -100,6 +107,29 @@ def relayed(request):
     return out
 
 
+def pexels_search(request) -> bool:
+    parts = urlsplit(str(request.url or ""))
+    return (request.method == "GET" and parts.scheme == "https" and (parts.hostname or "").lower() == "api.pexels.com"
+            and parts.path in PEXELS_SEARCHES and request.headers.get("Authorization") == PEXELS_RELAY_KEY)
+
+
+def relayed_pexels(request):
+    """A Pexels search sent with PEXELS_RELAY_KEY, asked of ChannelRecipe (which searches with its own key); None
+    without a connected account."""
+    account = _account()
+    if account is None:
+        return None
+    base, key = account
+    out = request.copy()
+    for name in ("Authorization", "Cookie", "Proxy-Authorization"):
+        out.headers.pop(name, None)
+    parts = urlsplit(request.url)
+    out.prepare_url(base + "/api/studio/pexels-search?" + parts.query, {"kind": "videos" if parts.path.startswith("/videos") else "photos"})
+    out.headers["Authorization"] = "Bearer " + key
+    out.headers["X-CR-Relay"] = "1"
+    return out
+
+
 def relayed_upload(request):
     """The same upload, sent to ChannelRecipe's upload relay; None without a connected account, or for a streamed
     body that can't be sent a second time."""
@@ -137,6 +167,11 @@ def install() -> None:
     def send(self, request, **kwargs):
         if request.headers.get("X-CR-Relay"):
             return original(self, request, **kwargs)
+        if pexels_search(request):                             # never sent to Pexels: the stand-in isn't a key
+            via = relayed_pexels(request)
+            if via is None:
+                raise requests.exceptions.ConnectionError("Pexels search through ChannelRecipe needs a connected Studio")
+            return original(self, via, **kwargs)
         if request.method == "GET" and relayable(request.url):
             via_relay, what = relayed, "fetching Kie's files"
         elif request.method == "POST" and uploadable(request.url):

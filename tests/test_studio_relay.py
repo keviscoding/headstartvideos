@@ -139,3 +139,41 @@ def test_a_worker_that_dies_says_why(tmp_path, tail, code, reason):
     if "voiceover is not there" in tail:
         assert "Last message: Your voiceover is not there any more" in message
     assert "whisper: loading" not in message, "progress lines are not the reason"
+
+
+def test_a_pexels_search_without_a_key_of_its_own_goes_through_channelrecipe(relay):
+    """Pexels paused new API keys (khay, 2026-11-03): a Studio without one searches through ChannelRecipe's key. The
+    stand-in key never reaches Pexels, and the clips themselves still download straight from Pexels."""
+    got = requests.get("https://api.pexels.com/videos/search", params={"query": "city at night", "per_page": 15},
+                       headers={"Authorization": cr_relay.PEXELS_RELAY_KEY}, timeout=5)
+    assert got.status_code == 200
+    (via,) = relay
+    parts = urlsplit(via.url)
+    assert parts.hostname == "channelrecipe.com" and parts.path == "/api/studio/pexels-search"
+    assert "query=city+at+night" in parts.query and "kind=videos" in parts.query
+    assert via.headers["Authorization"] == "Bearer cr_mcp_" + "k" * 24
+    requests.get("https://api.pexels.com/v1/search", params={"query": "x"}, headers={"Authorization": cr_relay.PEXELS_RELAY_KEY})
+    assert "kind=photos" in relay[-1].url
+    requests.get("https://api.pexels.com/v1/search", params={"query": "x"}, headers={"Authorization": "own-key"})
+    assert relay[-1].url.startswith("https://api.pexels.com/"), "a creator's own Pexels key goes to Pexels as before"
+    requests.get("https://videos.pexels.com/video-files/1/1.mp4")
+    assert relay[-1].url.startswith("https://videos.pexels.com/")
+
+
+def test_a_relayed_pexels_search_without_an_account_fails_without_reaching_pexels(relay, monkeypatch):
+    monkeypatch.setitem(sys.modules, "cr_bridge", SimpleNamespace(load_settings=lambda: {}))
+    with pytest.raises(requests.exceptions.ConnectionError):
+        requests.get("https://api.pexels.com/videos/search", params={"query": "x"},
+                     headers={"Authorization": cr_relay.PEXELS_RELAY_KEY}, timeout=5)
+    assert relay == []
+
+
+def test_the_engine_gets_the_stand_in_key_only_when_it_has_none_and_studio_is_connected(monkeypatch):
+    import cr_media
+    monkeypatch.setattr(cr_relay, "_account", lambda: ("https://channelrecipe.com", "cr_mcp_x"))
+    for start, want in (("", cr_relay.PEXELS_RELAY_KEY), ("own-key", "own-key")):
+        engine = SimpleNamespace(PEXELS_API_KEY=start)
+        if not getattr(engine, "PEXELS_API_KEY", "x") and cr_relay._account() is not None:
+            engine.PEXELS_API_KEY = cr_relay.PEXELS_RELAY_KEY
+        assert engine.PEXELS_API_KEY == want
+    assert "cr_relay.PEXELS_RELAY_KEY" in Path(cr_media.__file__).read_text(encoding="utf-8")

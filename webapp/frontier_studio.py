@@ -1685,6 +1685,50 @@ def make_router(session_user, *, prefix="/api/frontier"):
     relay_slots: dict = {}
     relay_lock = threading.Lock()
 
+    # Stock b-roll searches for a Studio without a Pexels key of its own (cr_relay.PEXELS_RELAY_KEY): Pexels paused
+    # issuing new API keys (2026-11-03), so new creators couldn't get one. ChannelRecipe asks Pexels with the site's
+    # key; the clips download straight from Pexels' file hosts. Answers are cached (searches repeat across videos)
+    # and each account gets PEXELS_PER_HOUR searches an hour, so one Studio can't spend the site's Pexels quota.
+    PEXELS_PER_HOUR, PEXELS_CACHE_SECONDS, PEXELS_CACHE_MAX = 240, 12 * 3600, 2000
+    PEXELS_PARAMS = ("query", "per_page", "page", "orientation", "size", "locale", "min_duration", "max_duration",
+                     "min_width", "min_height", "color")
+    pexels_cache: dict = {}
+    pexels_used: dict = {}
+
+    @router.get("/pexels-search")
+    async def pexels_search(request: Request, kind: str = "videos", user=Depends(access)):
+        key = os.environ.get("PEXELS_KEY") or os.environ.get("PEXELS_API_KEY") or ""
+        if not key:
+            raise HTTPException(503, "Stock footage through ChannelRecipe isn't available right now.")
+        params = {k: str(v)[:200] for k, v in request.query_params.items() if k in PEXELS_PARAMS}
+        if not params.get("query"):
+            raise HTTPException(400, "A search needs a query.")
+        url = "https://api.pexels.com/videos/search" if kind == "videos" else "https://api.pexels.com/v1/search"
+        ask = (url, tuple(sorted(params.items())))
+        now = time.time()
+        hit = pexels_cache.get(ask)
+        if hit and hit[0] > now:
+            return JSONResponse(hit[1], headers={"Cache-Control": "private, no-store"})
+        with relay_lock:
+            recent = [t for t in pexels_used.get(user["id"], []) if t > now - 3600]
+            if len(recent) >= PEXELS_PER_HOUR:
+                raise HTTPException(429, "Too many stock footage searches this hour. Try again later.")
+            pexels_used[user["id"]] = recent + [now]
+        try:
+            r = await relay_client().get(url, params=params, headers={"Authorization": key}, timeout=30)
+        except httpx.HTTPError:
+            raise HTTPException(502, "Pexels didn't answer. Try again shortly.") from None
+        if r.status_code == 429:
+            raise HTTPException(429, "Pexels is busy right now. Try again later.")
+        if r.status_code != 200:
+            raise HTTPException(502, f"Pexels answered {r.status_code}.")
+        body = r.json()
+        if len(pexels_cache) >= PEXELS_CACHE_MAX:
+            for old_ask in [a for a, v in pexels_cache.items() if v[0] <= now] or list(pexels_cache)[:PEXELS_CACHE_MAX // 4]:
+                pexels_cache.pop(old_ask, None)
+        pexels_cache[ask] = (now + PEXELS_CACHE_SECONDS, body)
+        return JSONResponse(body, headers={"Cache-Control": "private, no-store"})
+
     @router.get("/media-relay")
     async def media_relay(request: Request, url: str = "", user=Depends(access)):
         import asyncio

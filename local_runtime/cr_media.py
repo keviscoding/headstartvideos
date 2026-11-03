@@ -1491,6 +1491,8 @@ def install(engine):
         cr_storyboard.install(engine)
     except ImportError:
         pass
+    if not getattr(engine, "PEXELS_API_KEY", "x") and cr_relay._account() is not None:
+        engine.PEXELS_API_KEY = cr_relay.PEXELS_RELAY_KEY    # stock b-roll through ChannelRecipe (no key of its own)
     wrap_whisper(engine)
     import cr_captions
     cr_captions.install(engine)                 # captions asked for are burned in, or the video says why not

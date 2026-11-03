@@ -43,6 +43,11 @@ def _brain_readiness():
     return {**result, "ok": True, "why": ""}
 
 
+def _connected() -> bool:
+    import cr_relay
+    return cr_relay._account() is not None
+
+
 def _readiness(task):
     """None means keep the original provider's capability; never call an API."""
     if not cr_media.active(task):
@@ -87,6 +92,10 @@ def install(studio):
             readiness = _readiness(task)
             if readiness is not None:
                 result.setdefault(section, {})[key] = readiness
+        stock = result.get("features", {}).get("stock")
+        if isinstance(stock, dict) and not stock.get("ok") and _connected():
+            # no Pexels key of its own (Pexels paused new keys, 2026-11-03): searches go through ChannelRecipe (cr_relay)
+            result["features"]["stock"] = {**stock, "ok": True, "why": "", "via": "channelrecipe"}
         return result
 
     capabilities._cr_media_capabilities = True
