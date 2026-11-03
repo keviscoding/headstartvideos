@@ -149,10 +149,10 @@
           <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
             <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">${s.kind === "screen" ? "film your laptop" : "your face"}</span></div>
             <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div></div></li>`).join("")}</ol>
-        ${method.id === "claude" && method.prompt ? claudeBox(p) : ""}
+        ${method.prompt ? claudeBox(p) : ""}
         <p class="added"><b>＋ The earnings proof: we add it for you.</b> Don't film it or edit it in. Your video comes back with it already in place.</p>
         <div class="actions">
-          ${method.id === "claude" && method.prompt ? `<a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener">Open Claude →</a>
+          ${method.prompt ? `<a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener">Open Claude →</a>
           <a class="btn ghost" href="studio#${esc(method.id)}/${esc(p.id)}" target="_blank" rel="noopener">Practice on the website</a>`
             : `<a class="btn" href="studio#${esc(method.id)}/${esc(p.id)}" target="_blank" rel="noopener">Open the walkthrough →</a>`}
           ${t.id === "dayn" && p.pathway ? `<a class="btn ghost" href="${MEDIA}wheel_${esc(p.pathway)}.mp4" target="_blank" rel="noopener">Open the wheel</a>` : ""}
