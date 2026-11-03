@@ -260,7 +260,7 @@ def _alert(kind: str, spent: float, cap: float):
         return
 
 
-def _tell_team(text: str):
+def _tell_team(text: str, subject: str = "Ranking Shorts spend alert"):
     try:
         import sentry_sdk
         if sentry_sdk.is_initialized():
@@ -272,7 +272,7 @@ def _tell_team(text: str):
         from webapp import email_service
         resend = email_service._get_client()
         for to in list(getattr(config, "ADMIN_EMAILS", []) or []) if resend else []:
-            resend.Emails.send({"from": email_service.FROM_EMAIL, "to": [to], "subject": "Ranking Shorts spend alert",
+            resend.Emails.send({"from": email_service.FROM_EMAIL, "to": [to], "subject": subject,
                                 "html": f"<p>{text}</p>"})
     except Exception as exc:                                    # noqa: BLE001
         print(f"[ranking-cap] could not mail the alert: {exc}", flush=True)

@@ -43,6 +43,19 @@ def _brain_readiness():
     return {**result, "ok": True, "why": ""}
 
 
+def _stock(result: dict) -> None:
+    """Stock footage without a Pexels key (Pexels paused new keys, 2026-11-03): ready with the creator's free Pixabay
+    key (cr_pixabay), else its reason names the Pixabay key."""
+    stock = result.get("features", {}).get("stock")
+    if not isinstance(stock, dict) or stock.get("ok"):
+        return
+    import cr_pixabay
+    result["features"]["stock"] = ({**stock, "ok": True, "why": "", "via": "pixabay"} if cr_pixabay.key() else
+                                   {**stock, "why": "Add a free Pixabay key in Setup & accounts (make an account at "
+                                                    "pixabay.com; the key is on pixabay.com/api/docs), or a Pexels "
+                                                    "key if you already have one."})
+
+
 def _readiness(task):
     """None means keep the original provider's capability; never call an API."""
     if not cr_media.active(task):
@@ -87,6 +100,7 @@ def install(studio):
             readiness = _readiness(task)
             if readiness is not None:
                 result.setdefault(section, {})[key] = readiness
+        _stock(result)
         return result
 
     capabilities._cr_media_capabilities = True

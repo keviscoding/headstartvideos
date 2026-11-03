@@ -855,7 +855,7 @@ def create_app():
                                   "visual": brain.get("visual_model") or brain.get("model", "")}
         # Key readiness only; never send saved provider keys to the browser.
         checks["providers"] = {name: bool(os.getenv(name)) for name in
-                              ["ELEVENLABS_API_KEY", "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "ATLASCLOUD_API_KEY", "PEXELS_API_KEY", "GEMINI_API_KEY", "EPIDEMIC_API_KEY", "AI33_API_KEY", "SIRAY_API_KEY", "BRAVE_API_KEY", "FISH_AUDIO_API_KEY"]}
+                              ["ELEVENLABS_API_KEY", "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "ATLASCLOUD_API_KEY", "PEXELS_API_KEY", "PIXABAY_API_KEY", "GEMINI_API_KEY", "EPIDEMIC_API_KEY", "AI33_API_KEY", "SIRAY_API_KEY", "BRAVE_API_KEY", "FISH_AUDIO_API_KEY"]}
         hub = cr_media.profile()
         checks["model_accounts"] = cr_media.PROVIDERS
         try:                                                # Setup's Render in the cloud card (never the token)
@@ -1769,7 +1769,7 @@ def create_app():
     def save_provider():
         data = request.get_json(silent=True) or {}
         name = str(data.get("name", ""))
-        allowed = {"ELEVENLABS_API_KEY", "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "ATLASCLOUD_API_KEY", "PEXELS_API_KEY", "GEMINI_API_KEY", "EPIDEMIC_API_KEY", "AI33_API_KEY", "SIRAY_API_KEY", "BRAVE_API_KEY"}
+        allowed = {"ELEVENLABS_API_KEY", "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "ATLASCLOUD_API_KEY", "PEXELS_API_KEY", "PIXABAY_API_KEY", "GEMINI_API_KEY", "EPIDEMIC_API_KEY", "AI33_API_KEY", "SIRAY_API_KEY", "BRAVE_API_KEY"}
         value = str(data.get("key", "")).strip()
         if name not in allowed or not value or any(ch.isspace() for ch in value):
             return jsonify(error="Choose an account and paste its complete key."), 400

@@ -29,7 +29,10 @@ def studio(tmp_path, monkeypatch):
     }
     app = SimpleNamespace(features=SimpleNamespace(capabilities=lambda: original), native_capabilities=original,
                           mv=SimpleNamespace(CLAUDE_PROVIDER="channelrecipe"))
+    real_stock = capabilities._stock
+    monkeypatch.setattr(capabilities, "_stock", lambda result: None)    # stock footage has its own test
     capabilities.install(app)
+    app.real_stock = real_stock
     return app
 
 
@@ -164,3 +167,18 @@ def test_native_brain_capability_is_untouched_when_cr_bridge_is_not_installed(st
     studio.mv.CLAUDE_PROVIDER = "claudecode"
     settings(key="")
     assert studio.features.capabilities()["base"]["claude"] == studio.native_capabilities["base"]["claude"]
+
+
+def test_stock_footage_is_ready_with_a_free_pixabay_key(studio, monkeypatch):
+    """Pexels paused new API keys (khay, 2026-11-03): without a Pexels key, Options says to add a free Pixabay key,
+    and is ready once there is one."""
+    import cr_pixabay
+    settings()
+    monkeypatch.setattr(capabilities, "_stock", studio.real_stock)
+    monkeypatch.setattr(cr_pixabay, "key", lambda env=None: "")
+    stock = studio.features.capabilities()["features"]["stock"]
+    assert not stock["ok"] and "Pixabay" in stock["why"]
+    monkeypatch.setattr(cr_pixabay, "key", lambda env=None: "pixabay-key")
+    stock = studio.features.capabilities()["features"]["stock"]
+    assert stock["ok"] and stock["via"] == "pixabay"
+    assert not studio.native_capabilities["features"]["stock"]["ok"], "the engine's own answer is left as it was"

@@ -1,5 +1,13 @@
 [
   {
+    "build": 126,
+    "date": "2026-11-03",
+    "title": "Stock footage with a free Pixabay key",
+    "items": [
+      "Pexels has paused new API keys, so Studio now finds stock footage on Pixabay too. Make a free account at pixabay.com, copy your key from pixabay.com/api/docs and paste it in Setup & accounts. If you already have a Pexels key, Studio keeps using it."
+    ]
+  },
+  {
     "build": 125,
     "date": "2026-11-03",
     "title": "Clone channels with no narrator, and FFmpeg that starts on more Windows PCs",

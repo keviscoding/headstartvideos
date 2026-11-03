@@ -60,7 +60,7 @@ RELAY_WAIT_S = 30 * 60          # longer than a relayed Claude Code call may tak
 # The settings a machine is given: the engine's render keys (farm/config.py RENDER_KEYS) and the job's own. Never an
 # Anthropic key: the machine's Claude is the creator's Claude Code, through the relay.
 RENDER_KEYS = {
-    "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "GEMINI_API_KEY", "PEXELS_API_KEY", "AI33_API_KEY",
+    "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "GEMINI_API_KEY", "PEXELS_API_KEY", "PIXABAY_API_KEY", "AI33_API_KEY",
     "AI33_VOICE_ID", "ALGROW_VOICE_ID", "ALGROW_TTS_MODEL", "ALGROW_IMAGE_MODEL", "WAVESPEED_VOICE",
     "WAVESPEED_IMAGE_MODEL", "VOICE_PROVIDER", "IMAGE_PROVIDER", "CLAUDE_SCRIPT_MODEL", "CLAUDE_SCRIPT_BODY_MODEL",
     "CLAUDE_UTILITY_MODEL", "KIE_IMAGE_MODEL", "GEMINI_MODEL", "WHISPER_MODEL", "VIDEO_W", "VIDEO_H", "FPS",
