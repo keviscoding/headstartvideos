@@ -2453,10 +2453,11 @@ def direct(engine, job: Path, casting: dict, spec: dict, part: tuple, index: int
 
 def aerial(plan: dict) -> dict:
     """A timeline video's plan as the channel films it (cr_timeline, the Manila test of 2026-11-02): one aerial view of
-    the place, its camera moving, never a close or medium shot of a building or a figure, and no crowds (pill-shaped
-    people stood in front of every place where the director asked for them)."""
+    the place, its camera moving, never a close, medium, low or over-the-shoulder shot of a building or a figure (the
+    Singapore test of 2026-11-03 dropped to street level on low:<id>), and no crowds (pill-shaped people stood in front
+    of every place where the director asked for them)."""
     for shot in plan.get("shots") or []:
-        if str(shot.get("framing") or "").split(":")[0] in ("close", "medium", "two"):
+        if str(shot.get("framing") or "").split(":")[0] in ("close", "medium", "two", "low", "over"):
             shot["framing"] = "wide"
         if shot.get("crowd"):
             shot["crowd"] = 0
