@@ -28,7 +28,7 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
 .muted{color:var(--ink3);font-size:13px}
 .fade{animation:in .35s ease both}
 @keyframes in{from{opacity:0;transform:translateY(4px)}}
-@media (prefers-reduced-motion:reduce){.fade,.dot,.brand{animation:none}.brand b{clip-path:none;animation:none}}
+@media (prefers-reduced-motion:reduce){.fade,.dot,.brand,.mt{animation:none}.brand b{clip-path:none;animation:none}}
 
 /* stat tiles */
 .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
@@ -123,7 +123,7 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
 @keyframes draw{to{clip-path:inset(0 0 0 0)}}
 @keyframes nudge{50%{transform:scale(1.04)}}
 @keyframes breathe{0%,88%,100%{transform:scale(1)}94%{transform:scale(1.025)}}
-.player .wm{position:absolute;right:10px;top:10px;background:#fff;color:var(--a);font-weight:700;font-size:14px;letter-spacing:-.01em;
+.player .wm,.mt .wm{position:absolute;right:10px;top:10px;background:#fff;color:var(--a);font-weight:700;font-size:14px;letter-spacing:-.01em;
   padding:5px 10px;border-radius:99px;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.25)}
 /* clip_video: the source, the scan of the whole thing, then the clips */
 .src{display:flex;gap:12px;align-items:center;margin:12px 0 4px}
@@ -136,6 +136,21 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
 .reel .mo{position:absolute;top:8px;bottom:8px;min-width:6px;border-radius:4px;background:var(--a);transform:scaleY(0);transition:transform .25s cubic-bezier(.2,.8,.2,1.3)}
 .reel .mo.on{transform:scaleY(1)}
 .scan b small{color:var(--ink3);font-weight:500}
+.mood{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-flow:dense;gap:6px;margin-top:12px}
+@media (max-width:560px){.mood{grid-template-columns:repeat(3,1fr)}}
+.mt{position:relative;aspect-ratio:9/16;border:0;padding:0;border-radius:10px;overflow:hidden;background:#000;outline:2px solid transparent;outline-offset:2px;
+  animation:pop .45s cubic-bezier(.2,.8,.2,1.15) both}
+.mt.big{grid-column:span 2;grid-row:span 2}
+.mt.on{outline-color:var(--a)}
+.mt video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mt .n{position:absolute;left:6px;top:6px;background:#fff;color:var(--ink);font-size:11px;font-weight:700;padding:1px 6px;border-radius:5px}
+.mt .d{position:absolute;right:6px;top:6px;background:rgba(11,11,15,.78);color:#fff;font-size:11px;font-weight:600;padding:1px 5px;border-radius:5px}
+.mt .wm{top:auto;bottom:40px;right:8px}
+.mt .cap{position:absolute;left:0;right:0;bottom:0;padding:6px 8px;background:rgba(11,11,15,.74);color:#fff;font-size:11.5px;font-weight:600;line-height:1.25;text-align:left;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.mt.big .cap{font-size:14px;padding:8px 10px}
+.mt:not(.big):not(.on) .cap{display:none}                /* the clips carry their own burned-in hook */
+@keyframes pop{from{opacity:0;transform:scale(.86)}}
 .feat{display:flex;flex-direction:column;align-items:center;margin-top:14px}
 .feat .player.tall{height:min(460px,70vh)}
 .feat .done-row{width:100%}
@@ -406,19 +421,18 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
     for (let q = 0; q <= 100; q += 5) { if (my !== run) return; $("#bar").style.width = q + "%"; await wait(60); }
     if (my !== run) return;
     $("#skip")?.remove();
-    const featured = (i) => { const c = cs[i];
-      return `${player({ video: c.video, poster: c.poster, tall: true })}<div class="done-row"><div><div class="tt">${esc(c.title)}</div>
-        <div class="meta">${mmss(c.seconds || (+c.end - +c.start))} · from ${hms(c.start)} in the video · made with ChannelRecipe</div></div>
-        <div class="btns"><button class="btn pri" type="button" id="dl">Download</button></div></div>`; };
-    $("#work").outerHTML = `<div class="scan"><span class="muted">${cs.length} viral clips from ${hms(S)} of video</span><b>${hms(S)} <small>watched</small></b></div>
-      <div class="feat fade" id="fp">${featured(0)}</div>
-      <div class="cgrid">${cs.map((c, i) => `<button class="cl ${i ? "" : "on"} fade" type="button" data-i="${i}" style="animation-delay:${i * 60}ms">
-        <span class="pv"><img src="${esc(c.poster || "")}" alt=""><span class="n">#${i + 1}</span><span class="d">${mmss(c.seconds || (+c.end - +c.start))}</span></span><b>${esc(c.title)}</b></button>`).join("")}</div>`;
-    wirePlayer();
-    document.querySelectorAll(".cl").forEach((b) => b.onclick = () => {
-      document.querySelectorAll(".cl").forEach((x) => x.classList.toggle("on", x === b));
-      $("#fp").innerHTML = featured(+b.dataset.i); wirePlayer();
-      const v = $("#vid"); v.muted = false; $("#snd")?.remove(); v.play().catch(() => {});   // a tap: sound on
+    // the payoff: a moodboard of every clip playing at once (owner: "eye candy... satisfying"), the first one big
+    $("#work").outerHTML = `<div class="scan"><span class="muted">${cs.length} viral clips, captioned and ready to post</span><b>${hms(S)} <small>watched</small></b></div>
+      <div class="mood" id="mood">${cs.map((c, i) => `<button class="mt${i ? "" : " big"}" type="button" data-i="${i}" style="animation-delay:${i * 110}ms">
+        <video src="${esc(c.video)}" poster="${esc(c.poster || "")}" muted loop playsinline preload="${i < 6 ? "auto" : "metadata"}"></video>
+        <span class="n">#${i + 1}</span><span class="d">${mmss(c.seconds || (+c.end - +c.start))}</span>${i ? "" : `<span class="wm">channelrecipe.com</span>`}
+        <span class="cap">${esc(c.title)}</span></button>`).join("")}</div>
+      <p class="muted" style="margin-top:8px">Tap a clip to hear it</p>`;
+    const tiles = [...document.querySelectorAll("#mood .mt")];
+    tiles.forEach((b, i) => setTimeout(() => { const v = b.querySelector("video"); v.play().catch(() => {}); }, i * 110));
+    tiles.forEach((b) => b.onclick = () => {
+      tiles.forEach((x) => { const v = x.querySelector("video"); v.muted = x !== b; x.classList.toggle("on", x === b); });
+      const v = b.querySelector("video"); v.currentTime = 0; v.play().catch(() => {});   // a tap: this one, with sound
     });
     state(`${cs.length} clips ready`, true);
   }
