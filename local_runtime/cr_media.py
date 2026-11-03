@@ -1491,6 +1491,8 @@ def install(engine):
         cr_storyboard.install(engine)
     except ImportError:
         pass
+    import cr_pixabay
+    cr_pixabay.install(engine)                  # no Pexels key (Pexels paused new keys): stock from the creator's Pixabay key
     wrap_whisper(engine)
     import cr_captions
     cr_captions.install(engine)                 # captions asked for are burned in, or the video says why not
