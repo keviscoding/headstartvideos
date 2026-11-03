@@ -124,7 +124,7 @@ def test_the_gta_6_prompt_lands_a_real_gta_6_video_every_time_never_the_same_twi
     text, ui = mcp.tool("clone_channel", channel="@gloobygta")
     assert ui["view"] == "clone" and ui["channel"] == "Glooby" and ui["exact"] and ui["topic"] == "GTA 6 channels"
     assert ui["stats"]["videos"] == 3 and ui["stats"]["views"] == 900000 + 300000 + 1344148   # uploads + its viral one
-    assert ui["ideas"] == ["The GTA 6 map is impossible", "Everything hidden in Leonida"]
+    assert sorted(ui["ideas"]) == ["Everything hidden in Leonida", "The GTA 6 map is impossible"]
     assert text.startswith("Style learned: Glooby")
     seen = []
     for _ in range(12):
@@ -155,7 +155,7 @@ def test_it_never_shows_another_niches_video_for_what_was_asked(mcp):
 
 def test_ranking_and_finding_viral_channels(mcp):
     text, ui = mcp.tool("rank_clips", topic="funniest cat moments")
-    assert ui["view"] == "rank" and ui["video"]["tall"] and len(ui["clips"]) == 12 and "Demo workspace" in text
+    assert ui["view"] == "rank" and ui["video"]["tall"] and 9 <= len(ui["clips"]) <= 12 and "Demo workspace" in text
     text, ui = mcp.tool("find_viral_channels", niche="GTA 6")
     assert ui["view"] == "viral" and ui["pin"] == "Glooby" and ui["refs"][0]["channel"] == "Glooby"
     assert "Glooby" in text and "1.3M views" in text
@@ -193,3 +193,27 @@ def test_every_card_and_every_result_names_channelrecipe_com(mcp):
     page = mcp("resources/read", {"uri": ugc_mcp.UI_URI})["result"]["contents"][0]["text"]
     assert 'class="brand"' in page and '<span class="wm">channelrecipe.com</span>' in page   # footer + on the player
     assert "channelrecipe.com" in mcp("initialize")["result"]["instructions"]
+
+
+def test_no_two_runs_look_alike_titles_start_points_frames_and_clips(mcp, monkeypatch):
+    titles = [f"GTA 6 map secret #{i}" for i in range(10)]
+    gta = {**TOPICS[1], "outputs": [{**_out("gta6_1", "The GTA 6 map is impossible"), "seconds": 181, "titles": titles}]}
+    monkeypatch.setattr(ugc_mcp, "_data", {"at": 0.0, "value": None})
+    monkeypatch.setattr(ugc_mcp, "_fetch", lambda: {**DATA, "methods": [{**DATA["methods"][0], "topics": [TOPICS[0], gta]},
+                                                                         *DATA["methods"][1:]]})
+    runs = [mcp.tool("make_video", idea="a GTA 6 video like Glooby", channel="Glooby") for _ in range(15)]
+    shown = [ui["video"]["title"] for _, ui in runs]
+    assert set(shown) <= set(titles) and len(set(shown)) > 3 and all(a != b for a, b in zip(shown, shown[1:]))
+    assert all(f'"{ui["video"]["title"]}"' in text for text, ui in runs)          # the text names the title shown
+    starts = [ui["video"]["start"] for _, ui in runs]
+    assert all(0 <= s <= 181 - 25 for s in starts) and len(set(starts)) > 3          # always 25 s left to play
+    for _, ui in runs:
+        f = ui["video"]["frames"]
+        assert 4 <= len(f) <= 6 and f == sorted(f)                                   # a handful, in story order
+    _, ui = mcp.tool("make_video", idea="Why medieval peasants feared winter")       # a short video starts at 0
+    assert ui["video"]["start"] == 0 or ui["video"]["seconds"] >= 30
+    _, ui = mcp.tool("clone_channel", channel="Glooby")
+    assert ui["stats"]["videos"] == 3 and len(ui["uploads"]) == 3                   # few uploads: all of them
+    _, ui = mcp.tool("rank_clips", topic="cats")
+    assert 9 <= len(ui["clips"]) <= 12 and [c["views"] for c in ui["top"]] == sorted(
+        (c["views"] for c in ui["clips"]), reverse=True)[:5]

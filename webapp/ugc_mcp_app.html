@@ -204,19 +204,19 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
   }
 
   function player(v) {
-    return `<div class="player ${v.tall ? "tall" : "wide"}" id="pl"><video id="vid" src="${esc(v.video)}" poster="${esc(v.poster || "")}" playsinline controls muted autoplay preload="auto"></video>
+    return `<div class="player ${v.tall ? "tall" : "wide"}" id="pl"><video id="vid" src="${esc(v.video)}#t=${+v.start || 0}" data-start="${+v.start || 0}" poster="${esc(v.poster || "")}" playsinline controls muted autoplay preload="auto"></video>
       <button class="sound" type="button" id="snd">🔊 Tap for sound</button><span class="wm">channelrecipe.com</span></div>`;
   }
   function wirePlayer() {
     const v = $("#vid"), s = $("#snd");
     if (!v) return;
-    const on = () => { v.muted = false; v.currentTime = 0; v.play().catch(() => {}); s && s.remove(); };
+    const on = () => { v.muted = false; v.play().catch(() => {}); s && s.remove(); };   // sound on, from where it is
     s && (s.onclick = on);
     v.addEventListener("volumechange", () => { if (!v.muted && s && s.isConnected) s.remove(); });
-    v.addEventListener("loadedmetadata", sized);
+    v.addEventListener("loadedmetadata", () => { const t = +v.dataset.start || 0; if (t && v.currentTime < t - 1) v.currentTime = t; sized(); }, { once: true });
     v.play().catch(() => {});
     const f = $("#full"); if (f) f.onclick = () => request("ui/request-display-mode", { mode: "fullscreen" }).catch(() => {});
-    const dl = $("#dl"); if (dl) dl.onclick = () => openLink(v.currentSrc || v.src);
+    const dl = $("#dl"); if (dl) dl.onclick = () => openLink((v.currentSrc || v.src).split("#")[0]);
   }
 
   /* find_viral_channels */
@@ -254,11 +254,11 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
     wireSkip(); state("Studying the channel…");
     const ths = [...document.querySelectorAll("#ups .th")];
     ths.forEach((t) => t.classList.add("on"));
-    let seen = 0, views = 0;
+    const n = ths.length || 1;
     for (const [i, t] of ths.entries()) {
       if (my !== run) return;
-      t.classList.add("seen"); seen++; views += +(sc.uploads[i] || {}).views || 0;
-      $("#t1").textContent = seen; $("#t2").textContent = short(views);
+      t.classList.add("seen");
+      $("#t1").textContent = Math.round((st.videos || n) * (i + 1) / n); $("#t2").textContent = short((st.views || 0) * (i + 1) / n);
       await wait(320);
     }
     $("#t3").textContent = short(st.avg); $("#t4").textContent = st.length ? mmss(st.length) : short((st.top || {}).views);
@@ -336,7 +336,7 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
     // top 5
     if (my !== run) return;
     $("#sl").textContent = "Counting down the top 5"; state("Ranking…");
-    const top = clips.slice(0, 5).reverse();
+    const top = (sc.top || clips.slice(0, 5)).slice().reverse();
     $("#after").innerHTML = `<div class="sec"><div class="lab">The countdown</div><div class="rows" id="top"></div></div>`;
     for (const [k, c] of top.entries()) {
       if (my !== run) return;

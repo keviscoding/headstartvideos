@@ -17,6 +17,7 @@ import random
 import re
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -185,9 +186,10 @@ def _db_last(bucket: str, new: int | None = None) -> int | None:
 def named(outs: list[dict], idea: str) -> dict | None:
     """The ready-made video an idea names (most of its title's words), e.g. an idea chip on clone_channel's card."""
     asked = _sig(idea)
-    best = max(outs, key=lambda o: len(_sig(o["title"]) & asked) / max(1, len(_sig(o["title"]))))
-    have = _sig(best["title"])
-    return best if have and len(have & asked) / len(have) >= 0.6 else None
+    fit = lambda title: len(_sig(title) & asked) / max(1, len(_sig(title)))
+    score = lambda o: max(fit(x) for x in [o["title"], *(o.get("titles") or [])])
+    best = max(outs, key=score)
+    return best if score(best) >= 0.6 else None
 
 
 def pick(bucket: str, n: int) -> int:
@@ -228,6 +230,35 @@ def _ref(r: dict) -> dict:
 
 def _video(o: dict) -> dict:
     return {k: o.get(k) for k in ("video", "poster", "title", "frames", "seconds", "tall", "script")}
+
+
+# Many creators film the same outcome (owner, 2026-11-03: GTA 6 farming), so no two runs look alike: a title from the
+# output's `titles` variants (never this key's last one for that video), a random start point that still leaves 25 s
+# to play, and a random handful of its scene frames. The last titles are remembered per web container (best effort).
+_last_title: OrderedDict[str, str] = OrderedDict()
+
+
+def _title(o: dict, key: str) -> str:
+    names = [t for t in (o.get("titles") or []) if isinstance(t, str) and t.strip()] or [o.get("title") or ""]
+    slot = f"{key}:{o.get('video')}"
+    title = random.choice([t for t in names if t != _last_title.get(slot)] or names)
+    _last_title[slot] = title
+    _last_title.move_to_end(slot)
+    while len(_last_title) > 4096:
+        _last_title.popitem(last=False)
+    return title
+
+
+def _take(o: dict, key: str) -> dict:
+    v = _video(o)
+    v["title"] = _title(o, key)
+    secs = float(o.get("seconds") or 0)
+    v["start"] = round(random.uniform(0, secs - 25), 1) if secs >= 30 else 0
+    frames = list(o.get("frames") or [])
+    if len(frames) > 4:                                  # 4-6 of them, in story order
+        keep = sorted(random.sample(range(len(frames)), random.randint(4, len(frames))))
+        v["frames"] = [frames[i] for i in keep]
+    return v
 
 
 def _menu(d: dict, mid: str) -> list[str]:
@@ -276,6 +307,8 @@ def clone_channel(d: dict, args: dict, key: str) -> dict:
     stats = {"videos": len(uploads), "views": total, "avg": round(total / len(uploads)) if uploads else 0,
              "top": {"title": top.get("title"), "views": top.get("views")},
              "length": round(sum(lens) / len(lens)) if lens else 0}
+    shown = random.sample(uploads, min(len(uploads), random.randint(4, 6))) if len(uploads) > 4 else uploads[:]
+    random.shuffle(ideas)
     lead = (f"Style learned: {ref['channel']}" if exact else
             f"Closest channel in ChannelRecipe's library: {ref['channel']}")
     text = (f"{lead} ({t['name']}). Studied {stats['videos']} uploads, {_short(total)} views in all; top video "
@@ -283,7 +316,7 @@ def clone_channel(d: dict, args: dict, key: str) -> dict:
             + "." + (f" Ready to make in this style: {'; '.join(ideas)}." if ideas else
                      " Its sample videos are still being made, so make_video can't show one in this style yet."))
     return {"text": text, "ui": {"view": "clone", "channel": ref["channel"], "channel_url": url, "exact": exact,
-                                 "topic": t["name"], "uploads": uploads[:12], "stats": stats,
+                                 "topic": t["name"], "uploads": shown, "stats": stats,
                                  "look": t.get("look") or [], "ideas": ideas}}
 
 
@@ -301,11 +334,12 @@ def make_video(d: dict, args: dict, key: str) -> dict:
         return {"text": text, "ui": {"view": "note", "title": t["name"], "text": text, "options": _menu(d, "clone")}}
     o = named(outs, idea) or outs[pick(f"{key}:make:{t['id']}", len(outs))]
     chan = hit[0]["channel"] if hit else None
-    text = (f"Finished: \"{o['title']}\" ({_mmss(o.get('seconds'))}, {t['name']}), a real ChannelRecipe video, "
+    v = _take(o, key)
+    text = (f"Finished: \"{v['title']}\" ({_mmss(o.get('seconds'))}, {t['name']}), a real ChannelRecipe video, "
             f"playing in the card. Video: {o['video']}. (Demo workspace: it plays a video ChannelRecipe made earlier "
             "for this niche, so no new render was started.)")
     return {"text": text, "ui": {"view": "make", "topic": t["name"], "channel": chan, "idea": idea,
-                                 "video": _video(o)}}
+                                 "video": v}}
 
 
 def rank_clips(d: dict, args: dict, key: str) -> dict:
@@ -314,12 +348,15 @@ def rank_clips(d: dict, args: dict, key: str) -> dict:
     if not t or not t.get("outputs"):
         return _not_here(d, "ranking", f"Ranking \"{asked}\"" if asked else "That ranking")
     o = t["outputs"][pick(f"{key}:rank:{t['id']}", len(t["outputs"]))]
-    clips = [{k: c.get(k) for k in ("id", "title", "views")} for c in t.get("clips") or []][:12]
-    text = (f"Ranking Short ready: \"{t['name']}\" ({_mmss(o.get('seconds'))}). Found {len(clips)} viral clips "
-            f"(top one {_short(clips[0]['views']) if clips else '?'} views), picked each one's best moment and counted "
+    found = [{k: c.get(k) for k in ("id", "title", "views")} for c in t.get("clips") or []]
+    clips = random.sample(found, min(len(found), random.randint(9, 12)))      # a different handful each run
+    top = sorted(clips, key=lambda c: c.get("views") or 0, reverse=True)[:5]
+    v = _take(o, key)
+    text = (f"Ranking Short ready: \"{v['title']}\" ({_mmss(o.get('seconds'))}). Found {len(clips)} viral clips "
+            f"(top one {_short(top[0]['views']) if top else '?'} views), picked each one's best moment and counted "
             f"down the top 5. Video: {o['video']}. (Demo workspace: it plays a ranking Short ChannelRecipe made "
             "earlier, so no new render was started.)")
-    return {"text": text, "ui": {"view": "rank", "topic": t["name"], "clips": clips, "video": _video(o)}}
+    return {"text": text, "ui": {"view": "rank", "topic": t["name"], "clips": clips, "top": top, "video": v}}
 
 
 def clip_video(d: dict, args: dict, key: str) -> dict:
