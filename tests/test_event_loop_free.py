@@ -28,7 +28,7 @@ ASYNC_ON_PURPOSE = {
                   "get_settings", "save_settings",
                   # await the request itself, then hand the blocking part to a thread
                   "stripe_webhook", "build_progress", "money_niche_shared", "email_unsubscribe",
-                  "oauth_mcp_login_get", "oauth_mcp_login_post"},
+                  "oauth_mcp_login_get", "oauth_mcp_login_post", "ugc_mcp_post"},
     "frontier_studio.py": {"media_relay", "upload_relay"},     # streams with async httpx / reads the body, then a thread
     "studio_connect.py": {"connect_page"},
     "cloud_jobs.py": {"get_relay_next", "post_relay_ytdlp", "post_relay_messages"},  # long-polls: asyncio.sleep

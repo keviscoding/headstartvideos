@@ -51,6 +51,16 @@
       .replaceAll("{channel}", r ? r.channel : "this channel").replaceAll("{views}", r ? short(r.views) : "millions of")
       .replaceAll("{topic}", w.idea).replaceAll("{keyword}", w.keyword).replaceAll("{n}", "N");
   }
+  // The Claude walkthrough films real Claude with ChannelRecipe connected: each creator's own sandboxed connector
+  // (site webapp/ugc_mcp.py), set up once, then the one prompt the kit fills in for the topic.
+  const MCP = `${location.origin}/ugc-mcp/${location.pathname.split("/")[2] || ""}/mcp`;
+  const claudeBox = (p) => `<div class="hook claude-box"><span>In Claude · set up once</span>
+      <ol><li>Open <b>claude.ai</b> or the Claude app → <b>Settings → Connectors → Add custom connector</b>.</li>
+        <li>Name it <b>ChannelRecipe</b> and paste your link: <code>${esc(MCP)}</code>
+          <button class="btn ghost small" type="button" data-copy="${esc(MCP)}">Copy link</button></li>
+        <li>Open a new chat. ChannelRecipe shows under <b>+ → Connectors</b>: keep it on.</li></ol>
+      <span>Then type this</span><b>${esc(fill(method.prompt || "", p))}</b>
+      <button class="btn ghost small" type="button" data-copy="${esc(fill(method.prompt || "", p))}">Copy the prompt</button></div>`;
   const shotsFor = (tp, m) => tp.shots.map((s) => s.what === "The walkthrough" && m.walk_say ? { ...s, say: m.walk_say } : s);
   const embed = (plat, id) => plat === "tt" ? `https://www.tiktok.com/embed/v2/${id}` : `https://www.instagram.com/reel/${id}/embed/`;
   const thumb = (plat, id) => `${MEDIA}ex_${plat === "tt" ? "tt" : "ig"}-${id}.jpg`;
@@ -72,7 +82,10 @@
     if (!Number.isFinite(i)) { i = Math.floor(Math.random() * list.length); store.set(key, i); }
     return list[((i % list.length) + list.length) % list.length];
   }
-  const feedOf = (t) => (method.id === "clipping" && t.react ? "clipping" : t.react);
+  // a remake from the outliers library keeps its example's theme (outliers.json "react_feed", e.g. a Zack D Films-style
+  // 3D Short): its react clip comes from that feed, never a random one (owner, 2026-11-03)
+  let feedPin = null;
+  const feedOf = (t) => (feedPin && t.react && R && R.feeds[feedPin] ? feedPin : method.id === "clipping" && t.react ? "clipping" : t.react);
   const clipsFor = (t) => (R && t.react && R.feeds[feedOf(t)] ? R.feeds[feedOf(t)].clips : []);
   // the bot opens the kit straight from this link; RICH_LINK adds the format, clip and hook ("__" parts), which the bot
   // pins to the creator's next video (bot 509f57b, 2026-11-02). false falls back to the plain kit link.
@@ -133,9 +146,12 @@
           <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
             <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">${s.kind === "screen" ? "film your laptop" : "your face"}</span></div>
             <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div></div></li>`).join("")}</ol>
+        ${method.id === "claude" && method.prompt ? claudeBox(p) : ""}
         <p class="added"><b>＋ The earnings proof: we add it for you.</b> Don't film it or edit it in. Your video comes back with it already in place.</p>
         <div class="actions">
-          <a class="btn" href="studio#${esc(method.id)}/${esc(p.id)}" target="_blank" rel="noopener">Open the walkthrough →</a>
+          ${method.id === "claude" && method.prompt ? `<a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener">Open Claude →</a>
+          <a class="btn ghost" href="studio#${esc(method.id)}/${esc(p.id)}" target="_blank" rel="noopener">Practice on the website</a>`
+            : `<a class="btn" href="studio#${esc(method.id)}/${esc(p.id)}" target="_blank" rel="noopener">Open the walkthrough →</a>`}
           ${t.id === "dayn" && p.pathway ? `<a class="btn ghost" href="${MEDIA}wheel_${esc(p.pathway)}.mp4" target="_blank" rel="noopener">Open the wheel</a>` : ""}
           ${says.length ? `<button class="btn ghost" type="button" id="copy-says">Copy what to say</button>` : ""}
           <a class="btn ghost" href="${botLink(t, p, hook, clip)}" target="_blank" rel="noopener">Send my clips to the bot</a>
@@ -163,7 +179,8 @@
     renderViral();
   }
 
-  function choose(t, p, scroll = true) {
+  function choose(t, p, scroll = true, feed = null) {
+    feedPin = feed;
     const l = lockOf(t);
     if (l && l.p) { p = l.p; if (l.m !== method) { method = l.m; renderPaths(); } }
     tpl = t; path = p; renderToday();
@@ -235,7 +252,7 @@
         <div class="ol-meta"><b>${short(v.views)} views</b><small>${ago(v.posted)} · ${v.plat === "tt" ? "TikTok" : "Instagram"} · @${esc(v.handle)}</small>
         ${v.hook ? `<p>“${esc(v.hook.replace(/\s+/g, " ").slice(0, 90))}”</p>` : ""}
         <div class="ol-acts"><span class="chip plain">${esc(FORMAT_NAME[v.format || "none"] || v.format)}</span>
-        ${D.templates.some((t) => t.id === v.format) ? `<button type="button" class="btn ghost small" data-remake="${esc(v.format)}">Remake this →</button>` : ""}</div></div></div>`).join("");
+        ${D.templates.some((t) => t.id === v.format) ? `<button type="button" class="btn ghost small" data-remake="${esc(v.format)}" data-feed="${esc(v.react_feed || "")}">Remake this →</button>` : ""}</div></div></div>`).join("");
     $("#ol-more").hidden = list.length <= ol.shown;
   }
   function wireOutliers() {
@@ -251,7 +268,7 @@
           <a class="btn ghost small" href="${esc(v.url)}" target="_blank" rel="noopener">Open on ${v.plat === "tt" ? "TikTok" : "Instagram"} ↗</a>`;
         $("#ol-modal").hidden = false; }
       const rm = e.target.closest("[data-remake]");
-      if (rm) choose(D.templates.find((t) => t.id === rm.dataset.remake), path);
+      if (rm) choose(D.templates.find((t) => t.id === rm.dataset.remake), path, true, rm.dataset.feed || null);
     });
     $("#ol-modal").addEventListener("click", (e) => { if (e.target.id === "ol-modal" || e.target.closest(".ol-x")) { $("#ol-modal").hidden = true; $("#ol-play").innerHTML = ""; } });
   }

@@ -2361,6 +2361,27 @@ def ugc_sandbox_studio(key: str):
 app.mount("/ugc-sandbox", web_assets.RevalidatedStatic(directory=str(UGC_SANDBOX_DIR)), name="ugc-sandbox")
 
 
+# The same creators' ChannelRecipe connector for Claude (webapp/ugc_mcp.py, owner 2026-11-03): a sandboxed MCP server
+# they add in claude.ai and film, answering from the sandbox's cached data. Not the real MCP (/mcp), no sign-in.
+@app.post("/ugc-mcp/{key}/mcp", include_in_schema=False)
+async def ugc_mcp_post(key: str, request: Request):
+    if not _ugc_key_ok(key):
+        raise HTTPException(404)
+    from webapp import ugc_mcp
+    body = await request.body()
+    status, out = await run_in_threadpool(ugc_mcp.handle, body, key, request.query_params.get("speed", ""))
+    if out is None:
+        return Response(status_code=status, headers=_UGC_HEADERS)
+    return JSONResponse(out, status_code=status, headers={**_UGC_HEADERS, "Cache-Control": "no-store"})
+
+
+@app.api_route("/ugc-mcp/{key}/mcp", methods=["GET", "DELETE"], include_in_schema=False)
+def ugc_mcp_other(key: str):
+    if not _ugc_key_ok(key):
+        raise HTTPException(404)
+    return Response(status_code=405, headers={"Allow": "POST", **_UGC_HEADERS})   # no server stream, no sessions
+
+
 # Find My Money Niche: the free quiz (webapp/money_niche.py). A shared result opens on its own page with its own
 # share picture; what anyone sees there is only the taste (niche #1 and one proof channel).
 @app.get("/money-niche", response_class=HTMLResponse)
