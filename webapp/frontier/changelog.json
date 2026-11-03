@@ -1,5 +1,13 @@
 [
   {
+    "build": 126,
+    "date": "2026-11-03",
+    "title": "Stock footage without a Pexels key",
+    "items": [
+      "Pexels has paused new API keys, so you no longer need one: when Studio has no Pexels key of its own, it finds stock footage through ChannelRecipe. If you already have a key, Studio keeps using yours."
+    ]
+  },
+  {
     "build": 125,
     "date": "2026-11-03",
     "title": "Clone channels with no narrator, and FFmpeg that starts on more Windows PCs",
