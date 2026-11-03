@@ -35,7 +35,9 @@
   function lockOf(t) {
     if (!t.method && !t.topic) return null;
     const m = S.methods.find((x) => x.id === (t.method || method.id));
-    return { m, p: m && !m.soon ? (t.topic ? ready(m).find((x) => x.id === t.topic) : ready(m)[0]) || null : null };
+    // a method-only lock (the new formats film the Claude connector) keeps the creator's topic when that method has it
+    const own = path && ready(m || method).find((x) => x.id === path.id);
+    return { m, p: m && !m.soon ? (t.topic ? ready(m).find((x) => x.id === t.topic) : own || ready(m)[0]) || null : null };
   }
   const usable = (t) => { const l = lockOf(t); return !l || !!l.p; };
   const free = () => D.templates.find((t) => !lockOf(t));
@@ -97,9 +99,10 @@
   function pickToday() {
     const day = Math.floor(Date.now() / 864e5);
     const saved = new URLSearchParams(location.hash.slice(1));
-    method = methods().find((m) => m.id === saved.get("m")) || methods()[day % 3 === 2 && methods()[1] ? 1 : 0];
-    tpl = D.templates.find((t) => t.id === saved.get("t")) || D.templates[day % D.templates.length];
-    path = ready().find((p) => p.id === saved.get("p")) || ready()[day % ready().length];
+    const def = D.default || {};               // what the kit opens on when the link carries no choice (owner: GTA 6 first)
+    method = methods().find((m) => m.id === (saved.get("m") || def.m)) || methods()[day % 3 === 2 && methods()[1] ? 1 : 0];
+    tpl = D.templates.find((t) => t.id === (saved.get("t") || def.t)) || D.templates[day % D.templates.length];
+    path = ready().find((p) => p.id === (saved.get("p") || def.p)) || ready()[day % ready().length];
     if (!usable(tpl)) { const us = D.templates.filter(usable); tpl = us[day % us.length]; }
     const l = lockOf(tpl);
     if (l) { method = l.m; path = l.p; }
@@ -182,7 +185,7 @@
   function choose(t, p, scroll = true, feed = null) {
     feedPin = feed;
     const l = lockOf(t);
-    if (l && l.p) { p = l.p; if (l.m !== method) { method = l.m; renderPaths(); } }
+    if (l && l.p) { p = t.topic ? l.p : ready(l.m).find((x) => x.id === (p && p.id)) || l.p; if (l.m !== method) { method = l.m; renderPaths(); } }
     tpl = t; path = p; renderToday();
     if (scroll) $("#today").scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -208,7 +211,7 @@
     $("#paths").onclick = (e) => {
       const mb = e.target.closest("[data-m]");
       // picking another method or topic leaves a locked format for a free one (the lock would undo the pick)
-      const keep = (m, p) => { const l = lockOf(tpl); return !l || (l.m === m && l.p === p) ? tpl : free(); };
+      const keep = (m, p) => { const l = lockOf(tpl); return !l || (l.m === m && (!tpl.topic || l.p === p)) ? tpl : free(); };
       if (mb && !mb.disabled) { method = S.methods.find((m) => m.id === mb.dataset.m); choose(keep(method, ready()[0]), ready()[0]); renderPaths(); return; }
       const c = e.target.closest(".pcard");
       if (c && !c.disabled) { const p = method.topics.find((x) => x.id === c.dataset.p); choose(keep(method, p), p); }
