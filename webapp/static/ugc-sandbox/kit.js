@@ -68,13 +68,24 @@
     return `<div class="hook dm-box"><span>When people comment ${esc(kw)}, send them this</span><b>${esc(msg)}</b>
       <button class="btn ghost small" type="button" data-copy="${esc(msg)}">Copy the reply</button></div>`;
   }
-  const claudeBox = (p) => `<div class="hook claude-box"><span>In Claude · set up once</span>
-      <ol><li>Open <b>claude.ai</b> or the Claude app → <b>Settings → Connectors → Add custom connector</b>.</li>
-        <li>Name it <b>ChannelRecipe</b> and paste your link: <code>${esc(MCP)}</code>
-          <button class="btn ghost small" type="button" data-copy="${esc(MCP)}">Copy link</button></li>
-        <li>Open a new chat. ChannelRecipe shows under <b>+ → Connectors</b>: keep it on.</li></ol>
-      <span>Then type this</span><b>${esc(fill(method.prompt || "", p))}</b>
-      <button class="btn ghost small" type="button" data-copy="${esc(fill(method.prompt || "", p))}">Copy the prompt</button></div>`;
+  // Connecting ChannelRecipe to Claude, as close to one button as Claude allows (owner 2026-11-03: creators got lost):
+  // three numbered buttons at the TOP of the video, before any shot; once done it folds to one line.
+  const setupDone = () => store.get("claude-setup") === "done";
+  const claudeBox = (p) => {
+    const pr = fill(method.prompt || "", p);
+    if (setupDone()) return `<div class="setup done"><b>✓ ChannelRecipe is connected to Claude</b>
+      <button class="btn ghost small" type="button" id="setup-again">Show the setup again</button></div>`;
+    return `<div class="setup"><span>Before you film · connect ChannelRecipe to Claude (1 minute, only once)</span>
+      <ol>
+        <li><button class="btn" type="button" data-copy="${esc(MCP)}">1 · Copy your ChannelRecipe link</button></li>
+        <li><a class="btn" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener">2 · Open Claude's connectors ↗</a>
+          <small>Click <b>Add custom connector</b>, name it <b>ChannelRecipe</b>, paste the link, click <b>Add</b>.
+          (In the Claude app: Settings → Connectors.)</small></li>
+        <li><a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener" data-copy="${esc(pr)}">3 · Copy the prompt and open Claude ↗</a>
+          <small>Paste it in the new chat: <b>${esc(pr)}</b>. If Claude asks, choose <b>Always allow</b>. The video plays right in the chat.</small></li>
+      </ol>
+      <button class="btn ghost small" type="button" id="setup-done">It worked, hide this</button></div>`;
+  };
   const shotsFor = (tp, m) => tp.shots.map((s) => s.what === "The walkthrough" && m.walk_say ? { ...s, say: m.walk_say } : s);
   const embed = (plat, id) => plat === "tt" ? `https://www.tiktok.com/embed/v2/${id}` : `https://www.instagram.com/reel/${id}/embed/`;
   const thumb = (plat, id) => `${MEDIA}ex_${plat === "tt" ? "tt" : "ig"}-${id}.jpg`;
@@ -146,6 +157,7 @@
         <h3>${esc(fill(t.name, p))}</h3>
         <div class="chips"><span class="chip">${esc(method.name)}: ${esc(p.name)}</span><span class="chip plain">${esc(t.length)}</span><span class="chip plain">${esc(t.tag)}</span></div>
         <p class="muted">${esc(t.why)} Watch the example first, then film these shots, in any order:</p>
+        ${method.prompt ? claudeBox(p) : ""}
         ${hook ? `<div class="hook"><span>Your hook · ${hook.how === "screen" ? "we put it on screen" : t.hook_shot ? `say it in shot ${t.hook_shot + 1}` : "say it first"}</span>
           <b>${esc(fill(hook.line, p))}</b>${hooks.length > 1 ? `<button class="btn ghost small" type="button" id="next-h">↻ Another hook</button>` : ""}</div>` : ""}
         ${clip ? `<div class="react"><span>The clip you react to · we add it, you don't film it</span>
@@ -161,7 +173,6 @@
           <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
             <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">${s.kind === "screen" ? "film your laptop" : "your face"}</span></div>
             <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div>${s.kind === "screen" && method.prompt ? promptBox(p) : ""}</div></li>`).join("")}</ol>
-        ${method.prompt ? claudeBox(p) : ""}
         ${dmBox(p)}
         <p class="added"><b>＋ The earnings proof: we add it for you.</b> Don't film it or edit it in. Your video comes back with it already in place.</p>
         <div class="actions">
@@ -185,6 +196,8 @@
       if (done.size === filmable) toast("All filmed: send your clips to the bot!");
     }));
     $("#copy-says")?.addEventListener("click", () => copy(says.join("\n\n")));
+    $("#setup-done")?.addEventListener("click", () => { store.set("claude-setup", "done"); renderToday(); });
+    $("#setup-again")?.addEventListener("click", () => { store.set("claude-setup", ""); renderToday(); });
     $("#next-h")?.addEventListener("click", () => { store.set(`hook:${t.id}`, hooks.indexOf(hook) + 1); renderToday(); });
     $("#next-c")?.addEventListener("click", () => { store.set(`clip:${feedOf(t)}`, clips.indexOf(clip) + 1); renderToday(); });
     $("#next-t").addEventListener("click", () => { const us = D.templates.filter(usable); choose(us[(us.indexOf(t) + 1) % us.length], p); });

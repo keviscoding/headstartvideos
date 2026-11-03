@@ -71,3 +71,12 @@ h2{font-size:20px;margin:0 0 4px}
 .ol-meta{padding:10px 12px;display:flex;flex-direction:column;gap:4px}.ol-meta small{color:var(--muted)}.ol-meta p{margin:4px 0 0;font-size:13px;line-height:1.35}.ol-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center}.row-c{display:flex;justify-content:center;margin-top:14px}
 .ol-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;z-index:50;padding:16px}.ol-modal[hidden]{display:none}.ol-box{position:relative;width:min(360px,100%);display:flex;flex-direction:column;gap:10px;align-items:center}.ol-box iframe{width:100%;aspect-ratio:9/16;border:0;border-radius:12px;background:#000}.ol-box .ol-x{position:absolute;top:-10px;right:-10px;width:32px;height:32px;border-radius:50%;border:0;background:#fff;color:#000;font-weight:800;cursor:pointer;z-index:2}
 .claude-box ol{margin:0 0 12px 18px;padding:0;font-size:14px;line-height:1.5}.claude-box li{margin:0 0 6px}.claude-box code{display:inline-block;max-width:100%;overflow-wrap:anywhere;font-size:12.5px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:2px 6px}.claude-box li b{display:inline;font-size:inherit;line-height:inherit;margin:0}
+
+/* the Claude connector setup at the top of a Claude-filmed video (2026-11-03) */
+.setup{border:2px solid var(--accent);border-radius:16px;padding:14px 16px;margin:12px 0;background:var(--card)}
+.setup>span{display:block;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin-bottom:10px}
+.setup ol{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:12px}
+.setup li .btn{display:inline-block;font-size:16px;padding:12px 16px}
+.setup li small{display:block;margin-top:6px;font-size:13.5px;line-height:1.45;color:var(--muted)}
+.setup li small b{color:var(--text)}
+.setup.done{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-width:1px}
