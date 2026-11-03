@@ -29,6 +29,16 @@
   // a "path" here is a topic of a method (strategies.json), dressed with its pathway's words (pathways.json)
   const methods = () => S.methods.filter((m) => !m.soon);
   const ready = (m = method) => m.topics.filter((t) => t.outputs && t.outputs.length);
+  // A format can be locked to the one method/topic its hook sells (pathways.json templates "method", "topic"): the GTA 6
+  // countdown demos a GTA channel or clipping, never medieval history. Until that demo has a ready-made video the
+  // format shows "coming soon", so nobody films a hook the walkthrough can't keep.
+  function lockOf(t) {
+    if (!t.method && !t.topic) return null;
+    const m = S.methods.find((x) => x.id === (t.method || method.id));
+    return { m, p: m && !m.soon ? (t.topic ? ready(m).find((x) => x.id === t.topic) : ready(m)[0]) || null : null };
+  }
+  const usable = (t) => { const l = lockOf(t); return !l || !!l.p; };
+  const free = () => D.templates.find((t) => !lockOf(t));
   function words(t, m) {
     const pw = D.pathways.find((x) => x.id === t.pathway);
     return pw ? { short: pw.short, search: pw.search, keyword: pw.keyword, idea: t.outputs[0].title, name: t.name }
@@ -77,6 +87,9 @@
     method = methods().find((m) => m.id === saved.get("m")) || methods()[day % 3 === 2 && methods()[1] ? 1 : 0];
     tpl = D.templates.find((t) => t.id === saved.get("t")) || D.templates[day % D.templates.length];
     path = ready().find((p) => p.id === saved.get("p")) || ready()[day % ready().length];
+    if (!usable(tpl)) { const us = D.templates.filter(usable); tpl = us[day % us.length]; }
+    const l = lockOf(tpl);
+    if (l) { method = l.m; path = l.p; }
   }
 
   function player(ex) {
@@ -142,7 +155,7 @@
     $("#copy-says")?.addEventListener("click", () => copy(says.join("\n\n")));
     $("#next-h")?.addEventListener("click", () => { store.set(`hook:${t.id}`, hooks.indexOf(hook) + 1); renderToday(); });
     $("#next-c")?.addEventListener("click", () => { store.set(`clip:${feedOf(t)}`, clips.indexOf(clip) + 1); renderToday(); });
-    $("#next-t").addEventListener("click", () => choose(D.templates[(D.templates.indexOf(t) + 1) % D.templates.length], p));
+    $("#next-t").addEventListener("click", () => { const us = D.templates.filter(usable); choose(us[(us.indexOf(t) + 1) % us.length], p); });
     $("#next-p").addEventListener("click", () => { const r = ready(); choose(t, r[(r.indexOf(p) + 1) % r.length]); });
     history.replaceState(null, "", `#m=${method.id}&t=${t.id}&p=${p.id}`);
     document.querySelectorAll(".tcard").forEach((c) => c.classList.toggle("on", c.dataset.t === t.id));
@@ -151,17 +164,19 @@
   }
 
   function choose(t, p, scroll = true) {
+    const l = lockOf(t);
+    if (l && l.p) { p = l.p; if (l.m !== method) { method = l.m; renderPaths(); } }
     tpl = t; path = p; renderToday();
     if (scroll) $("#today").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function renderTemplates() {
     $("#templates").innerHTML = D.templates.map((t) => `
-      <button class="tcard" type="button" data-t="${esc(t.id)}"><img src="${thumb(t.examples[0][0], t.examples[0][1])}" alt="" loading="lazy">
-        <div><b>${esc(fill(t.name, path))}</b><small>${esc(t.examples[0][2])} views · ${esc(t.tag)}</small></div></button>`).join("");
+      <button class="tcard" type="button" data-t="${esc(t.id)}" ${usable(t) ? "" : "disabled"}><img src="${thumb(t.examples[0][0], t.examples[0][1])}" alt="" loading="lazy">
+        <div><b>${esc(fill(t.name, path))}</b><small>${usable(t) ? `${esc(t.examples[0][2])} views · ${esc(t.tag)}` : "Coming soon: its demo video is being made"}</small></div></button>`).join("");
     $("#templates").addEventListener("click", (e) => {
       const c = e.target.closest(".tcard");
-      if (c) choose(D.templates.find((t) => t.id === c.dataset.t), path);
+      if (c && !c.disabled) choose(D.templates.find((t) => t.id === c.dataset.t), path);
     });
   }
 
@@ -175,9 +190,11 @@
     $("#paths").innerHTML = `<div style="grid-column:1/-1" class="switch">${tabs}</div>${cards}`;
     $("#paths").onclick = (e) => {
       const mb = e.target.closest("[data-m]");
-      if (mb && !mb.disabled) { method = S.methods.find((m) => m.id === mb.dataset.m); choose(tpl, ready()[0]); renderPaths(); return; }
+      // picking another method or topic leaves a locked format for a free one (the lock would undo the pick)
+      const keep = (m, p) => { const l = lockOf(tpl); return !l || (l.m === m && l.p === p) ? tpl : free(); };
+      if (mb && !mb.disabled) { method = S.methods.find((m) => m.id === mb.dataset.m); choose(keep(method, ready()[0]), ready()[0]); renderPaths(); return; }
       const c = e.target.closest(".pcard");
-      if (c && !c.disabled) choose(tpl, method.topics.find((p) => p.id === c.dataset.p));
+      if (c && !c.disabled) { const p = method.topics.find((x) => x.id === c.dataset.p); choose(keep(method, p), p); }
     };
   }
 
