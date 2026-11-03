@@ -56,6 +56,17 @@
   // The Claude walkthrough films real Claude with ChannelRecipe connected: each creator's own sandboxed connector
   // (site webapp/ugc_mcp.py), set up once, then the one prompt the kit fills in for the topic.
   const MCP = `${location.origin}/ugc-mcp/${location.pathname.split("/")[2] || ""}/mcp`;
+  // Every promise in a script needs its asset in the kit (owner 2026-11-03: "how do the UGC people know what prompt to
+  // paste?"): the prompt sits inside the walkthrough shot, and "comment KEYWORD" comes with the reply to send.
+  const promptBox = (p) => `<div class="hook prompt-inline"><span>Paste this prompt in Claude</span><b>${esc(fill(method.prompt, p))}</b>
+      <button class="btn ghost small" type="button" data-copy="${esc(fill(method.prompt, p))}">Copy the prompt</button></div>`;
+  function dmBox(p) {
+    const kw = fill("{keyword}", p), pr = method.prompt ? fill(method.prompt, p) : "";
+    const msg = pr ? `Here's the prompt I use 🙌 "${pr}". Make your account at channelrecipe.com, connect ChannelRecipe to Claude (Settings → Connectors) and paste it in.`
+      : `Here you go 🙌 This is the tool I use: channelrecipe.com. Paste a channel that's blowing up, type your idea and it makes the whole video.`;
+    return `<div class="hook dm-box"><span>When people comment ${esc(kw)}, send them this</span><b>${esc(msg)}</b>
+      <button class="btn ghost small" type="button" data-copy="${esc(msg)}">Copy the reply</button></div>`;
+  }
   const claudeBox = (p) => `<div class="hook claude-box"><span>In Claude · set up once</span>
       <ol><li>Open <b>claude.ai</b> or the Claude app → <b>Settings → Connectors → Add custom connector</b>.</li>
         <li>Name it <b>ChannelRecipe</b> and paste your link: <code>${esc(MCP)}</code>
@@ -148,8 +159,9 @@
             <p class="how">${esc(s.how)}</p></div></li>` : `
           <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
             <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">${s.kind === "screen" ? "film your laptop" : "your face"}</span></div>
-            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div></div></li>`).join("")}</ol>
+            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div>${s.kind === "screen" && method.prompt ? promptBox(p) : ""}</div></li>`).join("")}</ol>
         ${method.prompt ? claudeBox(p) : ""}
+        ${dmBox(p)}
         <p class="added"><b>＋ The earnings proof: we add it for you.</b> Don't film it or edit it in. Your video comes back with it already in place.</p>
         <div class="actions">
           ${method.prompt ? `<a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener">Open Claude →</a>
