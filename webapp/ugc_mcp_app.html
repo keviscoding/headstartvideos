@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ChannelRecipe</title>
+<!-- The UGC connector's cards (webapp/ugc_mcp.py), drawn inside Claude as an MCP App: one page for every tool, filled
+     from the tool result's structuredContent. White, Inter, one accent (the creator design bar). -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+:root{--bg:#fff;--bg2:#f7f7f8;--bg3:#f0f0f3;--line:#e9e9ec;--line2:#dcdce1;--ink:#0b0b0f;--ink2:#4a4a55;--ink3:#8a8a96;
+  --a:#6a4df4;--a-soft:#f1eeff;--a-line:#d9d1ff;--a-ink:#4a31c9;--ok:#12a66a;--r:14px}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased}
+body{padding:16px}
+button{font:inherit;cursor:pointer}
+img{display:block}
+.head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.mark{width:26px;height:26px;flex:none}
+.head b{font-weight:600}
+.head .sub{color:var(--ink3);font-size:13px}
+.head .state{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink2);font-weight:500;white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--a);animation:pulse 1s ease-in-out infinite}
+.state.done .dot{background:var(--ok);animation:none}
+@keyframes pulse{50%{opacity:.25}}
+h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
+.muted{color:var(--ink3);font-size:13px}
+.fade{animation:in .35s ease both}
+@keyframes in{from{opacity:0;transform:translateY(4px)}}
+@media (prefers-reduced-motion:reduce){.fade,.dot{animation:none}}
+
+/* stat tiles */
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+.tile{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--bg)}
+.tile small{display:block;color:var(--ink3);font-size:11.5px;font-weight:500;margin-bottom:2px}
+.tile b{font-size:18px;font-weight:600;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+@media (max-width:520px){.tiles{grid-template-columns:repeat(2,1fr)}}
+
+/* thumbnail grids */
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+@media (max-width:520px){.grid{grid-template-columns:repeat(3,1fr)}}
+.th{position:relative;border-radius:10px;overflow:hidden;background:var(--bg3);aspect-ratio:16/9;opacity:.0;transition:opacity .25s}
+.th.on{opacity:1}
+.th img{width:100%;height:100%;object-fit:cover}
+.th .v{position:absolute;left:6px;bottom:6px;background:rgba(11,11,15,.78);color:#fff;font-size:11px;font-weight:600;padding:2px 6px;border-radius:6px}
+.th .ok{position:absolute;right:6px;top:6px;width:18px;height:18px;border-radius:50%;background:var(--ok);color:#fff;font-size:11px;display:grid;place-items:center;transform:scale(0);transition:transform .2s}
+.th.seen .ok{transform:scale(1)}
+.th .mk{position:absolute;bottom:0;height:3px;background:var(--a);left:0;width:0;transition:width .5s}
+
+/* lists */
+.rows{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;gap:12px;align-items:center;padding:8px;border:1px solid var(--line);border-radius:12px;background:var(--bg);text-align:left;width:100%}
+.row:hover{border-color:var(--line2)}
+.row img{width:120px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;flex:none;background:var(--bg3)}
+.row .t{font-weight:600;font-size:13.5px;line-height:1.3}
+.row .m{color:var(--ink3);font-size:12.5px;margin-top:2px}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:var(--a-ink);background:var(--a-soft);border:1px solid var(--a-line);border-radius:99px;padding:1px 8px;margin-left:6px;vertical-align:1px}
+.rank{width:28px;height:28px;border-radius:8px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:700;flex:none}
+
+/* style DNA */
+.dna{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.dna div{display:flex;gap:10px;align-items:flex-start;font-size:13.5px}
+.dna i{font-style:normal;color:var(--a);font-weight:700;flex:none;width:16px}
+.sec{margin-top:16px}
+.sec>.lab{font-size:12px;font-weight:600;color:var(--ink3);text-transform:none;margin-bottom:8px}
+.ideas{display:flex;flex-wrap:wrap;gap:6px}
+.idea{border:1px solid var(--line2);background:var(--bg);border-radius:99px;padding:6px 12px;font-size:13px;font-weight:500;color:var(--ink)}
+.idea:hover{border-color:var(--a);color:var(--a-ink)}
+
+/* the make flow */
+.make{display:grid;grid-template-columns:180px 1fr;gap:16px}
+@media (max-width:560px){.make{grid-template-columns:1fr}}
+.steps{display:flex;flex-direction:column;gap:2px;list-style:none}
+.steps li{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:10px;color:var(--ink3);font-weight:500;font-size:13.5px}
+.steps li .n{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--line2);display:grid;place-items:center;font-size:11px;font-weight:600;flex:none}
+.steps li.now{color:var(--ink);background:var(--bg2)}
+.steps li.now .n{border-color:var(--a);color:var(--a)}
+.steps li.did{color:var(--ink2)}
+.steps li.did .n{background:var(--ok);border-color:var(--ok);color:#fff}
+.stage{border:1px solid var(--line);border-radius:var(--r);padding:14px;min-height:220px;background:var(--bg)}
+.stage .lab{font-size:12px;font-weight:600;color:var(--ink3);margin-bottom:8px}
+.doc{font-size:14px;line-height:1.6;color:var(--ink);min-height:4.8em}
+.doc .cur{display:inline-block;width:2px;height:1em;background:var(--a);vertical-align:-2px;animation:pulse .8s infinite}
+.wave{display:flex;align-items:center;gap:3px;height:56px;margin-top:6px}
+.wave i{flex:1;background:var(--a);border-radius:2px;height:20%;opacity:.85;transition:height .12s}
+.scenes{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.scenes .th{aspect-ratio:16/9}
+.scenes.tall{grid-template-columns:repeat(6,1fr)}
+.scenes.tall .th{aspect-ratio:9/16}
+.bar{height:6px;border-radius:99px;background:var(--bg3);overflow:hidden;margin-top:12px}
+.bar i{display:block;height:100%;width:0;background:var(--a);transition:width .2s linear}
+.pct{font-variant-numeric:tabular-nums;font-size:12.5px;color:var(--ink2);margin-top:6px}
+
+/* the finished video */
+.player{position:relative;border-radius:var(--r);overflow:hidden;background:#000;margin:0 auto}
+.player video{display:block;width:100%;height:100%;background:#000}
+.player.wide{aspect-ratio:16/9;width:100%}
+.player.tall{aspect-ratio:9/16;height:min(560px,80vh);max-width:100%}
+.sound{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:rgba(255,255,255,.95);color:var(--ink);border:0;border-radius:99px;padding:7px 14px;font-weight:600;font-size:13px;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.done-row{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.done-row .tt{font-weight:600;font-size:15px;letter-spacing:-.01em}
+.done-row .meta{color:var(--ink3);font-size:13px}
+.btns{margin-left:auto;display:flex;gap:6px}
+.btn{border:1px solid var(--line2);background:var(--bg);border-radius:10px;padding:7px 12px;font-weight:600;font-size:13px;color:var(--ink)}
+.btn.pri{background:var(--a);border-color:var(--a);color:#fff}
+.skip{background:none;border:0;color:var(--ink3);font-size:12px;margin-top:10px;text-decoration:underline;text-underline-offset:2px}
+.note{border:1px solid var(--line);border-radius:var(--r);padding:14px;background:var(--bg2)}
+.scan{display:flex;justify-content:space-between;align-items:baseline;margin:12px 0 8px}
+.scan b{font-variant-numeric:tabular-nums}
+.timeline{position:relative;height:30px;border-radius:8px;background:var(--bg3);margin:8px 0 4px;overflow:hidden}
+.timeline .hd{position:absolute;top:0;bottom:0;width:2px;background:var(--ink);left:0}
+.timeline .pk{position:absolute;top:6px;bottom:6px;width:6px;border-radius:3px;background:var(--a);opacity:0;transition:opacity .2s}
+.clipgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.clipgrid video{width:100%;aspect-ratio:9/16;border-radius:10px;background:#000;object-fit:cover}
+</style>
+</head>
+<body>
+<div id="app"><div class="head"><svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><g stroke="#FF7A59" stroke-width="6" stroke-linecap="round" fill="none"><path d="M37 24C33 19 41 15 37 7"/><path d="M50 24C46 19 54 15 50 7"/><path d="M63 24C59 19 67 15 63 7"/></g><rect x="44" y="27" width="12" height="6" rx="3" fill="#6A4DF4"/><rect x="14" y="32" width="72" height="8" rx="4" fill="#6A4DF4"/><rect x="7" y="49" width="14" height="9" rx="4.5" fill="#6A4DF4"/><rect x="79" y="49" width="14" height="9" rx="4.5" fill="#6A4DF4"/><path d="M18 43H82V74A14 14 0 0 1 68 88H32A14 14 0 0 1 18 74Z" fill="#6A4DF4"/><path d="M44 55L44 76L62 65.5Z" fill="#fff" stroke="#fff" stroke-width="5" stroke-linejoin="round"/></svg><b>ChannelRecipe</b><span class="state"><span class="dot"></span>Connecting…</span></div></div>
+<script>
+(() => {
+  "use strict";
+  const MARK = document.querySelector(".mark").outerHTML;
+  const $ = (s, el = document) => el.querySelector(s);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const short = (n) => { n = +n || 0; return n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n); };
+  const mmss = (s) => { s = Math.round(+s || 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+  const yt = (id) => `https://i.ytimg.com/vi/${encodeURIComponent(id)}/mqdefault.jpg`;
+  const poss = (n) => (/s$/i.test(n) ? `${n}'` : `${n}'s`);
+  let SPEED = 1, run = 0, skip = false;
+  const wait = (ms) => new Promise((r) => { const end = Date.now() + ms * SPEED; const tick = () => (skip || Date.now() >= end) ? r() : setTimeout(tick, 30); tick(); });
+
+  /* ---- the host bridge (MCP Apps: JSON-RPC over postMessage) ---- */
+  let nextId = 1, ctx = {};
+  const pending = new Map();
+  const post = (m) => window.parent.postMessage({ jsonrpc: "2.0", ...m }, "*");
+  const request = (method, params) => new Promise((resolve, reject) => { const id = nextId++; pending.set(id, { resolve, reject }); post({ id, method, params }); });
+  const notify = (method, params) => post({ method, params });
+  window.addEventListener("message", (e) => {
+    const m = e.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.id != null && pending.has(m.id) && !m.method) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.reject(m.error) : p.resolve(m.result); return; }
+    if (m.method === "ui/notifications/tool-input") onInput((m.params || {}).arguments || {});
+    else if (m.method === "ui/notifications/tool-result") onResult(m.params || {});
+    else if (m.method === "ui/notifications/tool-cancelled") state("Stopped", true);
+    else if (m.method === "ui/notifications/host-context-changed") ctx = { ...ctx, ...(m.params || {}) };
+    else if (m.method === "ui/resource-teardown" && m.id != null) { document.querySelectorAll("video").forEach((v) => v.pause()); post({ id: m.id, result: {} }); }
+    else if (m.method && m.id != null) post({ id: m.id, error: { code: -32601, message: "Method not found" } });
+  });
+  const openLink = (url) => request("ui/open-link", { url }).catch(() => window.open(url, "_blank", "noopener"));
+  const say = (text) => request("ui/message", { role: "user", content: [{ type: "text", text }] }).catch(() => {});
+  const canFull = () => (ctx.availableDisplayModes || []).includes("fullscreen");
+  let lastH = 0;
+  const sized = () => { const r = document.documentElement.getBoundingClientRect(), h = Math.ceil(r.height); if (h !== lastH) { lastH = h; notify("ui/notifications/size-changed", { width: Math.ceil(r.width), height: h }); } };
+  new ResizeObserver(sized).observe(document.body);
+  document.addEventListener("load", sized, true);            // an image or video arriving changes the height too
+  request("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "channelrecipe-studio", version: "1.0.0" },
+    appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] } })
+    .then((r) => { ctx = (r && r.hostContext) || {}; notify("ui/notifications/initialized", {}); })
+    .catch(() => notify("ui/notifications/initialized", {}));
+
+  /* ---- drawing ---- */
+  const app = $("#app");
+  function frame(sub, body) {
+    app.innerHTML = `<div class="head">${MARK}<b>ChannelRecipe</b><span class="sub">${esc(sub)}</span><span class="state"><span class="dot"></span><span id="st">Working…</span></span></div>${body}`;
+  }
+  function state(text, done) { sized(); const s = $("#st"); if (!s) return; s.textContent = text; s.parentElement.classList.toggle("done", !!done); }
+  function skipper() { return `<button class="skip" type="button" id="skip">Skip ahead</button>`; }
+  function wireSkip() { const b = $("#skip"); if (b) b.onclick = () => { skip = true; b.remove(); }; }
+  async function count(el, to, ms, fmt = short) { const t0 = Date.now(), d = ms * SPEED; while (true) { const k = skip ? 1 : Math.min(1, (Date.now() - t0) / d); el.textContent = fmt(Math.round(to * k)); if (k >= 1) return; await wait(40); } }
+  async function typeText(el, text, cps = 70) { const cur = document.createElement("span"); cur.className = "cur"; el.append(cur); for (const ch of text) { if (skip) { cur.before(text.slice(text.indexOf(ch))); break; } cur.before(ch); await wait(1000 / cps); } cur.remove(); }
+
+  function onInput(args) {
+    if (app.dataset.view) return;                      // the result already drew the card
+    const what = args.channel ? `Studying ${args.channel}` : args.idea ? `“${args.idea}”` : args.topic || args.niche || "";
+    frame(what, `<p class="muted fade">Starting…</p>`);
+  }
+
+  function onResult(res) {
+    const sc = res.structuredContent || {};
+    const my = ++run; skip = false;
+    SPEED = sc.speed === "fast" ? 0.25 : (+sc.speed > 0 && +sc.speed < 4 ? +sc.speed : 1);
+    app.dataset.view = sc.view || "note";
+    const draw = { viral, clone, make, rank, clips, note }[sc.view] || note;
+    draw(sc, my, res);
+  }
+
+  function player(v) {
+    return `<div class="player ${v.tall ? "tall" : "wide"}" id="pl"><video id="vid" src="${esc(v.video)}" poster="${esc(v.poster || "")}" playsinline controls muted autoplay preload="auto"></video>
+      <button class="sound" type="button" id="snd">🔊 Tap for sound</button></div>`;
+  }
+  function wirePlayer() {
+    const v = $("#vid"), s = $("#snd");
+    if (!v) return;
+    const on = () => { v.muted = false; v.currentTime = 0; v.play().catch(() => {}); s && s.remove(); };
+    s && (s.onclick = on);
+    v.addEventListener("volumechange", () => { if (!v.muted && s && s.isConnected) s.remove(); });
+    v.addEventListener("loadedmetadata", sized);
+    v.play().catch(() => {});
+    const f = $("#full"); if (f) f.onclick = () => request("ui/request-display-mode", { mode: "fullscreen" }).catch(() => {});
+    const dl = $("#dl"); if (dl) dl.onclick = () => openLink(v.currentSrc || v.src);
+  }
+
+  /* find_viral_channels */
+  async function viral(sc, my) {
+    frame(sc.topic, `<h2>Going viral this month</h2><p class="muted">${esc(sc.topic)} · most-viewed on YouTube</p>
+      <div class="scan"><span class="muted" id="sl">Searching YouTube…</span><b id="sn">0</b></div><div class="rows" id="rows"></div>`);
+    await wait(900);
+    let views = 0;
+    for (const r of sc.refs || []) {
+      if (my !== run) return;
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "row fade";
+      b.innerHTML = `<img src="${yt(r.id)}" alt=""><div><div class="t">${esc(r.title)}</div><div class="m">${esc(r.channel)} · ${short(r.views)} views${r.channel === sc.pin ? `<span class="chip">Top pick</span>` : ""}</div></div>`;
+      b.onclick = () => openLink(r.url || `https://www.youtube.com/watch?v=${r.id}`);
+      $("#rows").append(b);
+      views += +r.views || 0; $("#sn").textContent = `${short(views)} views`;
+      await wait(260);
+    }
+    $("#sl").textContent = `${(sc.refs || []).length} videos going viral`;
+    state("Done", true);
+  }
+
+  /* clone_channel */
+  async function clone(sc, my) {
+    const st = sc.stats || {};
+    frame(`Copying ${poss(sc.channel)} style`, `<h2>${sc.exact ? "Learning" : "Closest match:"} ${esc(sc.channel)}</h2>
+      <p class="muted">${esc(sc.topic)}</p>
+      <div class="tiles">
+        <div class="tile"><small>Videos studied</small><b id="t1">0</b></div>
+        <div class="tile"><small>Views analysed</small><b id="t2">0</b></div>
+        <div class="tile"><small>Avg per video</small><b id="t3">—</b></div>
+        <div class="tile"><small>${st.length ? "Avg length" : "Top video"}</small><b id="t4">—</b></div></div>
+      <div class="grid" id="ups">${(sc.uploads || []).map((u) => `<div class="th"><img src="${yt(u.id)}" alt=""><span class="v">${short(u.views)}</span><span class="ok">✓</span></div>`).join("")}</div>
+      <div id="after"></div>${skipper()}`);
+    wireSkip(); state("Studying the channel…");
+    const ths = [...document.querySelectorAll("#ups .th")];
+    ths.forEach((t) => t.classList.add("on"));
+    let seen = 0, views = 0;
+    for (const [i, t] of ths.entries()) {
+      if (my !== run) return;
+      t.classList.add("seen"); seen++; views += +(sc.uploads[i] || {}).views || 0;
+      $("#t1").textContent = seen; $("#t2").textContent = short(views);
+      await wait(320);
+    }
+    $("#t3").textContent = short(st.avg); $("#t4").textContent = st.length ? mmss(st.length) : short((st.top || {}).views);
+    await wait(400);
+    if (my !== run) return;
+    $("#after").innerHTML = `<div class="sec fade"><div class="lab">Style DNA</div><div class="dna">${(sc.look || []).map((l, i) => `<div><i>${i + 1}</i><span>${esc(l)}</span></div>`).join("")}</div></div>
+      ${st.top && st.top.title ? `<div class="sec fade"><div class="lab">Their biggest video</div><div class="m">“${esc(st.top.title)}” · ${short(st.top.views)} views</div></div>` : ""}
+      ${(sc.ideas || []).length ? `<div class="sec fade"><div class="lab">Ready to make in this style</div><div class="ideas">${sc.ideas.map((t) => `<button class="idea" type="button">${esc(t)}</button>`).join("")}</div></div>` : ""}`;
+    document.querySelectorAll(".idea").forEach((b) => b.onclick = () => say(`Make a video about "${b.textContent}" in ${poss(sc.channel)} style`));
+    $("#skip")?.remove();
+    state("Style learned", true);
+  }
+
+  /* make_video */
+  async function make(sc, my) {
+    const v = sc.video || {};
+    [v.poster, ...(v.frames || [])].forEach((u) => { if (u) new Image().src = u; });   // ready by their step
+    const STEPS =["Writing the script", "Recording the voice", "Making every scene", "Editing & music"];
+    frame(sc.channel ? `in ${poss(sc.channel)} style` : sc.topic, `<h2>${esc(v.title)}</h2><p class="muted">${esc(sc.topic)}${sc.channel ? ` · copying ${esc(sc.channel)}` : ""}</p>
+      <div class="make" style="margin-top:14px"><ol class="steps" id="steps">${STEPS.map((s, i) => `<li><span class="n">${i + 1}</span>${s}</li>`).join("")}</ol>
+      <div class="stage" id="stage"></div></div>${skipper()}`);
+    wireSkip();
+    const lis = [...document.querySelectorAll("#steps li")], stage = $("#stage");
+    const step = (i) => lis.forEach((l, k) => { l.classList.toggle("did", k < i); l.classList.toggle("now", k === i); });
+    // 1 script
+    step(0); state("Writing the script…");
+    stage.innerHTML = `<div class="lab">Script</div><div class="doc" id="doc"></div>`;
+    const lines = (v.script && v.script.length ? v.script : [v.title + "."]).slice(0, 3);
+    for (const l of lines) { if (my !== run) return; await typeText($("#doc"), l + " "); }
+    await wait(300);
+    // 2 voice
+    if (my !== run) return;
+    step(1); state("Recording the voice…");
+    stage.innerHTML = `<div class="lab">Voiceover</div><div class="doc" style="min-height:0;color:var(--ink2)">${esc(lines[0])}</div><div class="wave" id="wave">${"<i></i>".repeat(48)}</div>`;
+    const bars = [...document.querySelectorAll("#wave i")];
+    for (let k = 0; k < 40 && !skip; k++) { if (my !== run) return; bars.forEach((b, i) => b.style.height = `${18 + Math.abs(Math.sin(k * .7 + i * .45)) * 70 * (0.5 + Math.random() * .5)}%`); await wait(70); }
+    // 3 scenes
+    if (my !== run) return;
+    step(2); state("Making every scene…");
+    const frames = (v.frames || []).slice(0, 6);
+    stage.innerHTML = `<div class="lab">Scenes <span id="sc">0</span> / ${frames.length}</div><div class="scenes ${v.tall ? "tall" : ""}">${frames.map((f) => `<div class="th"><img src="${esc(f)}" alt=""><span class="ok">✓</span></div>`).join("")}</div>`;
+    const ths = [...stage.querySelectorAll(".th")];
+    for (const [i, t] of ths.entries()) { if (my !== run) return; t.classList.add("on"); await wait(380); t.classList.add("seen"); $("#sc").textContent = i + 1; }
+    // 4 edit
+    if (my !== run) return;
+    step(3); state("Editing & music…");
+    stage.innerHTML = `<div class="lab">Final edit</div><div class="doc" style="min-height:0">Cutting to the voice, adding music and captions</div><div class="bar"><i id="bar"></i></div><div class="pct" id="pct">0%</div>`;
+    for (let p = 0; p <= 100; p += 4) { if (my !== run) return; $("#bar").style.width = p + "%"; $("#pct").textContent = p + "%"; await wait(70); }
+    if (my !== run) return;
+    lis.forEach((l) => { l.classList.remove("now"); l.classList.add("did"); });
+    $("#skip")?.remove();
+    app.querySelector(".make").outerHTML = `<div class="fade" style="margin-top:14px">${player(v)}
+      <div class="done-row"><div><div class="tt">${esc(v.title)}</div><div class="meta">${mmss(v.seconds)} · ${v.tall ? "Vertical Short" : "16:9 video"} · made with ChannelRecipe</div></div>
+      <div class="btns">${canFull() ? `<button class="btn" type="button" id="full">Full screen</button>` : ""}<button class="btn pri" type="button" id="dl">Download</button></div></div></div>`;
+    wirePlayer();
+    state("Video ready", true);
+  }
+
+  /* rank_clips */
+  async function rank(sc, my) {
+    const v = sc.video || {}, clips = sc.clips || [];
+    frame(sc.topic, `<h2>Ranking: ${esc(sc.topic)}</h2><p class="muted">Viral clips · best moments · top 5 countdown</p>
+      <div class="scan"><span class="muted" id="sl">Finding the most viral clips…</span><b id="sn">0 clips</b></div>
+      <div class="grid" id="cl">${clips.map((c) => `<div class="th"><img src="${yt(c.id)}" alt=""><span class="v">${short(c.views)}</span><span class="mk"></span></div>`).join("")}</div>
+      <div id="after"></div>${skipper()}`);
+    wireSkip(); state("Searching…");
+    const ths = [...document.querySelectorAll("#cl .th")];
+    for (const [i, t] of ths.entries()) { if (my !== run) return; t.classList.add("on"); $("#sn").textContent = `${i + 1} clips`; await wait(160); }
+    // best moments
+    if (my !== run) return;
+    $("#sl").textContent = "Watching every clip for its best moment…"; state("Watching…");
+    $("#after").innerHTML = `<div class="sec"><div class="timeline" id="tl"><span class="hd" id="hd"></span>${ths.map((_, i) => `<span class="pk" style="left:${(i + .5) / ths.length * 100}%"></span>`).join("")}</div></div>`;
+    const pks = [...document.querySelectorAll("#tl .pk")];
+    for (const [i, t] of ths.entries()) { if (my !== run) return; $("#hd").style.left = `${(i + 1) / ths.length * 100}%`; t.querySelector(".mk").style.width = `${30 + (i * 37) % 60}%`; pks[i].style.opacity = 1; await wait(220); }
+    // top 5
+    if (my !== run) return;
+    $("#sl").textContent = "Counting down the top 5"; state("Ranking…");
+    const top = clips.slice(0, 5).reverse();
+    $("#after").innerHTML = `<div class="sec"><div class="lab">The countdown</div><div class="rows" id="top"></div></div>`;
+    for (const [k, c] of top.entries()) {
+      if (my !== run) return;
+      const d = document.createElement("div"); d.className = "row fade";
+      d.innerHTML = `<span class="rank">${5 - k}</span><img src="${yt(c.id)}" alt=""><div><div class="t">${esc(c.title)}</div><div class="m">${short(c.views)} views</div></div>`;
+      $("#top").append(d); await wait(380);
+    }
+    await wait(400);
+    if (my !== run) return;
+    $("#skip")?.remove();
+    $("#after").insertAdjacentHTML("afterbegin", `<div class="sec fade">${player(v)}<div class="done-row"><div><div class="tt">${esc(sc.topic)}</div><div class="meta">${mmss(v.seconds)} · Ranking Short · made with ChannelRecipe</div></div>
+      <div class="btns">${canFull() ? `<button class="btn" type="button" id="full">Full screen</button>` : ""}<button class="btn pri" type="button" id="dl">Download</button></div></div></div>`);
+    $("#cl").remove(); $("#sl").textContent = `${clips.length} viral clips ranked`; $("#sn").textContent = "";
+    wirePlayer();
+    state("Short ready", true);
+  }
+
+  /* clip_video (shown once the sandbox has real clipping outputs) */
+  async function clips(sc, my) {
+    frame(sc.topic, `<h2>${(sc.clips || []).length} viral clips</h2><p class="muted">Captioned and ready to post</p>
+      <div class="scan"><span class="muted" id="sl">Watching the whole video…</span></div><div class="clipgrid" id="cg"></div>`);
+    await wait(1600);
+    for (const c of sc.clips || []) { if (my !== run) return; const v = document.createElement("video"); v.src = c.video; v.poster = c.poster || ""; v.controls = true; v.playsInline = true; v.className = "fade"; $("#cg").append(v); await wait(300); }
+    $("#sl").textContent = "Found the moments that go viral";
+    state("Clips ready", true);
+  }
+
+  function note(sc) {
+    frame(sc.title || "", `<div class="note fade"><p>${esc(sc.text || "")}</p>${(sc.options || []).length ? `<div class="ideas" style="margin-top:10px">${sc.options.map((o) => `<span class="idea">${esc(o)}</span>`).join("")}</div>` : ""}</div>`);
+    state("Ready", true);
+  }
+})();
+</script>
+</body>
+</html>
