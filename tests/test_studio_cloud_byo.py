@@ -474,3 +474,21 @@ def test_modal_imports_in_a_running_studio_whose_popen_is_wrapped(byo, monkeypat
     m = byo.byo._modal()
     assert m.POPEN_HINT is not None and subprocess.Popen is wrapped, "Studio's own wrapper is back right after"
     monkeypatch.delitem(sys.modules, "modal", raising=False)
+
+
+def test_a_failed_deploy_reads_the_error_inside_modals_box_not_its_bottom_edge(byo, monkeypatch):
+    """Kibum (2026-11-03) saw "Modal couldn't set up Studio's machines on your account:" and a drawn line: Modal
+    prints its error in a box, and only the box's last line was kept."""
+    with_token(byo, monkeypatch)
+    boxed = ("Building image im-123\n"
+             "╭─ Error ─────────────╮\n"
+             "│ Workspace has reached its spend limit. Raise it in   │\n"
+             "│ Settings, Usage and Billing.                          │\n"
+             "╰──────────────────╯\n")
+    monkeypatch.setattr(byo.byo.subprocess, "run", lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr=boxed))
+    with pytest.raises(RuntimeError) as e:
+        byo.byo.ensure_deployed(byo.home)
+    assert "spend limit. Raise it in Settings, Usage and Billing." in str(e.value)
+    assert "─" not in str(e.value) and "╰" not in str(e.value)
+    assert byo.byo.modal_reason("\x1b[31mError: plain words\x1b[0m\n") == "Error: plain words"
+    assert byo.byo.modal_reason("╰──╯\n") == ""
