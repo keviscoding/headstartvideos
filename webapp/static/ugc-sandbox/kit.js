@@ -157,7 +157,7 @@
         <h3>${esc(fill(t.name, p))}</h3>
         <div class="chips"><span class="chip">${esc(method.name)}: ${esc(p.name)}</span><span class="chip plain">${esc(t.length)}</span><span class="chip plain">${esc(t.tag)}</span></div>
         <p class="muted">${esc(t.why)} Watch the example first, then film these shots, in any order:</p>
-        ${method.prompt ? claudeBox(p) : ""}
+        ${method.prompt && shots.some((s) => s.kind === "screen") ? claudeBox(p) : ""}
         ${hook ? `<div class="hook"><span>Your hook · ${hook.how === "screen" ? "we put it on screen" : t.hook_shot ? `say it in shot ${t.hook_shot + 1}` : "say it first"}</span>
           <b>${esc(fill(hook.line, p))}</b>${hooks.length > 1 ? `<button class="btn ghost small" type="button" id="next-h">↻ Another hook</button>` : ""}</div>` : ""}
         ${clip ? `<div class="react"><span>The clip you react to · we add it, you don't film it</span>
