@@ -206,3 +206,20 @@ def test_a_timeline_video_is_filmed_from_the_air_with_no_crowds():
     film = a2d.film_spec(out, casting, {}, {}, extra={"timeline": {"beats": []}})
     assert "crowd" not in film["sets"]["spanish_manila"]
     assert a2d.film_spec(out, casting, {}, {})["sets"]["spanish_manila"]["crowd"] == 25, "a narrated video is as before"
+
+
+def test_every_place_in_a_mapped_timeline_video_is_the_map_seen_from_the_air():
+    """The Manila re-test (2026-11-03): a place described as "the mouth of the Pasig River" was drawn as a separate
+    room (a grey wall, a tree and a ship in close-up) by a renderer that draws only city/aerial places on the map."""
+    import cr_animated2d as a2d
+    casting = {"cast": {}, "sets": {"river_mouth": {"prompt": "the mouth of the Pasig River, a wooden fort", "inside": True},
+                                    "skyline": {"prompt": "Aerial view of Makati at dusk"}}}
+    plan = {"duration": 10, "shots": [], "actions": [], "fx": []}
+    film = a2d.film_spec(plan, casting, {}, {}, extra={"timeline": {"beats": []}, "map": {"buildings": []}})
+    river = film["sets"]["river_mouth"]
+    assert river["aerial"] is True and river["inside"] is False
+    assert river["prompt"].startswith("Aerial view over the city's map: ") and "Pasig River" in river["prompt"]
+    assert film["sets"]["skyline"]["prompt"] == "Aerial view of Makati at dusk", "not prefixed twice"
+    no_map = a2d.film_spec(plan, casting, {}, {}, extra={"timeline": {"beats": []}})
+    assert "aerial" not in no_map["sets"]["river_mouth"], "a music-only channel without a map keeps its places"
+    assert "aerial" not in a2d.film_spec(plan, casting, {}, {})["sets"]["river_mouth"]

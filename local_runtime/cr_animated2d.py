@@ -2466,6 +2466,16 @@ def aerial(plan: dict) -> dict:
     return plan
 
 
+def aerial_place(row: dict) -> dict:
+    """A place in a timeline video over a real map is that map seen from the air, never a set of its own. The Manila
+    re-test (2026-11-03): its renderer drew a place called "the mouth of the Pasig River" as a separate room (a grey
+    wall, a tree and a ship in close-up) because its description named no city or aerial view."""
+    prompt = str(row.get("prompt") or "")
+    if not re.search(r"(?i)\baerial\b", prompt):
+        prompt = "Aerial view over the city's map: " + prompt
+    return {**row, "prompt": prompt, "aerial": True, "inside": False}
+
+
 # Before the director's prompt, for a video with no narrator (cr_timeline): the channel's own words for the beats
 TIMELINE_DIRECTOR = """THIS CHANNEL HAS NO NARRATOR: its videos are music and pictures, timed to a written timeline. Below,
 every "narration" line is a timeline beat: what the screen shows from that second (the year on the counter, the event
@@ -2491,6 +2501,8 @@ def film_spec(plan: dict, casting: dict, spec: dict, plate_paths: dict, words: l
         row = {k: v for k, v in s.items() if k in SET_FIELDS}
         if extra and extra.get("timeline"):
             row.pop("crowd", None)                        # a timeline video shows the place, never a crowd in it
+            if extra.get("map"):                          # ...and every place in it is that map, seen from the air
+                row = aerial_place(row)
         if ident in plate_paths:
             row["image"] = str(plate_paths[ident])
             row["floor"] = floor_line(plate_paths[ident])

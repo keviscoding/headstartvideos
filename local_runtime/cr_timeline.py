@@ -270,7 +270,9 @@ RENDERER_NOTE = (
     "landmarks and places [{name, kind, at}]. Draw from them: the real coastline and streets, buildings rising on their "
     "footprints as the years pass (the oldest core first, outward and upward with time, landmarks when the timeline "
     "names them), the channel's own year counter, cards and labels from the beats, and one camera flight that carries "
-    "on across stretches (derive it from the absolute time, so stretch 2 starts where stretch 1 ended). Without a map "
+    "on across stretches (derive it from the absolute time, so stretch 2 starts where stretch 1 ended). With a map, "
+    "every set in Kit.scene.sets is that map seen from the air (set.aerial is true): frame its place on the map, "
+    "never as a separate room or close-up. Without a map "
     "or a timeline (the test shots), draw a convincing place of your own the same way.")
 
 
