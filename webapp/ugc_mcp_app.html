@@ -28,7 +28,7 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
 .muted{color:var(--ink3);font-size:13px}
 .fade{animation:in .35s ease both}
 @keyframes in{from{opacity:0;transform:translateY(4px)}}
-@media (prefers-reduced-motion:reduce){.fade,.dot{animation:none}}
+@media (prefers-reduced-motion:reduce){.fade,.dot,.brand{animation:none}.brand b{clip-path:none;animation:none}}
 
 /* stat tiles */
 .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
@@ -97,7 +97,7 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
 .player video{display:block;width:100%;height:100%;background:#000}
 .player.wide{aspect-ratio:16/9;width:100%}
 .player.tall{aspect-ratio:9/16;height:min(560px,80vh);max-width:100%}
-.sound{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:rgba(255,255,255,.95);color:var(--ink);border:0;border-radius:99px;padding:7px 14px;font-weight:600;font-size:13px;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.sound{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.95);color:var(--ink);border:0;border-radius:99px;padding:7px 14px;font-weight:600;font-size:13px;box-shadow:0 1px 2px rgba(0,0,0,.2)}
 .done-row{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
 .done-row .tt{font-weight:600;font-size:15px;letter-spacing:-.01em}
 .done-row .meta{color:var(--ink3);font-size:13px}
@@ -111,6 +111,20 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
 .timeline{position:relative;height:30px;border-radius:8px;background:var(--bg3);margin:8px 0 4px;overflow:hidden}
 .timeline .hd{position:absolute;top:0;bottom:0;width:2px;background:var(--ink);left:0}
 .timeline .pk{position:absolute;top:6px;bottom:6px;width:6px;border-radius:3px;background:var(--a);opacity:0;transition:opacity .2s}
+/* the brand link (owner, 2026-11-03): every card ends on channelrecipe.com, big enough to read on a phone filming a
+   laptop. It draws in on reveal, nudges once, then breathes now and then; it never goes away. */
+.brand{display:flex;align-items:baseline;justify-content:center;flex-wrap:wrap;gap:4px 10px;width:100%;margin-top:16px;padding:13px 16px;
+  border:0;border-radius:var(--r);background:var(--a);color:#fff;text-align:center;
+  animation:rise .4s ease both,nudge .9s ease 1.3s 1,breathe 7s ease-in-out 4s infinite}
+.brand small{font-size:14px;font-weight:500;color:rgba(255,255,255,.86)}
+.brand b{font-size:23px;font-weight:700;letter-spacing:-.015em;line-height:1.1;clip-path:inset(0 100% 0 0);animation:draw .9s cubic-bezier(.2,.7,.2,1) .3s forwards}
+.brand.shown b{clip-path:none;animation:none}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}}
+@keyframes draw{to{clip-path:inset(0 0 0 0)}}
+@keyframes nudge{50%{transform:scale(1.04)}}
+@keyframes breathe{0%,88%,100%{transform:scale(1)}94%{transform:scale(1.025)}}
+.player .wm{position:absolute;right:10px;top:10px;background:#fff;color:var(--a);font-weight:700;font-size:14px;letter-spacing:-.01em;
+  padding:5px 10px;border-radius:99px;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.25)}
 .clipgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .clipgrid video{width:100%;aspect-ratio:9/16;border-radius:10px;background:#000;object-fit:cover}
 </style>
@@ -162,7 +176,11 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
   /* ---- drawing ---- */
   const app = $("#app");
   function frame(sub, body) {
-    app.innerHTML = `<div class="head">${MARK}<b>ChannelRecipe</b><span class="sub">${esc(sub)}</span><span class="state"><span class="dot"></span><span id="st">Working…</span></span></div>${body}`;
+    app.innerHTML = `<div class="head">${MARK}<b>ChannelRecipe</b><span class="sub">${esc(sub)}</span><span class="state"><span class="dot"></span><span id="st">Working…</span></span></div>${body}
+      <button class="brand" type="button" id="brand"><small>Make yours at</small><b>channelrecipe.com</b></button>`;
+    const b = $("#brand");
+    b.onclick = () => openLink("https://channelrecipe.com");
+    setTimeout(() => b.classList.add("shown"), 1600);          // stays drawn even where animations don't run
   }
   function state(text, done) { sized(); const s = $("#st"); if (!s) return; s.textContent = text; s.parentElement.classList.toggle("done", !!done); }
   function skipper() { return `<button class="skip" type="button" id="skip">Skip ahead</button>`; }
@@ -187,7 +205,7 @@ h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
 
   function player(v) {
     return `<div class="player ${v.tall ? "tall" : "wide"}" id="pl"><video id="vid" src="${esc(v.video)}" poster="${esc(v.poster || "")}" playsinline controls muted autoplay preload="auto"></video>
-      <button class="sound" type="button" id="snd">🔊 Tap for sound</button></div>`;
+      <button class="sound" type="button" id="snd">🔊 Tap for sound</button><span class="wm">channelrecipe.com</span></div>`;
   }
   function wirePlayer() {
     const v = $("#vid"), s = $("#snd");

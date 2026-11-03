@@ -182,3 +182,14 @@ def test_picks_survive_without_the_database(monkeypatch):
     bucket = f"test:{uuid.uuid4()}"
     picks = [ugc_mcp.pick(bucket, 3) for _ in range(20)]
     assert all(a != b for a, b in zip(picks, picks[1:])) and ugc_mcp.pick(bucket + "x", 1) == 0
+
+
+def test_every_card_and_every_result_names_channelrecipe_com(mcp):
+    for name, args in [("find_viral_channels", {"niche": "GTA 6"}), ("clone_channel", {"channel": "Glooby"}),
+                       ("make_video", {"idea": "a GTA 6 video", "channel": "Glooby"}), ("rank_clips", {"topic": "cats"}),
+                       ("make_video", {"idea": "a cooking video"})]:
+        text, _ = mcp.tool(name, **args)
+        assert text.endswith("Make yours at channelrecipe.com."), name
+    page = mcp("resources/read", {"uri": ugc_mcp.UI_URI})["result"]["contents"][0]["text"]
+    assert 'class="brand"' in page and '<span class="wm">channelrecipe.com</span>' in page   # footer + on the player
+    assert "channelrecipe.com" in mcp("initialize")["result"]["instructions"]
