@@ -525,6 +525,8 @@ def _run(job_id: str, data: bytes = b"", mime: str = "video/mp4"):
         values = ("done", json.dumps(log), "", tin, tout, cost(tin, tout))
     except Exception as exc:                                    # noqa: BLE001 - recorded on the job
         print(f"[style-watch] {row['video_id']} {row['start_s']}-{row['end_s']}: {exc}", flush=True)
+        from webapp import provider_alerts
+        provider_alerts.check(str(exc))                       # the site's Gemini prepaid balance ran dry once, unseen
         tin, tout = getattr(exc, "tokens_in", 0), getattr(exc, "tokens_out", 0)    # an unreadable answer was billed
         values = ("failed", "", str(exc)[:300], tin, tout, cost(tin, tout))
     with db._conn() as conn:
