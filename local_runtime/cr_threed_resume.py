@@ -24,6 +24,7 @@ Studio-side, around the engine (the engine itself is unchanged):
   (threed/cr-final-clips.json; a clip an interrupted render finished is found from that render's video.json). A later
   final render keeps every clip whose spec is unchanged and renders only the rest.
 - names: each 3D Claude step is labelled ("3D picture review, round 1") for the stopped card (cr_claude.labelled).
+- shot planning: the timeline it plans on and each section's answer are kept ("the shot planning" below).
 A creator's forced remake (force) reuses nothing.
 """
 from __future__ import annotations
@@ -37,6 +38,7 @@ import re
 import shutil
 import threading
 import time
+from functools import wraps
 from pathlib import Path
 
 KEEP = "review_keep"
@@ -439,6 +441,229 @@ def _wrap_cc(original):
     return _cc
 
 
+# ── the shot planning (the director) ──────────────────────────────────────────────────────────────────────────────
+# A 15-minute 3D video on Claude Max (2026-11-04) stopped at the usage limit in its shot planning day after day, each
+# resume started the planning from section 1 and 37 stuck calls piled up for a video of 22 sections: the engine saves
+# the storyboard only after the last section, and each section's prompt carries the whole video's timeline, so one page
+# or graphic that came out differently on a later run (a page that failed to load is tried again each run) made all 22
+# prompts new work. Two things, around the engine:
+# - timeline: what the 3D is planned on is kept from the first try (threed/cr-timeline.json) for as long as the
+#   narration is the same and its files are there, so every later prompt is the same and Claude's saved answers match.
+# - answers: each section's answer is kept under what that section is asked, without the whole-video timeline. A
+#   section answered before this was kept is found in Studio's own Claude cache, when it is plainly for these moments.
+# Once a section stops, the sections still queued don't call Claude: the video is stopping anyway.
+TIMELINE = "cr-timeline.json"
+PLANS = "plans"                        # <job>/threed/review_keep/plans/<key>.json and plans/progress.json
+NOT_ASKED = ("ask", "log", "context", "section", "catalog")     # catalog: part of the engine's version
+PLAN_DUR_SLACK = 0.6                   # s: a moment's shots add up to its length (the prompt asks for 0.2)
+PLAN_WORDS_SHARE = 0.8                 # of what an old answer quotes from the narration, found in these moments' words
+HOME = Path(__file__).resolve().parent
+
+_directing: dict = {}                  # the planning under way in this engine process
+
+
+def kept_timeline(job, srt, segs, force, engine=None, locked=False) -> list:
+    """The graphics timeline the 3D plans on: the first try's, when the narration is unchanged and its files exist."""
+    if locked:
+        return segs
+    path = Path(job) / "threed" / TIMELINE
+    try:
+        narration = hashlib.sha256(Path(srt).read_bytes()).hexdigest()
+    except OSError:
+        return segs
+    saved = _read(path)
+    rows = saved.get("segs")
+    if (not force and saved.get("narration") == narration and isinstance(rows, list)
+            and all(Path(str(row[1])).exists() for row in rows)):
+        was_path = bool(saved.get("paths"))
+        kept = [(row[0], Path(row[1]) if was_path else row[1], row[2]) for row in rows]
+        if [(float(a), str(p), float(d)) for a, p, d in kept] != [(float(a), str(p), float(d)) for a, p, d in segs]:
+            _log(engine, f"3D: keeping the timeline of the earlier try ({len(kept)} graphics), so what Claude already "
+                         "planned still fits")
+        return kept
+    _write(path, {"narration": narration, "at": time.time(), "paths": any(isinstance(p, Path) for _, p, _ in segs),
+                  "segs": [[a, str(p), d] for a, p, d in segs]})
+    return segs
+
+
+def _wrap_timeline(threed, original):
+    def _add_to_timeline(segs, srt, job, style, force, *args, **kwargs):
+        engine = kwargs.get("engine", args[0] if args else None)
+        locked = (Path(job) / "threed" / str(getattr(threed, "LOCK_NAME", "lock.json"))).exists()
+        try:
+            segs = kept_timeline(job, srt, segs, force, engine, locked)
+        except Exception:                                  # noqa: BLE001 - this run's own timeline, as before
+            pass
+        return original(segs, srt, job, style, force, *args, **kwargs)
+    _add_to_timeline._cr_resume = True
+    return _add_to_timeline
+
+
+def _plans_done(job, add=None, start=None, finished=False) -> None:
+    """plans/progress.json: how many of the video's sections have their plan saved, for the stopped card."""
+    with _lock:
+        path = keep_dir(job) / PLANS / "progress.json"
+        data = {"sections": start, "done": [], "finished": False} if start is not None else _read(path)
+        if add and add not in data.setdefault("done", []):
+            data["done"].append(add)
+        if finished:
+            data["finished"] = True
+        _write(path, data)
+
+
+def plans_so_far(job) -> dict:
+    """{"sections", "done", "finished"}: the shot planning's progress, {} when none has started."""
+    data = _read(keep_dir(job) / PLANS / "progress.json")
+    if not data.get("sections"):
+        return {}
+    return {"sections": int(data["sections"]), "done": len(data.get("done") or []),
+            "finished": bool(data.get("finished"))}
+
+
+def _wrap_direct(threed, original):
+    def direct(engine, job, style, title, moments, sents, context, cfg, catalog, force, *args, **kwargs):
+        job = Path(job)
+        try:
+            count = len(threed.sections(moments, cfg))
+        except Exception:                                  # noqa: BLE001 - the card's count only
+            count = 0
+        with _lock:
+            _directing.clear()
+            _directing.update(job=str(job), engine=engine, force=bool(force), model=str(cfg.get("model") or ""),
+                              version=engine_version(threed, "review"), earlier=None, stopped=None)
+        _plans_done(job, start=count)
+        try:
+            out = original(engine, job, style, title, moments, sents, context, cfg, catalog, force, *args, **kwargs)
+        finally:
+            with _lock:
+                _directing.clear()
+        _plans_done(job, finished=True)
+        return out
+    direct._cr_resume = True
+    return direct
+
+
+def _claude_text(saved: dict) -> str:
+    """The answer in a saved Claude step: its result object's text (3D asks for JSON), else what it holds."""
+    out = str(saved.get("stdout") or "")
+    try:
+        data = json.loads(out)
+        if isinstance(data, dict) and isinstance(data.get("result"), str):
+            return data["result"]
+    except ValueError:
+        pass
+    return out
+
+
+def _earlier_plans(SB, job) -> list:
+    """[(raw answer, its board)]: this video's finished shot planning calls in Studio's Claude cache."""
+    project = _read(Path(job) / "cr-project.json").get("id")
+    if not isinstance(project, str) or not re.fullmatch(r"crv_[a-f0-9]{24}", project):
+        return []
+    out = []
+    for path in sorted((HOME / "output" / "cr-claude-cache" / project).glob("cc_*.json")):
+        saved = _read(path)
+        if saved.get("label") != LABELS["director"] or saved.get("state") not in ("complete", "complete_local"):
+            continue
+        raw = _claude_text(saved)
+        try:
+            board = SB._json_object(raw)
+        except Exception:                                  # noqa: BLE001 - not a whole answer: not one to reuse
+            continue
+        if isinstance(board, dict) and isinstance(board.get("moments"), list):
+            out.append((raw, board))
+    return out
+
+
+def _simple(text) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", str(text or "").lower()).split())
+
+
+def plan_fits(board: dict, moments: list) -> bool:
+    """An answer written before answers were kept is reused only when it is plainly for these moments: the same ids,
+    its shots add up to each moment's length, and what it quotes from the narration is in that moment's words."""
+    wanted = {str(m.get("id")): m for m in moments}
+    got = [m for m in board.get("moments") or [] if isinstance(m, dict)]
+    if not got or {str(m.get("id")) for m in got} != set(wanted) or len(got) != len(wanted):
+        return False
+    try:
+        for planned in got:
+            moment = wanted[str(planned["id"])]
+            shots = [float(s.get("dur") or 0) for s in planned.get("scenes") or []]
+            if not shots or abs(sum(shots) - (float(moment["t1"]) - float(moment["t0"]))) > PLAN_DUR_SLACK:
+                return False
+            said = _simple(moment.get("text"))
+            quotes = [_simple(x.get("words")) for x in planned.get("musts") or [] if isinstance(x, dict) and x.get("words")]
+            if quotes and sum(1 for q in quotes if q in said) < PLAN_WORDS_SHARE * len(quotes):
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _wrap_storyboard(SB, original):
+    @wraps(original)                                       # the engine reads this signature to know what it may pass
+    def storyboard(*args, **kwargs):
+        named = _bound(original, args, kwargs)
+        with _lock:
+            ctx = _directing if _directing else None
+        if named is None or ctx is None or ctx.get("force") or not callable(named.get("ask")):
+            return original(*args, **kwargs)
+        job, engine, ask = Path(ctx["job"]), ctx.get("engine"), named["ask"]
+        try:
+            extra = engine._extra_block() if hasattr(engine, "_extra_block") else ""
+        except Exception:                                  # noqa: BLE001
+            extra = ""
+        key = digest(["plan-answer-v1", {k: v for k, v in named.items() if k not in NOT_ASKED}, extra,
+                      ctx.get("model"), ctx.get("version")])
+        path = keep_dir(job) / PLANS / f"{key[:40]}.json"
+        saved = _read(path)
+        raw = saved["raw"] if saved.get("key") == key and isinstance(saved.get("raw"), str) \
+            and _parses(SB, saved["raw"]) else ""
+        if not raw:
+            with _lock:
+                if ctx.get("earlier") is None:
+                    ctx["earlier"] = _earlier_plans(SB, job)
+                earlier = list(ctx["earlier"])
+            raw = next((text for text, board in earlier if plan_fits(board, named.get("moments") or [])), "")
+            if raw:
+                _write(path, {"key": key, "raw": raw, "at": time.time()})
+        if raw:
+            given = [raw]
+
+            def asked_again(prompt, max_tokens):           # the engine's repair of the answer goes to Claude as ever
+                return given.pop() if given else ask(prompt, max_tokens)
+            try:
+                out = original(**dict(named, ask=asked_again))
+                _log(engine, f"  3D shot planning: {named.get('section') or 'this section'} was planned in an earlier "
+                             "try (reused, no new Claude call)")
+                _plans_done(job, add=key[:16])
+                return out
+            except Exception:                              # noqa: BLE001 - a saved answer never costs the section
+                path.unlink(missing_ok=True)
+        with _lock:
+            stopped = ctx.get("stopped")
+        if stopped is not None:
+            raise stopped
+
+        def asked(prompt, max_tokens):
+            try:
+                out = ask(prompt, max_tokens)
+            except BaseException as error:
+                import cr_claude
+                if isinstance(error, cr_claude.ClaudeStageStopped):
+                    with _lock:
+                        ctx["stopped"] = error
+                raise
+            if _parses(SB, out):
+                _write(path, {"key": key, "raw": out, "at": time.time()})
+                _plans_done(job, add=key[:16])
+            return out
+        return original(**dict(named, ask=asked))
+    storyboard._cr_resume = True
+    return storyboard
+
+
 # ── a round's previews ────────────────────────────────────────────────────────────────────────────────────────────
 
 def complete_round(rep, video) -> bool:
@@ -695,7 +920,8 @@ def install(threed) -> None:
     SB = getattr(threed, "SB", None)
     plan = [("review", lambda f: _wrap_review(threed, f)), ("_render", lambda f: _wrap_render(threed, f)),
             ("final_render", lambda f: _wrap_final(threed, f)), ("repair_pass", lambda f: _wrap_repair(threed, f)),
-            ("_cc", _wrap_cc)]
+            ("_cc", _wrap_cc), ("_add_to_timeline", lambda f: _wrap_timeline(threed, f)),
+            ("direct", lambda f: _wrap_direct(threed, f))]
     if SB is not None and hasattr(SB, "_json_object"):
         plan.append(("_look", lambda f: _wrap_look(SB, f)))
     for name, wrap in plan:
@@ -705,3 +931,6 @@ def install(threed) -> None:
     fn = getattr(SB, "review_prompt", None) if SB is not None else None
     if callable(fn) and not getattr(fn, "_cr_resume", False):
         SB.review_prompt = _wrap_prompt(fn)
+    fn = getattr(SB, "storyboard", None) if SB is not None else None
+    if callable(fn) and hasattr(SB, "_json_object") and not getattr(fn, "_cr_resume", False):
+        SB.storyboard = _wrap_storyboard(SB, fn)
