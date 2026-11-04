@@ -489,3 +489,191 @@ def test_write_leaves_no_temporary_file(tmp_path, monkeypatch):
     monkeypatch.setattr(resume.time, "sleep", lambda s: None)
     resume._write(tmp_path / "progress.json", {"a": 1})
     assert list(tmp_path.iterdir()) == []
+
+
+# ── the shot planning (a 15-minute 3D video on Claude Max, 2026-11-04: every resume planned from section 1 again) ──
+
+def fake_director(stop_at=None, answers=None):
+    """threed.direct and SB.storyboard's shape: one call per section (one at a time here, so the count of calls is exact),
+    the prompt carries the context and the board is saved only after the last section."""
+    from concurrent.futures import ThreadPoolExecutor
+    mod = types.ModuleType("threed")
+    seen = {"prompts": [], "lines": [], "signature": None}
+    lock = __import__("threading").Lock()
+
+    def _json_object(raw):
+        return json.loads(raw)
+
+    def storyboard(ask, title, lines, moments, catalog, language_line="", log=print, context="", section="", notes="",
+                   extra="", look=None, photos=None, footage=False, treatment=None):
+        raw = ask(f"plan {title} {context} {[m['id'] for m in moments]}", 32000)
+        board = _json_object(raw)
+        return {"moments": board["moments"], "cast": [], "money_shots": []}
+    mod.SB = types.SimpleNamespace(_json_object=_json_object, storyboard=storyboard)
+
+    def ask(prompt, max_tokens):
+        with lock:
+            seen["prompts"].append(prompt)
+            n = len(seen["prompts"])
+        if stop_at is not None and n >= stop_at:
+            raise cr_claude.ClaudeStageStopped("usage limit")
+        ids = json.loads("[" + prompt.split("[")[-1])
+        return json.dumps({"moments": [{"id": i, "scenes": [{"id": f"m{i}", "dur": 8.0}]} for i in ids]})
+
+    def sections(moments, cfg):
+        return [moments[i:i + 2] for i in range(0, len(moments), 2)]
+    mod.sections = sections
+
+    def direct(engine, job, style, title, moments, sents, context, cfg, catalog, force, notes="", photos=None):
+        seen["signature"] = "footage" in __import__("inspect").signature(mod.SB.storyboard).parameters
+        parts = mod.sections(moments, cfg)
+
+        def one(k):
+            return mod.SB.storyboard(ask, title, [], parts[k], catalog, "lang", log=seen["lines"].append,
+                                     context=context, section=f"section {k + 1} of {len(parts)} of the video", notes=notes)
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            boards = list(ex.map(one, range(len(parts))))
+        return {"moments": [m for b in boards for m in b["moments"]]}
+    mod.direct = direct
+    return mod, seen
+
+
+def moments(n=8):
+    return [{"id": k, "t0": 10.0 * k, "t1": 10.0 * k + 8, "text": f"words of moment {k}."} for k in range(n)]
+
+
+def plan(mod, job, context="ctx", force=False, engine=None):
+    engine = engine or types.SimpleNamespace(log=lambda s: None, _extra_block=lambda: "")
+    return mod.direct(engine, job, "cr-3d", "The Vault", moments(), [], context, dict(CFG), {"kinds": {}}, force)
+
+
+def test_each_section_saved_before_the_stop_is_not_planned_again_even_when_the_timeline_changed(job):
+    first, first_seen = fake_director(stop_at=3)
+    resume.install(first)
+    with pytest.raises(cr_claude.ClaudeStageStopped):
+        plan(first, job)
+    assert len(first_seen["prompts"]) == 3                    # the fourth section, queued, never calls Claude
+    saved = resume.plans_so_far(job)
+    assert saved["sections"] == 4 and saved["done"] == 2 and saved["finished"] is False
+
+    again, seen = fake_director()
+    resume.install(again)
+    logged = []
+    engine = types.SimpleNamespace(log=logged.append, _extra_block=lambda: "")
+    out = plan(again, job, context="ctx with one page more", engine=engine)
+    assert len(seen["prompts"]) == 2                          # only the two sections never answered
+    assert [m["id"] for m in out["moments"]] == list(range(8))
+    assert sum("planned in an earlier try" in line for line in logged) == 2
+    assert resume.plans_so_far(job)["finished"] is True
+
+
+def test_the_wrapped_storyboard_keeps_the_signature_the_engine_reads(job):
+    mod, seen = fake_director()
+    resume.install(mod)
+    plan(mod, job)
+    assert seen["signature"] is True                          # direct() decides footage / photos / treatment by it
+
+
+def test_a_forced_remake_or_changed_words_reuse_no_plan(job):
+    mod, seen = fake_director()
+    resume.install(mod)
+    plan(mod, job)
+    assert len(seen["prompts"]) == 4
+    plan(mod, job)
+    assert len(seen["prompts"]) == 4
+    plan(mod, job, force=True)
+    assert len(seen["prompts"]) == 8
+    extra = types.SimpleNamespace(log=lambda s: None, _extra_block=lambda: "make it darker")
+    plan(mod, job, engine=extra)
+    assert len(seen["prompts"]) == 12                         # the creator's instructions are part of what is asked
+
+
+def earlier_stage(tmp_path, monkeypatch, job, answer, label="3D shot planning", state="complete"):
+    project = "crv_" + "a" * 24
+    (job / "cr-project.json").write_text(json.dumps({"id": project}), encoding="utf-8")
+    cache = tmp_path / "output" / "cr-claude-cache" / project
+    cache.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(resume, "HOME", tmp_path)
+    name = "cc_" + os.urandom(32).hex() + ".json"
+    (cache / name).write_text(json.dumps({"state": state, "label": label, "stdout": json.dumps(
+        {"type": "result", "result": json.dumps(answer)})}), encoding="utf-8")
+
+
+def answer_for(*ids, dur=8.0, words="words of moment"):
+    return {"moments": [{"id": i, "musts": [{"id": "k1", "words": f"{words} {i}"}],
+                         "scenes": [{"id": f"m{i}", "dur": dur}]} for i in ids]}
+
+
+def test_a_plan_claude_finished_before_answers_were_kept_is_reused_when_it_fits(job, tmp_path, monkeypatch):
+    earlier_stage(tmp_path, monkeypatch, job, answer_for(0, 1))
+    earlier_stage(tmp_path, monkeypatch, job, answer_for(2, 3))
+    mod, seen = fake_director()
+    resume.install(mod)
+    plan(mod, job)
+    assert len(seen["prompts"]) == 2                          # the two sections with an answer are not paid again
+    assert resume.plans_so_far(job) == {"sections": 4, "done": 4, "finished": True}
+
+
+@pytest.mark.parametrize("answer,label,state", [
+    (answer_for(0), "3D shot planning", "complete"),                       # another split of the moments
+    (answer_for(0, 1, dur=3.0), "3D shot planning", "complete"),           # another length: other moments
+    (answer_for(0, 1, words="something else entirely"), "3D shot planning", "complete"),   # other words
+    (answer_for(0, 1), "3D picture review, round 1", "complete"),          # not a planning call
+    (answer_for(0, 1), "3D shot planning", "running"),                     # not finished
+])
+def test_an_earlier_plan_that_does_not_plainly_fit_is_never_reused(job, tmp_path, monkeypatch, answer, label, state):
+    earlier_stage(tmp_path, monkeypatch, job, answer, label, state)
+    mod, seen = fake_director()
+    resume.install(mod)
+    plan(mod, job)
+    assert len(seen["prompts"]) == 4
+
+
+def timeline_files(job):
+    (job / "subs.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
+    pages = []
+    for name in ("map_00.mp4", "headline_01.mp4"):
+        (job / name).write_bytes(b"x")
+        pages.append(str(job / name))
+    return job / "subs.srt", pages
+
+
+def test_the_timeline_the_3d_plans_on_is_kept_from_the_first_try(job):
+    srt, (first_page, second_page) = timeline_files(job)
+    assert resume.kept_timeline(job, srt, [(1.0, first_page, 5.0)], False) == [(1.0, first_page, 5.0)]
+    logged = []
+    engine = types.SimpleNamespace(log=logged.append)
+    got = resume.kept_timeline(job, srt, [(1.0, first_page, 5.0), (9.0, second_page, 4.0)], False, engine)
+    assert got == [(1.0, first_page, 5.0)]                    # a page that loaded only this time changes nothing
+    assert "keeping the timeline" in logged[0]
+
+
+def test_new_narration_a_missing_file_or_a_remake_starts_the_timeline_again(job):
+    srt, (first_page, second_page) = timeline_files(job)
+    resume.kept_timeline(job, srt, [(1.0, first_page, 5.0)], False)
+    later = [(2.0, second_page, 4.0)]
+    assert resume.kept_timeline(job, srt, later, True) == later         # forced
+    resume.kept_timeline(job, srt, [(1.0, first_page, 5.0)], True)
+    Path(first_page).unlink()
+    assert resume.kept_timeline(job, srt, later, False) == later        # a file gone
+    resume.kept_timeline(job, srt, [(2.0, second_page, 4.0)], True)
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nnew words\n", encoding="utf-8")
+    other = [(3.0, second_page, 2.0)]
+    assert resume.kept_timeline(job, srt, other, False) == other        # the narration changed
+
+
+def test_a_locked_video_keeps_its_own_timeline(job):
+    srt, (first_page, second_page) = timeline_files(job)
+    resume.kept_timeline(job, srt, [(1.0, first_page, 5.0)], False)
+    later = [(2.0, second_page, 4.0)]
+    assert resume.kept_timeline(job, srt, later, False, locked=True) == later
+
+
+def test_the_card_says_how_much_of_the_planning_is_saved(job, tmp_path):
+    (tmp_path / "output" / "cr-claude-cache").mkdir(parents=True)
+    mod, _seen = fake_director(stop_at=3)
+    resume.install(mod)
+    with pytest.raises(cr_claude.ClaudeStageStopped):
+        plan(mod, job)
+    line = cr_claude_use.summary(tmp_path, job, "crv_" + "b" * 24)["line"]
+    assert "3D shot planning: 2 of 4 sections saved" in line

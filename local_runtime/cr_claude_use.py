@@ -95,10 +95,20 @@ def threed_review(job) -> dict:
         return {}
 
 
+def threed_plans(job) -> dict:
+    """The 3D shot planning's sections saved so far, or {} when this video has none under way."""
+    try:
+        import cr_threed_resume
+        return cr_threed_resume.plans_so_far(job)
+    except (OSError, ValueError, TypeError, ImportError):
+        return {}
+
+
 def summary(home, job, project_id) -> dict:
     """{"calls", "minutes", ..., "threed": {...}, "line": the plain sentence for the cards}."""
     use = so_far(home, project_id)
     three = threed_review(job)
+    plans = threed_plans(job)
     parts = []
     if use["calls"]:
         n = use["calls"]
@@ -109,6 +119,9 @@ def summary(home, job, project_id) -> dict:
             said += f", about {max(1, use['minutes'])} min of Claude time for the {use['timed']} Studio timed"
         said += _tokens_words(use)
         parts.append(said + ".")
+    if plans and not plans.get("finished"):
+        parts.append(f"3D shot planning: {plans['done']} of {plans['sections']} sections saved. They aren't made again "
+                     "when this video carries on.")
     if three and not three.get("finished") and three.get("rounds"):
         left = three["left"]
         parts.append(f"3D review: round {three['round']} of {three['rounds']}, up to about {left} review "
