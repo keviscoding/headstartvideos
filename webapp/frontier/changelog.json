@@ -1,5 +1,14 @@
 [
   {
+    "build": 127,
+    "date": "2026-11-04",
+    "title": "3D videos carry on from where they stopped",
+    "items": [
+      "A long 3D video that stopped at your Claude limit could start its shot planning again each time you pressed Try again. Each section's plan is now saved, so it carries on with only the sections still to do. The ones Claude already planned for that video are picked up too.",
+      "A stopped 3D video's card now says how many planning sections are saved, and its progress says which ones were reused."
+    ]
+  },
+  {
     "build": 126,
     "date": "2026-11-03",
     "title": "Stock footage with a free Pixabay key",
