@@ -60,6 +60,37 @@ OWN_REFUSED = ("{recipe} writes and voices its own narration, so it can't use yo
                "or make your recording into a Roblox Story Short or a video.")
 
 
+# My script on a Shorts recipe: a pipeline here narrates the creator's words exactly and plans its shots on them (their
+# Roblox door story, Discord 2026-11-05: the script box was offered, the words were dropped without a word, and the Short
+# told a story Studio wrote from the title). The others write their own narration, and Create and the tools say so.
+OWN_SCRIPT = {"roblox"}
+SCRIPT_WORDS = (10, 780)                                     # a voice reads about 4.35 words a second: 3 minutes at most
+SCRIPT_REFUSED = ("{recipe} writes its own narration, so it can't read your script. Choose My idea, or use your script "
+                  "with a Roblox Story Short or a video.")
+
+
+def takes_own_script(info) -> bool:
+    """Whether this Shorts recipe narrates a pasted script word for word."""
+    shorts = info.get("shorts") if is_short(info) else None
+    return isinstance(shorts, dict) and str(shorts.get("pipeline") or "zack3d") in OWN_SCRIPT
+
+
+def own_script_problem(info, script, recipe: str = "This Shorts recipe") -> str:
+    """Why this Short can't narrate the pasted `script` ("" when it can, or none was given): checked before the Short
+    is queued (cr_submission) and again before anything is made (run_short). Never dropped without saying so."""
+    words = len(str(script or "").split())
+    if not words or not is_short(info):
+        return ""
+    if not takes_own_script(info):
+        return SCRIPT_REFUSED.format(recipe=recipe)
+    if words < SCRIPT_WORDS[0]:
+        return f"Your script is {words} words long. A Short needs at least {SCRIPT_WORDS[0]} words of narration."
+    if words > SCRIPT_WORDS[1]:
+        return (f"Your script is {words} words long, and a Short is at most 3 minutes (about {SCRIPT_WORDS[1]} words). "
+                "Shorten it, or make it a video.")
+    return ""
+
+
 def takes_own_recording(info) -> bool:
     """Whether this Shorts recipe can be narrated by the creator's own recording."""
     shorts = info.get("shorts") if is_short(info) else None
@@ -434,11 +465,12 @@ def hero_picture(character_image: str) -> Path | None:
 
 
 def run_short(engine, title: str, style: str, info: dict, *, features=None, sink=None, extra: str = "",
-              character: str = "", character_image: str = "", recording: str = "") -> Path:
+              character: str = "", character_image: str = "", recording: str = "", script: str = "") -> Path:
     """Make the Short for `title` with the Shorts recipe `style`; returns the job folder. A Roblox Story Short reads the
     creator's character picture (character_image) into its main character's avatar; the other pipelines can't use one,
     and Create and the tools say so before (cr_character.picture_use). recording: the creator's own narration (Create's
-    My recording, the engine's byo_audio): a pipeline in OWN_RECORDING is narrated by it, at its own length."""
+    My recording, the engine's byo_audio): a pipeline in OWN_RECORDING is narrated by it, at its own length. script: the
+    creator's own words (Create's My script): a pipeline in OWN_SCRIPT narrates exactly them, and they set its length."""
     pipe = str((info.get("shorts") or {}).get("pipeline") or "zack3d")
     if pipe not in PIPELINES:
         raise RuntimeError(f"Unknown Shorts pipeline {pipe!r}.")
@@ -448,10 +480,14 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
         if problem:
             raise RuntimeError(problem)                          # before the pack, Claude or anything paid
         own = recording_path(recording)
-    folder, script = PIPELINES[pipe]
+    words = str(script or "").strip()
+    problem = own_script_problem(info, words, str(info.get("label") or "This Shorts recipe"))
+    if problem:
+        raise RuntimeError(problem)                              # before the pack, Claude or anything paid
+    folder, program = PIPELINES[pipe]
     root = shorts_root()
     if pipe in PACKLESS:
-        if not (root / folder / script).is_file():
+        if not (root / folder / program).is_file():
             raise RuntimeError("The Ranking Shorts pipeline is not installed in this Studio. Update the Studio.")
     else:
         ensure_pack(sink, engine)
@@ -519,6 +555,12 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
             picked = ranking_voice(style)
             if own is not None:
                 env["CR_RBX_OWN_VOICE"] = str(own)               # the creator's recording IS the voice: none is made
+                if words:
+                    _say(sink, engine, "Short: your recording is the narration, so the pasted script isn't read.")
+            elif words:
+                pasted = work / "own_script.txt"                 # a file: Windows limits what the environment can hold
+                pasted.write_text(words + "\n", encoding="utf-8")
+                env["CR_RBX_SCRIPT"] = str(pasted)               # the creator's words ARE the narration
             elif picked:
                 env["CR_RBX_VOICE"] = picked.split(":", 1)[1]    # the ElevenLabs voice chosen for this recipe
             hero = hero_picture(character_image)
@@ -531,11 +573,12 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
             elif character_image:
                 _say(sink, engine, "Short: your character picture isn't in this Studio any more, so the director designs "
                                    "the main character from words.")
-        args = [sys.executable, str(root / folder / script), str(HOME), str(work), title]
+        args = [sys.executable, str(root / folder / program), str(HOME), str(work), title]
         args += (["auto", str(seconds)] if pipe == "photo2d" else [str(seconds)])
         _say(sink, engine, f"Short: {info.get('label') or style}, " + (f"{ranking.get('ranks', 5)} ranks" if pipe == "ranking"
                                                                         else f"{seconds} seconds, narrated by your recording"
-                                                                        if own is not None else f"about {seconds} seconds"))
+                                                                        if own is not None else f"your script, {len(words.split())} words"
+                                                                        if words else f"about {seconds} seconds"))
         proc = subprocess.Popen(args, cwd=str(root / folder), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace", **low_priority())
         if pipe not in SELF_LOWERING:
@@ -588,6 +631,7 @@ def install(engine):
             return run_short(engine, title, style, info, features=kwargs.get("features"), sink=kwargs.get("sink"),
                              extra=kwargs.get("extra") or "", character=kwargs.get("character") or "",
                              character_image=kwargs.get("character_image") or "",
-                             recording=kwargs.get("byo_audio") or "")       # the creator's own narration (was dropped)
+                             recording=kwargs.get("byo_audio") or "",       # the creator's own narration (was dropped)
+                             script=kwargs.get("script_text") or "")        # the creator's own words (were dropped too)
         wrapped._cr_shorts = True
         setattr(engine, name, wrapped)

@@ -152,6 +152,8 @@ def install(studio, activity, *, token, home=None):
             # recording for it; the other Shorts write and voice their own (every long-video recipe takes one)
             import cr_shorts
             row["own_recording"] = cr_shorts.takes_own_recording(info) if cr_shorts.is_short(info) else True
+            # likewise My script: a Shorts recipe that narrates a pasted script word for word
+            row["own_script"] = cr_shorts.takes_own_script(info) if cr_shorts.is_short(info) else True
             # what one Short of this recipe costs on the creator's accounts (voice, music, effects), for quotes
             cost = shorts.get("cost_usd") if isinstance(shorts, dict) else None
             row["short_cost_usd"] = (float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool)

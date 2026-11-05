@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -434,3 +435,51 @@ def test_only_a_recipe_a_recording_can_narrate_takes_one_and_a_bad_recording_sto
     with pytest.raises(RuntimeError, match="at most 3 minutes"):
         shorts.run_short(Engine(), "t", "cr-shorts-roblox", ROBLOX, recording=take.name)
     assert packs == []
+
+
+def test_a_roblox_short_reads_the_creators_own_script_word_for_word(tmp_path, monkeypatch):
+    """A customer's door story (Discord, 2026-11-05): Create offered My script on a Roblox Story Short, the engine's
+    run_custom wrapper dropped script_text, and the Short told a story Studio wrote from the title. The words now reach
+    make_roblox (CR_RBX_SCRIPT, a file: Windows limits the environment), and a recording still wins over them."""
+    take, _ = _roblox_stub(tmp_path, monkeypatch, seconds=31.6)
+    make = Path(os.environ["CR_SHORTS_ROOT"]) / "roblox" / "make_roblox.py"
+    make.write_text(make.read_text(encoding="utf-8").replace(
+        "'voice': os.environ.get('CR_RBX_VOICE')}))",
+        "'voice': os.environ.get('CR_RBX_VOICE'),\n"
+        "    'script': pathlib.Path(os.environ['CR_RBX_SCRIPT']).read_text(encoding='utf-8') if os.environ.get('CR_RBX_SCRIPT') else None}))"),
+        encoding="utf-8")
+    said = []
+
+    class Engine:
+        def job_dir(self, title, style):
+            return str(tmp_path / "job")
+    words = "In this town, every door gets smaller each time you open it. Mom climbs in through the window."
+    job = shorts.run_short(Engine(), "Doors", "cr-shorts-roblox", ROBLOX, script=words, sink=said.append)
+    seen = json.loads((job / "short" / "seen.json").read_text(encoding="utf-8"))
+    assert seen["script"].strip() == words and seen["own"] is None
+    assert any("your script, 18 words" in line for line in said)
+    job = shorts.run_short(Engine(), "Doors", "cr-shorts-roblox", ROBLOX, script=words, recording=str(take), sink=said.append)
+    seen = json.loads((job / "short" / "seen.json").read_text(encoding="utf-8"))
+    assert seen["script"] is None and seen["own"] == str(take), "a recording is what is said: the script isn't voiced too"
+    assert any("pasted script isn't read" in line for line in said)
+
+
+def test_the_engine_hands_its_script_to_the_short(tmp_path, monkeypatch):
+    import types
+    got = {}
+    monkeypatch.setattr(shorts, "run_short", lambda engine, title, style, info, **kw: got.update(kw) or "job")
+    monkeypatch.setattr(shorts, "is_short", lambda info: True)
+    engine = types.SimpleNamespace(STYLE_INFO={"cr-shorts-roblox": ROBLOX}, run_custom=lambda *a, **k: "engine", run_pipeline=lambda *a, **k: "engine")
+    shorts.install(engine)
+    engine.run_custom("t", 1, style="cr-shorts-roblox", script_text="My own words.")
+    assert got["script"] == "My own words."
+
+
+def test_a_script_a_short_cant_read_is_refused_and_never_dropped():
+    other = {"format": "short", "shorts": {"pipeline": "zack3d"}}
+    assert shorts.takes_own_script(ROBLOX) and not shorts.takes_own_script(other)
+    assert "can't read your script" in shorts.own_script_problem(other, "Some words here.", "3D Explainer Shorts")
+    assert "at least" in shorts.own_script_problem(ROBLOX, "Too short.")
+    assert "at most 3 minutes" in shorts.own_script_problem(ROBLOX, "word " * 800)
+    assert shorts.own_script_problem(ROBLOX, "word " * 215) == "" and shorts.own_script_problem(other, "") == ""
+    assert shorts.own_script_problem({"format": "long"}, "word " * 5000) == "", "a long video's script is the engine's"

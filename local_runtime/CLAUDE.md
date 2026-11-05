@@ -159,7 +159,9 @@ under Saved ideas.
   Creative direction → Character (type new words and press Draw this character, or upload a picture). Prefer it to
   Extra instructions: those can change the look, but the style's picture of its old character still goes with every
   picture, so nothing keeps the new face the same. New words are drawn once in the style's look (one picture, about
-  $0.02). Roblox Story Shorts take a picture of the creator's own avatar (options.character_picture): their Claude
+  $0.02). Roblox Story Shorts also read the creator's own script word for word (`make_videos` options.script, or Create's My
+  script, at most about 780 words: the script sets the length); the other Shorts write their own narration and refuse
+  one. Roblox Story Shorts take a picture of the creator's own avatar (options.character_picture): their Claude
   Code reads it once and the main character wears it in every shot (what a blocky avatar can't show, the progress
   says). The other Shorts keep their own host, and a style written in code draws its characters from words: the tools
   refuse a character picture there, and the quote's `character` says what a picture will and won't do.

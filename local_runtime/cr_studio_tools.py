@@ -932,6 +932,9 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
         p["cr_voice"] = {"provider": "fish", "voice": found.group(1).lower()}   # these videos only (cr_fish)
     if p["script"] and len(titles) > 1:
         raise Refused("Your own script goes with one title.")
+    if p["script"] and kind(row) == "short" and not row.get("own_script"):
+        raise Refused(f"{row.get('label') or 'This Shorts recipe'} writes its own narration, so it can't read your "
+                      "script. Leave options.script out, or use it with Roblox Story Shorts or a video.")
     if kind(row) == "short":
         seconds = short_seconds_for(row, options)
         if row.get("ranking"):
@@ -2141,7 +2144,8 @@ _OPTIONS = {"type": "object", "description": (
     "captions=true burns them in anyway), thumbnails (default true; false makes no YouTube thumbnails and saves their image credits, about $0.02 "
     "each at the default model: the quote drops by that), thumbnail_count 1-4, description (YouTube "
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
-    "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
+    "own narration, one title only; Roblox Story Shorts read it word for word, at its length, and the other Shorts "
+    "refuse it), features {key: true/false} to switch the style's options (keys from quote), "
     "short_seconds for Shorts (15 up to the style's short_max: 60, or 180 for Roblox Story Shorts), quicker_3d_review (true: one 3D review round instead of three, about a quarter "
     "to a third less Claude time on a 3D video, fewer last fixes; Create's Quicker 3D review), frame_check (a style "
     "drawn in code: false skips the check where Claude looks at each minute's frames before they are drawn and "
