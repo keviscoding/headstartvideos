@@ -47,10 +47,15 @@
       : { short: t.name.toLowerCase(), search: t.search || t.name, keyword: m.keyword, idea: t.name, name: t.name };
   }
   const top = (t) => (t.refs || [])[0] || (t.clips || []).map((c) => ({ channel: "a ranking channel", views: c.views }))[0];
+  // "so did {clip_views} people" is about the clip the viewer just watched, so it says that clip's real number
+  // ({views} is today's top trending video). The kit reads it aloud, so it's in words: "39 million".
+  let clipNow = null;
+  const spokenViews = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)} million` : n >= 1e3 ? `${Math.round(n / 1e3)} thousand` : String(n));
   function fill(s, t, m = method) {
     const w = words(t, m), r = top(t);
     return String(s).replaceAll("{short}", w.short).replaceAll("{search}", w.search)
       .replaceAll("{channel}", r ? r.channel : "this channel").replaceAll("{views}", r ? short(r.views) : "millions of")
+      .replaceAll("{clip_views}", clipNow && clipNow.views ? spokenViews(clipNow.views) : "millions of")
       .replaceAll("{topic}", w.idea).replaceAll("{keyword}", w.keyword).replaceAll("{n}", "N");
   }
   // The Claude walkthrough films real Claude with ChannelRecipe connected: each creator's own sandboxed connector
@@ -140,6 +145,7 @@
   function renderToday() {
     const p = path, t = tpl, hooks = hooksFor(t), hook = pick(hooks, `hook:${t.id}`);
     const clips = clipsFor(t), clip = pick(clips, `clip:${feedOf(t)}`);
+    clipNow = clip;
     const shots = shotsFor(t, method).map((s) => ({ ...s }));
     if (hook && hook.how === "spoken" && Number.isInteger(t.hook_shot) && shots[t.hook_shot]) shots[t.hook_shot].say = hook.line;
     const added = shots.findIndex((s) => s.kind === "added");
@@ -163,7 +169,7 @@
         ${clip ? `<div class="react"><span>The clip you react to · we add it, you don't film it</span>
           <div class="yt ${clip.kind === "cr" && !clip.tall ? "wide" : ""}">${clip.kind === "cr"
             ? `<video src="${esc(clip.url)}" poster="${esc(clip.poster || "")}" muted autoplay loop playsinline controls></video>`
-            : `<iframe src="https://www.youtube.com/embed/${esc(clip.id)}?start=${clip.start || 0}&end=${clip.end || 8}&rel=0" allow="encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`}</div>
+            : `<iframe src="https://www.youtube.com/embed/${esc(clip.id)}?start=${clip.start || 0}${t.clip_whole ? "" : `&end=${clip.end || 8}`}&rel=0" allow="encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`}</div>
           <small>${esc(clip.title)} · ${clip.kind === "cr" ? "made with ChannelRecipe" : `${esc(clip.channel)} · ${short(clip.views)} views`}</small>
           ${clips.length > 1 ? `<button class="btn ghost small" type="button" id="next-c">↻ Another clip</button>` : ""}</div>` : ""}
         <ol class="shots">${shots.map((s, i) => s.kind === "added" ? `
@@ -172,7 +178,7 @@
             <p class="how">${esc(s.how)}</p></div></li>` : `
           <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
             <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">${s.kind === "screen" ? "film your laptop" : "your face"}</span></div>
-            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div>${s.kind === "screen" && method.prompt ? promptBox(p) : ""}</div></li>`).join("")}</ol>
+            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div>${s.kind === "screen" && method.prompt && !s.no_prompt ? promptBox(p) : ""}</div></li>`).join("")}</ol>
         ${dmBox(p)}
         <p class="added"><b>＋ The earnings proof: we add it for you.</b> Don't film it or edit it in. Your video comes back with it already in place.</p>
         <div class="actions">
