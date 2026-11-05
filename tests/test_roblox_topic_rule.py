@@ -32,7 +32,7 @@ def roblox(tmp_path, topic, answers, notes="", own="", heard_text=""):
         return json.dumps(answers.pop(0))
     env = {"CR_SHORTS_EXTRA": notes} if notes else {}
     space = {"os": types.SimpleNamespace(environ=env), "re": re, "json": json, "OUT": tmp_path, "TOPIC": topic,
-             "SECONDS": 55, "HERE": ROBLOX_DIR, "OWN_VOICE": own, "SETS": types.SimpleNamespace(ROOM_DOC={}, OUTDOOR={}),
+             "SECONDS": 55, "HERE": ROBLOX_DIR, "OWN_VOICE": own, "OWN_SCRIPT": "", "own_script": lambda: "", "SETS": types.SimpleNamespace(ROOM_DOC={}, OUTDOOR={}),
              "target_words": lambda: 240, "own_block": lambda: "", "language_block": lambda: "",
              "own_heard": lambda: {"text": heard_text, "words": []}, "fit_to_recording": lambda plan, words: plan,
              "log": lambda *a: None, "claude": claude}

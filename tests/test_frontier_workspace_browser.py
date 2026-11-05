@@ -1546,6 +1546,37 @@ def test_roblox_story_shorts_offer_up_to_three_minutes_and_the_other_shorts_one(
     assert not env.errors
 
 
+def test_roblox_story_shorts_take_my_script_and_the_other_shorts_dont_offer_it(workspace):
+    """A customer's door story (Discord, 2026-11-05): My script was offered on every Short and the words were dropped. A
+    Roblox Story Short now reads them, at the script's length; the Shorts that write their own hide the choice."""
+    env, page = workspace, workspace.page
+    env.catalog["channels"] += cr_presentation.presentation_catalog([
+        {"name": "cr-shorts-roblox", "short_seconds": 55, "own_script": True},
+        {"name": "cr-shorts-3d", "short_seconds": 25, "own_script": False}])
+    env.open("?cr-preset=cr-shorts-roblox")
+    mine = page.locator("[data-input-mode=script]")
+    assert mine.is_visible() and page.locator("#crw-short-duration").is_visible()
+    mine.click()
+    page.locator("#crw-title").fill("Every door gets smaller")
+    words = "In this town, every door gets smaller each time you open it. " * 8
+    page.locator("#crw-script").fill(words)
+    assert page.locator("#crw-short-duration").is_hidden(), "the script sets the Short's length"
+    assert "your script" in page.inner_text("#crw-summary-duration")
+    page.evaluate("document.getElementById('crw-seconds').value = '999'")   # a hidden length can't stop the Create
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    body = env.creates[0]["body"]
+    assert body["style"] == "cr-shorts-roblox" and body["script"] == words.strip()
+    page.locator(".crw-nav [data-nav=create]").click()
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === 'cr-shorts-3d'))")
+    assert mine.is_hidden() and page.locator("#crw-script-panel").is_hidden()
+    assert page.evaluate("window.CR_WORKSPACE_CLIENT.state.input") == "idea"
+    assert page.locator("#crw-short-duration").is_visible()
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === 'documentary'))")
+    assert mine.is_visible()
+    assert not env.errors
+
+
 def test_roblox_story_shorts_take_my_recording_and_the_other_shorts_say_they_voice_their_own(workspace):
     """Primo (Discord, 2026-10-29) pitches the Adam voice 1.3x in CapCut and uploads that take as a Roblox Story
     Short's narration, but Create refused My recording for every Short ("Shorts write and voice their own narration").

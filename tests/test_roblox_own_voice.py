@@ -17,7 +17,7 @@ ROBLOX = SHORTS / "roblox" / "make_roblox.py"
 pytestmark = pytest.mark.skipif(not ROBLOX.is_file(), reason="the private Shorts source is not in this checkout")
 
 FUNCTIONS = {"own_sig", "own_reset", "own_heard", "target_words", "own_block", "fit_to_recording", "norm", "voice",
-             "timeline"}
+             "timeline", "own_script", "script_sig"}
 CONSTANTS = {"OWN_FILES", "OWN_MARK"}
 
 
@@ -46,7 +46,7 @@ def roblox(tmp_path, align, own="", heard=None, seconds=0.0, ran=None, lang="en"
         return types.SimpleNamespace(returncode=0, stderr="")
     voicefit = types.SimpleNamespace(SR=44100, words=lambda path: list(heard or []),
                                      _load=lambda path, sr=44100: [0.0] * int(seconds * 44100))
-    space = {"os": __import__("os"), "re": re, "json": json, "Path": Path, "OUT": tmp_path, "OWN_VOICE": own,
+    space = {"os": __import__("os"), "re": re, "json": json, "Path": Path, "OUT": tmp_path, "OWN_VOICE": own, "OWN_SCRIPT": "",
              "FF": "ffmpeg", "LANG_CODE": lang, "SECONDS": 55, "WPS": 4.35, "log": lambda *a: None, "align": align, "voicefit": voicefit,
              "subprocess": types.SimpleNamespace(run=run),
              "tts": lambda *a: (_ for _ in ()).throw(AssertionError("no voice is made for a recording"))}

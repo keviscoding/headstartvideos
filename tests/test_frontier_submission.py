@@ -183,6 +183,29 @@ def test_exact_installed_frontier_queue_validation_and_normalization_are_kept():
     assert studio.JOBS["example"]["threed"] and studio.JOBS["example"]["state"] == "queued"
 
 
+def test_a_script_on_a_short_that_cant_read_one_is_refused_before_it_is_queued():
+    """My script was dropped without a word on every Short (a customer's door story, Discord 2026-11-05). Roblox Story
+    Shorts read it; the other Shorts say so before anything is queued. A long video's script stays the engine's."""
+    studio, _, dispatches = studio_with_original()
+    studio.styles = SimpleNamespace(STYLES={
+        "cr-shorts-3d": {"format": "short", "label": "3D Explainer Shorts", "shorts": {"pipeline": "zack3d"}},
+        "cr-shorts-roblox": {"format": "short", "label": "Roblox Story Shorts", "shorts": {"pipeline": "roblox"}},
+        "documentary": {}})
+
+    def send(style, script):
+        body = {"title": "Every door gets smaller", "steps": ["video"], "style": style, "script": script}
+        with studio.app.test_request_context(json=body):
+            return cr_submission.submit(studio, body, PROJECT)
+    words = "In this town, every door gets smaller each time you open it."
+    refused = send("cr-shorts-3d", words)
+    assert refused.status_code == 400 and not studio.QUEUE and not dispatches
+    assert refused.get_json()["error"].startswith("3D Explainer Shorts writes its own narration")
+    assert "at most 3 minutes" in send("cr-shorts-roblox", "word " * 800).get_json()["error"]
+    assert not studio.QUEUE
+    assert send("cr-shorts-roblox", words).status_code == 200 and len(studio.QUEUE) == 1
+    assert send("documentary", words).status_code == 200
+
+
 def test_a_recording_on_a_short_that_cant_use_one_is_refused_before_it_is_queued(tmp_path, monkeypatch):
     """Roblox Story Shorts take the creator's own narration recording (Primo, 2026-10-29); the other Shorts write and
     voice their own and say so before anything is queued. A long video's recording stays the engine's own business."""

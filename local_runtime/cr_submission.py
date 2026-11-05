@@ -72,6 +72,11 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
                                                   str(style_info.get("label") or "This Shorts recipe"))
         if refusal:
             raise ValueError(refusal)
+        # the creator's own script on a Shorts recipe: read word for word, or refused here, never dropped
+        refusal = cr_shorts.own_script_problem(style_info, payload.get("script"),
+                                               str(style_info.get("label") or "This Shorts recipe"))
+        if refusal:
+            raise ValueError(refusal)
     except ValueError as error:
         from flask import jsonify
         return studio.app.make_response((jsonify(error=str(error)), 400))

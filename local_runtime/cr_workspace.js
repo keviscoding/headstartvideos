@@ -202,6 +202,9 @@
   // My recording: every long-video recipe, and the Shorts recipes a recording can narrate (Roblox Story Shorts, Primo
   // 2026-10-29: his own pitched take); the other Shorts write and voice their own narration (catalog own_recording)
   const takesRecording = (r) => !isShort(r) || r?.own_recording === true;
+  // My script: every long-video recipe, and the Shorts that narrate it word for word (catalog own_script)
+  const takesScript = (r) => !isShort(r) || r?.own_script === true;
+  const scriptSetsLength = () => state.input === 'script' && !!$('crw-script').value.trim();
   const SHORT_ONLY_HIDDEN = ['crw-fast-section','crw-palette-section','crw-avatar-section','crw-character-section','crw-offer-section','crw-cta-section','crw-pictures-section'];
   function shortsMode() {
     const s = isShort(state.selected), rk = isRanking(state.selected);
@@ -212,7 +215,11 @@
     const own = takesRecording(state.selected), ownButton = document.querySelector('[data-narration-mode="own"]');
     if (ownButton) ownButton.hidden = !own;
     if (!own && state.narration === 'own') setNarration('ai');
-    hide('crw-short-duration', !s || rk || state.narration === 'own'); hide('crw-long-duration', s);
+    const scriptButton = document.querySelector('[data-input-mode="script"]');
+    if (scriptButton) scriptButton.hidden = !takesScript(state.selected);
+    if (!takesScript(state.selected) && state.input === 'script') setInput('idea');
+    // a Short that reads the creator's script is as long as the script: no length to choose either
+    hide('crw-short-duration', !s || rk || state.narration === 'own' || scriptSetsLength()); hide('crw-long-duration', s);
     const most = shortMax(state.selected); $('crw-seconds').max = most;
     for (const b of all('[data-seconds]')) b.hidden = Number(b.dataset.seconds) > most; hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
     const tall = s || !!state.selected?.vertical;   // a style learned from Shorts is vertical too, at any length
@@ -386,7 +393,7 @@
     const reads = scriptMinutes ? (scriptMinutes < 1 ? `about ${Math.max(5, Math.round(scriptMinutes * 60 / 5) * 5)} seconds` : `about ${Math.round(scriptMinutes * 10) / 10} minutes`) : '';
     text('crw-script-length', reads ? `${scriptWords} words: ${reads} of video at this style's reading pace. Your script sets the length.` : '');
     hide('crw-script-length', !reads);
-    text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) && !isShort(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) && state.narration !== 'own' ? (n => n % 60 || n < 120 ? `${n} seconds` : `${n / 60} minutes`)(number('crw-seconds',25,15,shortMax(r))) : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
+    text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) && state.narration !== 'own' ? (n => n % 60 || n < 120 ? `${n} seconds` : `${n / 60} minutes`)(number('crw-seconds',25,15,shortMax(r))) : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
     thumbsSummary();
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     // a cloned style reads with its own narrator (the kind of voice its channel has), else the account's voice
@@ -1235,7 +1242,7 @@
   function schedule() {clearTimeout(state.timer);state.timer=setTimeout(async()=>{await refreshActivity();schedule();},document.hidden?15000:state.busy||state.openJob?2500:10000);}
   function payload() {
     const title = [$('crw-title').value.trim(),...$('crw-batch-titles').value.split('\n').map(v=>v.trim()).filter(Boolean)].filter(Boolean).join('\n');
-    if (!title) throw new Error('Give your video a title or idea.'); if (title.split('\n').some(t=>t.length>280)) throw new Error('Keep each title under 280 characters. Put detailed guidance in Extra instructions.'); if (title.split('\n').length>30) throw new Error('Create up to 30 titles in one batch.'); if (!state.selected) throw new Error('Choose a visual recipe.'); const short=isShort(state.selected); if (short) {const sec=Number($('crw-seconds').value); const most=shortMax(state.selected); if (state.narration!=='own' && (!Number.isInteger(sec)||sec<15||sec>most)) throw new Error(`Choose a Short length between 15 and ${most} seconds${most>=120?` (${most/60} minutes)`:''}.`); if (state.narration==='own' && !takesRecording(state.selected)) throw new Error(`${state.selected.label || 'This Shorts recipe'} writes and voices its own narration. Choose AI narration.`);} else {const duration=Number($('crw-minutes').value); if (!Number.isInteger(duration)||duration<1||duration>60) throw new Error('Choose a whole-number duration between 1 and 60 minutes.');}
+    if (!title) throw new Error('Give your video a title or idea.'); if (title.split('\n').some(t=>t.length>280)) throw new Error('Keep each title under 280 characters. Put detailed guidance in Extra instructions.'); if (title.split('\n').length>30) throw new Error('Create up to 30 titles in one batch.'); if (!state.selected) throw new Error('Choose a visual recipe.'); const short=isShort(state.selected); if (short) {const sec=Number($('crw-seconds').value); const most=shortMax(state.selected); if (state.narration!=='own' && !scriptSetsLength() && (!Number.isInteger(sec)||sec<15||sec>most)) throw new Error(`Choose a Short length between 15 and ${most} seconds${most>=120?` (${most/60} minutes)`:''}.`); if (state.narration==='own' && !takesRecording(state.selected)) throw new Error(`${state.selected.label || 'This Shorts recipe'} writes and voices its own narration. Choose AI narration.`);} else {const duration=Number($('crw-minutes').value); if (!Number.isInteger(duration)||duration<1||duration>60) throw new Error('Choose a whole-number duration between 1 and 60 minutes.');}
     if (state.input==='script' && !$('crw-script').value.trim()) throw new Error('Paste your narration script, or choose My idea.');
     if (state.narration==='own' && !state.audio) throw new Error('Choose your narration recording first.');
     if (state.narration==='own' && title.includes('\n')) throw new Error('Use one title for an uploaded narration recording.');
@@ -1525,7 +1532,7 @@
     finally{gate();}
   }
   for(const b of all('[data-nav]'))b.addEventListener('click',()=>showPage(b.dataset.nav));
-  for(const b of all('[data-input-mode]'))b.addEventListener('click',()=>setInput(b.dataset.inputMode));
+  for(const b of all('[data-input-mode]'))b.addEventListener('click',()=>{setInput(b.dataset.inputMode);shortsMode();summary();});
   for(const b of all('[data-narration-mode]'))b.addEventListener('click',()=>setNarration(b.dataset.narrationMode));
   for(const b of all('[data-minutes]'))b.addEventListener('click',()=>{$('crw-minutes').value=b.dataset.minutes;chooseGroup('[data-minutes]','minutes',b.dataset.minutes);summary();save();});
   for(const b of all('[data-seconds]'))b.addEventListener('click',()=>{$('crw-seconds').value=b.dataset.seconds;chooseGroup('[data-seconds]','seconds',b.dataset.seconds);summary();});
