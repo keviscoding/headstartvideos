@@ -12,8 +12,8 @@ import pytest
 ROBLOX = Path(__file__).resolve().parents[1] / "data" / "frontier" / "shorts" / "roblox" / "make_roblox.py"
 pytestmark = pytest.mark.skipif(not ROBLOX.is_file(), reason="the private Shorts source is not in this checkout")
 
-FUNCTIONS = {"through_of", "through_stage", "keep_out_of_houses", "stage_through"}
-CONSTANTS = {"WALK_THROUGH", "WINDOW_X", "WINDOW_SILL", "THROUGH_WORDS"}
+FUNCTIONS = {"through_of", "through_stage", "keep_out_of_houses", "stage_through", "outside_buildings"}
+CONSTANTS = {"WALK_THROUGH", "WINDOW_X", "WINDOW_SILL", "THROUGH_WORDS", "BUILDING_MIN", "BUILDING_TALL", "ON_ITS_FRONT"}
 HOME = {"kind": "landmark.house", "at": [0.0, -14.16], "heading": 180, "style": "suburban"}
 FRONT = -14.16 + 4.2
 
@@ -109,6 +109,21 @@ def test_a_shot_with_no_crossing_keeps_its_camera_and_a_room_is_left_alone(rb):
     item = {"ref": "me", "at": [0.0, -11.0], "heading": 0, "actions": [], "r6": {}}
     same = rb.stage_through({"text": "I walked in the door.", "cast": [{"id": "me"}]}, {"room": "kitchen"}, [item], [], {"target": "me"}, 3.0, "s02")
     assert same == {"target": "me"} and item["at"] == [0.0, -11.0]
+
+
+def test_a_custom_buildings_door_goes_on_its_front_and_nobody_stands_inside_it(rb):
+    """The proof of that same story: Grandpa, and his door prop, at the centre of his 6 m house: shots of a blurred wall."""
+    house = {"kind": "stage.prop", "id": "old_house", "mount": "floor", "at": [-2.88, 0.685], "heading": 0}
+    door = {"kind": "stage.prop", "id": "gus_door", "mount": "surface", "at": [-2.88, 0.685], "heading": 0}
+    hill = {"kind": "stage.prop", "id": "hill_rise", "mount": "floor", "at": [-4.5, 1.0], "heading": 0}
+    cat = {"kind": "stage.prop", "id": "cat", "mount": "floor", "at": [20.0, 0.0], "heading": 0}
+    gus = {"ref": "gus", "at": [-2.88, 0.459], "heading": 0, "actions": [], "r6": {}, "contact": {"with": "gus_door"}}   # (touching it)
+    far = {"ref": "me", "at": [9.0, 0.0], "heading": 0, "actions": [], "r6": {}}
+    dressed = {"old_house": {"size": [6.2, 6.2, 6.2]}, "gus_door": {"size": [0.7, 2.6, 0.1]}, "hill_rise": {"size": [8, 0.84, 4]}, "cat": {"size": [0.2, 0.3, 0.3]}}
+    rb.outside_buildings([gus, far], [house, door, hill, cat], dressed, "s34")
+    assert door["at"] == [-2.88, round(0.685 + 3.1 + 0.06, 3)], "on the front face"
+    assert gus["at"][1] > 0.685 + 3.1 + 0.6, "in front of the house, in front of its door"
+    assert far["at"] == [9.0, 0.0] and cat["at"] == [20.0, 0.0] and hill["at"] == [-4.5, 1.0], "a low hill isn't a building"
 
 
 def test_the_stagers_through_survives_its_own_filter():
