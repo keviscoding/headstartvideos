@@ -65,7 +65,9 @@ def basic(checks, *, verify_mcp=True):
                general_model=cfg.get("general_model", cr_claude.GENERAL_MODEL),
                visual_model=cfg.get("visual_model", cr_claude.VISUAL_MODEL),
                models_saved=bool(cfg.get("general_model") and cfg.get("visual_model") and cfg.get("local_version")),
-               billing="Your signed-in Claude Code account and its usage limits apply.")
+               billing=cr_claude.API_KEY_BILLING if cli.get("api_key") else
+               "Your signed-in Claude Code account and its usage limits apply.",
+               api_key_saved=bool(cr_claude.api_key()))
     if checks.get("cr_unreachable") is True:      # setup found channelrecipe.com unreachable just now: no 90 s wait
         mcp = {"connected": False, "why": checks.get("connection_error") or "Studio can't reach channelrecipe.com."}
     else:

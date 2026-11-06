@@ -1776,6 +1776,29 @@ def create_app():
         write_provider(name, value)
         return jsonify(saved=True, message="Saved on this computer. This checks the format; the provider verifies it when used.")
 
+    # Claude on the creator's own Anthropic API key instead of their plan's limits (cr_claude.api_key): checked with
+    # Anthropic for free before it's saved; every Claude step after that uses it.
+    @studio.app.post("/cr-claude/api-key")
+    def save_claude_api_key():
+        value = str((request.get_json(silent=True) or {}).get("key", "")).strip()
+        why = cr_claude.check_api_key(value)
+        if why:
+            return jsonify(error=why), 400
+        write_provider(cr_claude.API_KEY_NAME, value)
+        cr_claude.forget_status()
+        return jsonify(saved=True, message="Saved on this computer. Claude now runs on your Anthropic API key, with no "
+                                           "plan limits: Anthropic bills your API account for what each video uses. "
+                                           "Press Set up Claude for videos once more to check it.")
+
+    @studio.app.post("/cr-claude/api-key/remove")
+    def remove_claude_api_key():
+        from dotenv import unset_key
+        if (HOME / ".env").is_file():
+            unset_key(str(HOME / ".env"), cr_claude.API_KEY_NAME)
+        os.environ.pop(cr_claude.API_KEY_NAME, None)
+        cr_claude.forget_status()
+        return jsonify(saved=True, message="Removed. Claude runs on your signed-in Claude plan again.")
+
     # Studio Cloud on the creator's own Modal account (owner, 2026-10-29: creators who want cloud rendering add their
     # own cloud keys). The token is checked with Modal (which also makes Studio's storage there) before it's saved.
     def cloud_render_running():

@@ -113,7 +113,12 @@ under Saved ideas.
   the Claude desktop app. Call `fix_claude_cli`: Studio runs Anthropic's official installer itself. Never install
   Claude Code from your own shell; call the fix tool. Then they sign in once: setup page, step 2, **Open the sign-in
   window**, and the browser login with their Claude Pro or Max account. Never ask for or handle their password.
-- Studio makes every video with Claude Code on the customer's Claude plan; there is no API-account option. If
+- Claude plan limits stopping their videos (a Pro plan runs out fast): they can save their own Anthropic API key in
+  the setup page, step 2, **Hitting your Claude plan's limits? Use an Anthropic API key instead** (never in chat).
+  Studio checks it with Anthropic for free, then every Claude step runs through Claude Code on that key: no plan
+  limits, billed by Anthropic to their API account (they add credit at console.anthropic.com). Then **Set up Claude for
+  videos** once more re-checks the models. Remove my API key there goes back to their plan.
+- Studio makes every video with Claude Code (on the customer's Claude plan, or their API key above); there is no API-brain option. If
   `setup_check` says `old_api_route`, this customer still uses the old route (an API account as Studio's brain): ask
   them to press **Switch to Claude Code (recommended)** on the setup page, step 2. It connects Claude Code, picks the
   models and checks them; their API key stays saved but new videos don't use it. Without Claude Code installed and

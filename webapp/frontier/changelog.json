@@ -1,5 +1,15 @@
 [
   {
+    "build": 129,
+    "date": "2026-11-06",
+    "title": "Use your own Claude API key, with no plan limits",
+    "items": [
+      "Hitting your Claude Pro or Max limits? Setup step 2 now takes an Anthropic API key: open “Hitting your Claude plan’s limits? Use an Anthropic API key instead”, paste your key and press Check and use this key.",
+      "Every Claude step of every video, Short and style clone then runs on that key, with no plan limits. Anthropic bills your API account for what each video uses, so add credit at console.anthropic.com first.",
+      "Studio checks the key with Anthropic for free before saving it, and it stays on this computer. Remove my API key goes back to your Claude plan at any time."
+    ]
+  },
+  {
     "build": 128,
     "date": "2026-11-05",
     "title": "Roblox Story Shorts read your script, and walk through doors",

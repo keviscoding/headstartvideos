@@ -125,8 +125,59 @@ def sync_receipts(bridge):
     return saved
 
 
+# The creator's own Anthropic API key, for a Claude plan whose limits stop their videos (owner, 2026-11-06: a Pro
+# plan couldn't finish a single video). Setup step 2 saves it as API_KEY_NAME in Studio's .env; every Claude Code
+# question Studio asks then carries it as ANTHROPIC_API_KEY, which Claude Code uses ahead of its plan sign-in, billed to
+# the creator's Anthropic account. Only this saved key: an ANTHROPIC_API_KEY inherited from a shell still never bills.
+API_KEY_NAME = "CR_CLAUDE_API_KEY"
+API_KEY_SHAPE = re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,300}")
+API_KEY_BILLING = ("Claude runs on your own Anthropic API key: no plan limits, and Anthropic bills your API account for "
+                   "what each video uses.")
+
+
+def api_key(source=None) -> str:
+    """The creator's saved Anthropic API key: the environment, then Studio's .env read fresh; '' when none."""
+    env = os.environ if source is None else source
+    found = str(env.get(API_KEY_NAME) or os.environ.get(API_KEY_NAME) or "").strip()
+    if not found:
+        try:
+            for line in (HOME / ".env").read_text(encoding="utf-8", errors="ignore").splitlines():
+                name, _, value = line.strip().partition("=")
+                if name.strip() == API_KEY_NAME:
+                    found = value.strip().strip('"').strip("'")
+        except OSError:
+            pass
+    return found if API_KEY_SHAPE.fullmatch(found) else ""
+
+
+def check_api_key(key, *, get=None) -> str:
+    """'' when Anthropic accepts this API key, else why not, in plain words. Lists its models, which costs nothing."""
+    if not API_KEY_SHAPE.fullmatch(str(key or "")):
+        return "That isn't a whole Anthropic API key. Copy it again from console.anthropic.com (it starts with sk-ant-)."
+    import requests
+    try:
+        r = (get or requests.get)("https://api.anthropic.com/v1/models", timeout=(10, 20), allow_redirects=False,
+                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01"})
+    except requests.RequestException:
+        return "Anthropic didn't answer. Check your connection and try again."
+    if r.status_code == 401:
+        return "Anthropic didn't accept this key. Copy it again from console.anthropic.com, API keys."
+    if r.status_code == 403:
+        return "This key isn't allowed to use Claude. Make a new key in console.anthropic.com and paste it."
+    if r.status_code != 200:
+        return f"Anthropic couldn't check this key right now (HTTP {r.status_code}). Try again in a moment."
+    return ""
+
+
+def forget_status():
+    """The next status() asks Claude Code again (the saved API key changed)."""
+    with _status_lock:
+        _status_cache.update(at=0.0, exe="", result=None)
+
+
 def clean_environment(source=None):
-    """Use the customer's local login, never inherited API/cloud credentials."""
+    """Use the customer's local login (or the API key they saved in Setup), never inherited API/cloud credentials."""
+    saved_key = api_key(source)
     env = dict(os.environ if source is None else source)
     for name in list(env):
         upper = name.upper()
@@ -138,6 +189,8 @@ def clean_environment(source=None):
                              "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "MAX_THINKING_TOKENS",
                              "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING"}):
             env.pop(name, None)
+    if saved_key:
+        env["ANTHROPIC_API_KEY"] = saved_key
     # Do not repeat a timed-out request inside the CLI either. Rejected-request
     # handling remains Claude Code's own behavior, within this one authorization.
     env["CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES"] = "0"
@@ -306,19 +359,25 @@ def _status(exe, *, run=None, environment=None):
                       capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
                       timeout=CHECK_SECONDS)
         data = json.loads(auth.stdout or "{}")
-        result["account_fingerprint"] = hashlib.sha256(str(data.get("email") or data.get("accountUuid") or "unknown-local-account").encode()).hexdigest()
         method = data.get("authMethod", "none")
+        own_key = method == "api_key" and data.get("apiKeySource") == "ANTHROPIC_API_KEY" and env.get("ANTHROPIC_API_KEY")
+        # an API key's account is the key itself (a new key verifies its models again); never the key, only its hash
+        result["account_fingerprint"] = hashlib.sha256(("api-key:" + env["ANTHROPIC_API_KEY"]).encode() if own_key else str(
+            data.get("email") or data.get("accountUuid") or "unknown-local-account").encode()).hexdigest()
         result["auth_method"] = method if method in {"none", "claude.ai", "oauth_token", "api_key", "api_key_helper", "third_party"} else "unknown"
         result["api_provider"] = "firstParty" if data.get("apiProvider") == "firstParty" else "other"
         subscription = data.get("subscriptionType", "")
         result["subscription_type"] = subscription if subscription in {"free", "pro", "max", "team", "enterprise"} else ""
         result["authenticated"] = bool(auth.returncode == 0 and data.get("loggedIn") is True
-                                       and method == "claude.ai" and data.get("apiProvider") == "firstParty")
+                                       and (method == "claude.ai" or own_key) and data.get("apiProvider") == "firstParty")
         result["ready"] = result["authenticated"]
+        result["api_key"] = bool(own_key)
         import cr_allowance
         result["allowance"] = cr_allowance.status(HOME, result["account_fingerprint"])
-        result["message"] = ("Your local Claude account is connected. Its usage limits apply."
-                             if result["ready"] else "Sign in to Claude Code with your Claude subscription. API and cloud billing are not used in this mode.")
+        result["message"] = (API_KEY_BILLING if own_key and result["ready"] else
+                             "Your local Claude account is connected. Its usage limits apply." if result["ready"] else
+                             "Sign in to Claude Code with your Claude subscription, or save an Anthropic API key in "
+                             "Setup step 2.")
     except subprocess.TimeoutExpired:
         result["timed_out"] = result["slow"] = True      # "slow" stays: setup says this, not "sign in"
         result["message"] = ("Claude Code took more than a minute and a half to answer its sign-in check. Close other "
@@ -682,7 +741,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.128")
+            installed_version=cfg.get("local_version","5.3-admin.129")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text(encoding="utf-8"))
