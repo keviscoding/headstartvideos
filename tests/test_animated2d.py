@@ -1331,3 +1331,28 @@ def test_a_renderer_has_no_webrtc_or_name_lookup_way_out(home):
             box.close()
     cands = _chromium(run)
     assert not any("typ" in c for c in cands), cands
+
+
+# ── Studio 130: a planned fade out comes back (a customer's 360° Vision video stopped at 7:51, 2026-11-06) ──────────
+
+def test_a_mid_stretch_fade_out_with_nothing_after_it_fades_back_in_a_second_later():
+    man = {"actions": {}, "shots": ["wide"], "fx": {"fade": "fade to/from black (dir out|in)", "mood": "a tint"}}
+    raw = {"shots": [{"start": 0, "set": "s", "framing": "wide"}],
+           "fx": [{"kind": "fade", "at": 35.8, "dir": "out"}, {"kind": "mood", "at": 35.82}]}
+    fx = a2d.clean_plan(raw, {"a": {}}, {"s": {"prompt": "x"}}, 0, 42.0, man)["fx"]
+    fades = [(f["at"], f["dir"]) for f in fx if f["kind"] == "fade"]
+    assert fades == [(35.8, "out"), (36.8, "in")], fx
+    assert [f["at"] for f in fx] == sorted(f["at"] for f in fx)
+
+
+def test_a_fade_that_already_comes_back_or_ends_the_stretch_is_left_alone():
+    kept = [{"kind": "fade", "at": 5.5, "dir": "out"}, {"kind": "fade", "at": 7.0, "dir": "in"},
+            {"kind": "fade", "at": 38.5, "dir": "out"}]
+    assert a2d.fades_come_back(kept, {"fade"}, 40.0) == kept
+
+
+def test_a_renderer_with_separate_fade_kinds_gets_its_own_fade_in_and_one_with_none_loses_the_fade_out():
+    fx = a2d.fades_come_back([{"kind": "fade_out", "at": 10.0, "dur": 0.5}], {"fade_out", "fade_in"}, 40.0)
+    assert fx == [{"kind": "fade_out", "at": 10.0, "dur": 0.5}, {"kind": "fade_in", "at": 11.0, "dur": 0.5}]
+    assert a2d.fades_come_back([{"kind": "fadeout", "at": 10.0}, {"kind": "glow", "at": 12.0}], {"fadeout", "glow"},
+                               40.0) == [{"kind": "glow", "at": 12.0}]
