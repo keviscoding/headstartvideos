@@ -1,5 +1,14 @@
 [
   {
+    "build": 130,
+    "date": "2026-11-06",
+    "title": "Animated channels no longer stop on a fade to black",
+    "items": [
+      "When a video's plan faded to black in the middle and never came back, the animated channel stopped the whole video and said its renderer was at fault. It now fades back in a second later and carries on.",
+      "A video that stopped this way finishes with Resume saved project: it keeps everything made so far and picks up from the stretch that stopped."
+    ]
+  },
+  {
     "build": 129,
     "date": "2026-11-06",
     "title": "Use your own Claude API key, with no plan limits",

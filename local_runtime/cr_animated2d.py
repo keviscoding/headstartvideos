@@ -741,6 +741,7 @@ def render_stills(spec: dict, out_dir: Path, code: str, *, home=None, prefix: st
 
 BLANK_RUN_S = 2.5                      # this long with nothing on screen, mid-film, is a fault in the renderer
 SWEEP_STEP = 0.25                      # seconds between the frames a sweep looks at
+FADE_BACK_S = 1.0                      # a mid-stretch fade out comes back in this soon (fades_come_back)
 FROZEN_S = 3.0                         # this long with nothing on screen changing at all is a frozen picture
 STILL = 0.001                          # a frame-to-frame change under this (mean of 64x36 grey, 0-255) is none at all:
                                        # frames are exact, so a breathing figure or a slow push is never "frozen"
@@ -823,6 +824,40 @@ def blank_runs(samples: list, duration: float, step: float = SWEEP_STEP) -> list
                 runs.append((round(start, 2), round(end, 2)))
             start = None
     return runs
+
+
+def _fade(row: dict) -> str:
+    """"out" for an effect that fades the picture to black, "in" for one that brings it back, else ""."""
+    kind = str(row.get("kind") or "").lower()
+    if "fade" not in kind:
+        return ""
+    way = str(row.get("dir") or row.get("direction") or "").lower()
+    if way == "out" or "out" in kind:
+        return "out"
+    return "in" if way == "in" or kind.endswith("in") else ""
+
+
+def fades_come_back(fx: list, fx_ok, duration: float) -> list:
+    """A fade out the director put mid-stretch with no fade in after it gets one FADE_BACK_S later (the renderer holds
+    black until a fade in, and BLANK_RUN_S of black stops the video: a customer's 360° Vision video, 2026-11-06, stopped
+    at 7:51 on a planned fade out). A renderer with no way back in loses that fade out instead. The last 3 seconds of a
+    stretch keep theirs (blank_runs allows the film's own ending)."""
+    out = list(fx)
+    for row in fx:
+        if _fade(row) != "out" or row["at"] >= duration - 3.0:
+            continue
+        back = round(row["at"] + FADE_BACK_S, 3)
+        if any(_fade(f) == "in" and row["at"] < f["at"] <= row["at"] + BLANK_RUN_S - 0.5 for f in out):
+            continue
+        kind = str(row["kind"])
+        if row.get("dir") or row.get("direction"):
+            way = "dir" if row.get("dir") else "direction"
+            out.append({**row, "at": back, way: "in"})
+        elif kind.replace("out", "in").replace("OUT", "IN") in fx_ok:
+            out.append({**row, "kind": kind.replace("out", "in").replace("OUT", "IN"), "at": back})
+        else:
+            out.remove(row)
+    return sorted(out, key=lambda f: f["at"])
 
 
 def _clock(seconds: float) -> str:
@@ -2073,6 +2108,7 @@ def clean_plan(raw, cast: dict, sets: dict, t0: float, t1: float, man: dict = No
             if "color" in row:
                 row["color"] = _hex(row["color"], "#ffffff")
             fx.append(row)
+    fx = fades_come_back(fx, fx_ok, dur)
     out = {"shots": merged, "actions": actions, "fx": fx, "duration": dur}
     if added:
         out["sets"] = {k: v for k, v in added.items() if any(sh["set"] == k for sh in merged)}
