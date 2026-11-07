@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.130"
+VERSION = "5.3-admin.131"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -569,6 +569,30 @@ ENGINE_PATCHES = {
          '            return "(1)"\n'
          '        mode = "alternate" if "alternate" in parts[2:] else "in"\n'
          '    if mode != "alternate":\n'),
+        # The plan's "nothing at all to show" slot is a photo with no file, meant to play black; the animated-still check
+        # turned its empty path into Path("").with_suffix(".anim.mp4") and stopped a customer's video with
+        # "WindowsPath('.') has an empty name" (2026-11-07). It now plays black, and a video with no picture for a
+        # quarter of its length stops with the reason instead of coming out mostly black.
+        ('        fx = fxp.get(idx)\n'
+         '        if seg.exists() and not force and not _newer(Path(str(path)), seg) and _fx_stamp_ok(seg, fx, dur):\n',
+         '        fx = fxp.get(idx)\n'
+         '        if not str(path or "").strip():\n'
+         '            if force or not seg.exists():\n'
+         '                _render_black_segment(float(dur), seg)\n'
+         '            return seg\n'
+         '        if seg.exists() and not force and not _newer(Path(str(path)), seg) and _fx_stamp_ok(seg, fx, dur):\n'),
+        ('    segs = [None] * len(plan)\n'
+         '    with ThreadPoolExecutor(max_workers=RENDER_WORKERS) as ex:\n'
+         '        futs = {ex.submit(one, i, e): i for i, e in enumerate(plan)}\n',
+         '    empty = sum(float(e[3]) for e in plan if not str(e[1] or "").strip())\n'
+         '    whole = sum(float(e[3]) for e in plan) or 1.0\n'
+         '    if empty >= 0.25 * whole:\n'
+         '        raise RuntimeError(f"Studio found no picture to show for {empty:.0f} s of this {whole:.0f} s video (no stock "\n'
+         '                           "footage, picture or clip was left), so it stopped instead of making it mostly black. "\n'
+         '                           "Check your stock footage key in Setup & accounts, then press Resume.")\n'
+         '    segs = [None] * len(plan)\n'
+         '    with ThreadPoolExecutor(max_workers=RENDER_WORKERS) as ex:\n'
+         '        futs = {ex.submit(one, i, e): i for i, e in enumerate(plan)}\n'),
     ],
     # The background remover (removebg.py) works on kie.ai alone, but cut-out movement, photo spotlights and
     # objects were switched off without a WaveSpeed key, so drawn styles got no figure moves on a Kie-only setup.

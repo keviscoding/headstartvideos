@@ -1,5 +1,14 @@
 [
   {
+    "build": 131,
+    "date": "2026-11-07",
+    "title": "Videos no longer stop on \"has an empty name\"",
+    "items": [
+      "When Studio had no picture left for a moment of a video, it stopped with \"WindowsPath('.') has an empty name\". That moment now plays a short black hold and the video finishes.",
+      "If a video has no picture for a quarter of its length or more, Studio stops and says so in plain words instead of making a mostly black video. Check your stock footage key in Setup & accounts, then press Resume."
+    ]
+  },
+  {
     "build": 130,
     "date": "2026-11-06",
     "title": "Animated channels no longer stop on a fade to black",
