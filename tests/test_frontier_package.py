@@ -334,7 +334,15 @@ def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp
               b'def _held_before_fade(src, tail, src_dur):\n'
               b'    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith("doc_") or _fades_out(src, src_dur)):\n'
               b'        return True\n'
-              b'    return False\n')
+              b'    return False\n\n\n'
+              b'def _render_astro_segments(plan, force, fxp, seg, dur, path, idx):\n'
+              b'    def one(i, e):\n'
+              b'        fx = fxp.get(idx)\n'
+              b'        if seg.exists() and not force and not _newer(Path(str(path)), seg) and _fx_stamp_ok(seg, fx, dur):\n'
+              b'            return seg\n'
+              b'    segs = [None] * len(plan)\n'
+              b'    with ThreadPoolExecutor(max_workers=RENDER_WORKERS) as ex:\n'
+              b'        futs = {ex.submit(one, i, e): i for i, e in enumerate(plan)}\n')
     patched = package.patch_engine("make_video.py", engine).decode()
     ns = {}
     exec(compile(patched, "make_video.py", "exec"), ns)
