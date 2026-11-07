@@ -688,3 +688,26 @@ def test_quests_hud_is_laid_although_the_release_lacks_one_font_face(tmp_path):
     assert "if (FONTS / f).is_file()" in patched
     shipped = [f for f in files if "Frontier/assets/fonts/" + f in names]
     assert shipped and set(files) - set(shipped) == {"Montserrat-Book.ttf"}, "only that one face is missing"
+
+
+def test_a_slot_with_nothing_to_show_plays_black_and_a_mostly_empty_video_stops_with_the_reason():
+    """The plan's "nothing at all to show" slot (a photo with no file) stopped a customer's Windows video with
+    "WindowsPath('.') has an empty name" (Path("").with_suffix in the animated-still check, 2026-11-07)."""
+    import textwrap
+    import zipfile
+    source = Path.home() / "Downloads" / "Frontier" / "files" / "v5" / "Frontier-5.3-FULL.zip"
+    if not source.is_file():
+        pytest.skip("the private engine source is not on this computer")
+    with zipfile.ZipFile(source) as engine:
+        patched = package.patch_engine("make_video.py", engine.read("Frontier/make_video.py")).decode()
+    compile(patched, "make_video.py", "exec")
+    start = patched.index("def _render_astro_segments(")
+    body = patched[start:patched.index("\ndef ", start + 10)]
+    empty_slot = body.index('        if not str(path or "").strip():\n')
+    assert empty_slot < body.index('anim = Path(str(path)).with_suffix(".anim.mp4")'), "black before any path is used"
+    assert empty_slot < body.index("_depth_segment(")
+    guard = body[body.index("    empty = sum("):body.index("    segs = [None] * len(plan)")]
+    stop = lambda plan: exec(textwrap.dedent(guard), {"plan": plan})   # noqa: E731
+    stop([("photo", "", False, 2.0)] + [("video", "/j/a.mp4", False, 8.0)] * 4)    # 2 s of 34: a short hole plays black
+    with pytest.raises(RuntimeError, match="no picture to show for 30 s of this 40 s video"):
+        stop([("photo", "", False, 30.0), ("video", "/j/a.mp4", False, 10.0)])
