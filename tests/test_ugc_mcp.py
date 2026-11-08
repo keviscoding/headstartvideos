@@ -144,6 +144,7 @@ def test_any_clipping_ask_lands_the_real_clips_of_a_real_source(mcp, monkeypatch
     assert ui["view"] == "clips" and ui["source"]["channel"] == "Kai Cenat" and ui["found"] == 10
     assert 6 <= len(ui["clips"]) <= 10 and all(c["video"].startswith(V + "clip-gta6_1_") for c in ui["clips"])
     assert "GTA 6 EXTENDED LOOK LIVE REACTION" in text and "nothing new was cut" in text
+    assert "(Kai Cenat, 1:03:00)" in text                                       # an hour-long source reads h:mm:ss
     assert text.endswith("Make yours at channelrecipe.com.")
 
 

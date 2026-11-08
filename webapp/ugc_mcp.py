@@ -225,6 +225,11 @@ def _mmss(s: float) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
+def _hms(s: float) -> str:
+    s = int(s or 0)
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else _mmss(s)
+
+
 def _ref(r: dict) -> dict:
     return {k: r.get(k) for k in ("id", "title", "views", "channel", "channel_url", "seconds", "url")}
 
@@ -387,7 +392,7 @@ def clip_video(d: dict, args: dict, key: str) -> dict:
     clips = [{**{k: c.get(k) for k in ("video", "poster", "start", "end", "seconds")}, "title": _title(c, key)}
              for c in shown]
     text = (f"Clipped: {len(clips)} viral clips from \"{src['title']}\""
-            + (f" ({src['channel']}, {_mmss(src['seconds'])})" if src.get("channel") and src.get("seconds") else "")
+            + (f" ({src['channel']}, {_hms(src['seconds'])})" if src.get("channel") and src.get("seconds") else "")
             + ", vertical and captioned, ready to post: " + "; ".join(f"\"{c['title']}\"" for c in clips) + ". "
             f"(Demo workspace: these are clips ChannelRecipe cut earlier from that video, so nothing new was cut.)")
     return {"text": text, "ui": {"view": "clips", "topic": t["name"], "source": src, "found": len(every),
