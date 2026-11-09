@@ -832,3 +832,33 @@ def test_an_uncertain_presenter_submission_is_sent_again_only_when_the_creator_c
     media.avatar_clip("kling-standard", "https://f/face", "https://f/voice", dest)
     assert len(creates) == 1 and dest.read_bytes() == b"generated media"
     assert any(".uncertain-" in p.name for p in (hub / ".cr-tasks").glob("*.json")), "the uncertain receipt is kept"
+
+
+def test_an_uncertain_kie_voice_part_is_read_again_only_when_the_creator_chooses(hub, monkeypatch):
+    """A Windows customer's Charon voice (2026-11-07): parts 000-006 made, part 007 sent and no task ID came back. Every
+    Resume stopped on "uncertain result", and the Gemini man's voice was the same request. The stop now says it's
+    uncertain, Resume still never sends that part by itself, and the creator's "again" sets its receipt aside."""
+    media.cr_bridge.save_settings({"costs_accepted": True, "narration": {"provider": "kie"}})
+    (hub / media.STYLE_VOICE_PIN).write_text(json.dumps({"provider": "kie", "model": GEMINI, "voice": "Charon"}))
+    monkeypatch.setattr(media, "_chunks", lambda text, limit=2400: iter(["Part one.", "Part two."]))
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    monkeypatch.setattr(media.subprocess, "run", lambda args, **k: Path(args[-1]).write_bytes(b"mp3"))  # Gemini: wav
+    sent, answers = [], [{"code": 200, "data": {"taskId": "task-1"}}, {"code": 500, "msg": "Server busy"}]
+    monkeypatch.setattr(media.requests, "post", lambda url, **kw: sent.append(kw["json"]) or response(answers.pop(0)))
+    monkeypatch.setattr(media.requests, "get", lambda url, **kw: response({"code": 200, "data": {
+        "state": "success", "resultJson": json.dumps({"resultUrls": ["https://files.example/part.wav"]})}}))
+    speak = lambda: media.narrate(_voice_engine(), "Part one. Part two.", hub / "audio.mp3", hub / "subs.srt")
+    with pytest.raises(media.AccountStop):
+        speak()
+    with pytest.raises(media.AccountStop, match="uncertain result"):
+        speak()
+    assert len(sent) == 2, "Resume never sends the uncertain part by itself, and the made part is reused"
+    assert json.loads((hub / media.VOICE_FAILED).read_text())["uncertain"] is True
+    assert len(media.uncertain_narration(hub)) == 1
+    assert media.retry_narration(hub) == 1 and media.uncertain_narration(hub) == []
+    answers.append({"code": 200, "data": {"taskId": "task-3"}})
+    speak()
+    assert len(sent) == 3 and sent[-1]["input"]["dialogue_turns"][0]["text"] == "Part two."
+    assert sent[-1]["input"]["speakers"][0]["voice_name"] == "Charon", "the series keeps its voice"
+    kept = list((hub / "audio-hub-voice" / ".cr-tasks").glob("*.uncertain-*.json"))
+    assert len(kept) == 1, "the uncertain receipt is kept under its own name"
