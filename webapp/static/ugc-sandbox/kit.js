@@ -134,8 +134,17 @@
     tpl = D.templates.find((t) => t.id === (saved.get("t") || def.t)) || D.templates[day % D.templates.length];
     path = ready().find((p) => p.id === (saved.get("p") || def.p)) || ready()[day % ready().length];
     if (!usable(tpl)) { const us = D.templates.filter(usable); tpl = us[day % us.length]; }
+    // A link's method/topic always wins over a format's lock (the hub, 2026-11-09: the bot's sheets link #m=like&p=highway,
+    // and the kit's default GTA 6 countdown, locked to claude + gta6, used to undo it): a format whose lock agrees with
+    // the link is kept or found, else an unlocked one
+    const wantM = saved.get("m"), wantP = saved.get("p");
+    const agrees = (t) => { const l = lockOf(t); return !l || ((!wantM || (l.m && l.m.id === wantM)) && (!wantP || !t.topic || (l.p && l.p.id === wantP))); };
+    if ((wantM || wantP) && !agrees(tpl)) {
+      const us = D.templates.filter((t) => usable(t) && agrees(t));
+      tpl = us.find((t) => lockOf(t)) || us[0] || free() || tpl;
+    }
     const l = lockOf(tpl);
-    if (l) { method = l.m; path = l.p; }
+    if (l) { method = l.m; path = (wantP && !tpl.topic && ready(l.m).find((x) => x.id === wantP)) || l.p; }
   }
 
   function player(ex) {
@@ -221,7 +230,8 @@
     const l = lockOf(t);
     if (l && l.p) { p = t.topic ? l.p : ready(l.m).find((x) => x.id === (p && p.id)) || l.p; if (l.m !== method) { method = l.m; renderPaths(); } }
     tpl = t; path = p; renderToday();
-    if (scroll) $("#today").scrollIntoView({ behavior: "smooth", block: "start" });
+    // (a phone jumps: a long smooth scroll was cut short by the re-render, leaving the creator at the old picker)
+    if (scroll) $("#today").scrollIntoView({ behavior: PHONE() ? "auto" : "smooth", block: "start" });
   }
 
   function renderTemplates() {
@@ -241,7 +251,11 @@
       return `<button class="pcard" type="button" data-p="${esc(p.id)}" ${n ? "" : "disabled"}>
         <div><small>${esc(tag)}</small><b>${esc(p.name)}</b><small class="state ${n ? "" : "wait"}">${n ? `${n} ready-made video${n > 1 ? "s" : ""}` : "Coming soon"}</small></div></button>`;
     }).join("");
-    $("#paths").innerHTML = `<div style="grid-column:1/-1" class="switch">${tabs}</div>${cards}`;
+    $("#paths").innerHTML = `<div style="grid-column:1/-1" class="switch">${tabs}</div><div class="pcards">${cards}</div>`;
+    // the rows scroll sideways on a phone: show the chosen method and topic, not the start of the row
+    for (const el of $("#paths").querySelectorAll(".switch .btn:not(.ghost), .pcard.on, .pcard[data-p=\"" + (path && path.id) + "\"]")) {
+      const row = el.parentElement; if (row.scrollWidth > row.clientWidth) row.scrollLeft = el.offsetLeft - row.offsetLeft - 16;
+    }
     $("#paths").onclick = (e) => {
       const mb = e.target.closest("[data-m]");
       // picking another method or topic leaves a locked format for a free one (the lock would undo the pick)
@@ -324,6 +338,18 @@
     if (c) copy(c.dataset.copy);
   });
 
+  // On a phone the method and topic picker sits right above today's video, as two rows that scroll sideways (the hub,
+  // 2026-11-09: it was ~18 screens down, under the viral list); the viral list stays where it was.
+  const PHONE = () => window.matchMedia("(max-width:700px)").matches;
+  function pickerUp() {
+    if (!PHONE() || $(".picker-top")) return;
+    const sec = document.createElement("section");
+    sec.className = "block picker-top";
+    sec.innerHTML = `<h2>Your walkthrough and its topic</h2><p class="muted">Tap one: the shots below change to it.</p>`;
+    sec.append($("#paths"));
+    $("#today").before(sec);
+  }
+
   async function main() {
     D = await json("pathways.json");
     S = await json("strategies.json");
@@ -331,6 +357,7 @@
     O = await json("outliers.json");
     if (D.tutorial) { const t = $("#tutorial"); t.hidden = false; $("video", t).src = D.tutorial; $("video", t).poster = D.tutorial.replace(/\.mp4$/, ".jpg"); if (!store.get("seen-tutorial")) t.open = true; t.addEventListener("toggle", () => store.set("seen-tutorial", "1")); }
     pickToday();
+    pickerUp();
     renderTemplates(); renderPaths(); renderInspo(); renderToday();
     if (O) { wireOutliers(); renderOutliers(); }
     document.querySelectorAll(".pcard").forEach((c) => c.classList.toggle("on", c.dataset.p === path.id));

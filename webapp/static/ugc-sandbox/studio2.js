@@ -87,6 +87,9 @@
     $("#methods").innerHTML = D.methods.map((m) => `<button type="button" data-m="${m.id}" class="${m === M ? "on" : ""}" ${m.soon ? "disabled" : ""}>
       <span class="ic">${{ clone: "⧉", claude: "✳︎", like: "🔗", ranking: "🏆", clipping: "✂︎", amazon: "📦" }[m.id] || "•"}</span>${esc(m.name)}${m.soon ? "<small>soon</small>" : ""}</button>`).join("");
     $("#methods").onclick = (e) => { const b = e.target.closest("button[data-m]"); if (b && !b.disabled) { location.hash = `${b.dataset.m}/`; } };
+    // on a phone the methods are one row that scrolls sideways: show the open one
+    const nv = $("#methods"), on = $("#methods button.on");
+    if (on && nv.scrollWidth > nv.clientWidth) nv.scrollLeft = on.offsetLeft - nv.offsetLeft - 14;
   }
 
   /* ---------- copy a viral channel ---------- */
