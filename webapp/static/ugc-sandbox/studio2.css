@@ -115,3 +115,53 @@ h1 em{font-style:normal;background:linear-gradient(90deg,#b79cff,var(--a2));-web
 .mini{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}.mini img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;opacity:0;transform:translateY(6px);transition:.3s}.mini img.in{opacity:1;transform:none}.wave.small{height:40px}
 .cl-video{align-self:flex-start;display:flex;flex-direction:column;gap:10px;width:100%}.cl-video .player{max-width:300px}.cl-video .player.wide{max-width:560px}.cl-box{display:flex;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:8px}.cl-box input{flex:1;background:none;border:0;color:var(--text);font:500 15px Inter;padding:8px 10px;outline:none}.cl-box .go{border-radius:12px;padding:8px 14px}.hint{color:var(--muted);font-size:12px;text-align:center;margin:0}
 .cl-chat>*{flex-shrink:0}
+/* on a phone nothing in the chat may widen the page (2026-11-09: the like flow's pasted link and the tool rows made it 456 px on a 375 px screen) */
+.msg{overflow-wrap:anywhere}.tool .th{flex-wrap:wrap}.stage,.cl,.cl-chat,.tool{min-width:0}
+/* on a phone (the bot's sheet links straight here, 2026-11-09): the methods are one row that scrolls sideways above the
+   walkthrough, not a full screen of menu; a link field takes the whole width with its button under it */
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr)}   /* (a row that scrolls must not widen the one column) */
+  .side{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border-right:0;border-bottom:1px solid var(--line);min-width:0}
+  .side-foot{display:none}
+  nav#methods{flex-direction:row;overflow-x:auto;gap:6px;scrollbar-width:none}
+  nav#methods button{flex:0 0 auto;white-space:nowrap;padding:8px 10px}
+  .stage{padding:16px 16px 48px}
+}
+@media (max-width:560px){
+  .bigin{flex-direction:column;align-items:stretch}
+  .bigin .go{width:100%}
+}
+
+/* the one-tap B-roll (studio2.js AUTO): no menus, one start card, one "Done" line */
+.auto .side{display:none}.auto .app{grid-template-columns:minmax(0,1fr)}
+.auto #dl,.auto #again,.auto .unmute,.auto .hint{display:none}
+.auto-card{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:24px;background:rgba(8,8,12,.86);backdrop-filter:blur(6px)}
+.auto-box{max-width:420px;width:100%;text-align:center;display:flex;flex-direction:column;align-items:center;gap:22px;background:var(--panel);border:1px solid var(--line);border-radius:24px;padding:34px 26px}
+.auto-line{font:700 22px/1.35 Inter;color:var(--text);margin:0}
+.auto-play{width:112px;height:112px;border-radius:50%;border:0;cursor:pointer;color:#fff;font-size:44px;padding-left:8px;background:linear-gradient(90deg,var(--a),var(--a2));box-shadow:0 12px 40px rgba(139,108,240,.45)}
+.auto-ok{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;font:800 34px Inter;color:#fff;background:var(--ok)}
+/* (AUTO) the finished video shows whole inside the chat on a phone */
+.auto .cl-chat{max-height:calc(100vh - 210px)}
+.auto .cl-video .player video{max-height:calc(100vh - 330px);width:auto;max-width:100%;display:block;margin:0 auto}
+
+/* clipping: the stream's thumbnail and its timeline */
+.srcthumb{width:96px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;flex:0 0 auto}
+.timeline{position:relative;height:44px;margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.timeline #tlbar{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,rgba(139,108,240,.25),rgba(139,108,240,.45))}
+.timeline b{position:absolute;top:8px;bottom:8px;width:4px;margin-left:-2px;border-radius:3px;background:var(--line);transition:background .3s, transform .3s}
+.timeline b.on{background:var(--ok);transform:scaleY(1.15)}
+/* a 16:9 result on a phone: one column, the video full width (.reveal.wide's two columns came after the phone rule) */
+@media (max-width:860px){.reveal.wide{grid-template-columns:minmax(0,1fr)}.reveal.wide .player{width:100%}}
+/* (AUTO) on a laptop the run is filmed by a phone at arm's length: everything 1.3x (the height limits divide by it) */
+@media (min-width:1000px){
+  .auto{--z:1.3}
+  .auto .stage{zoom:var(--z);max-width:calc(1180px / var(--z))}
+  .auto .cl-chat{max-height:calc((100vh - 240px) / var(--z))}
+  .auto .cl-video .player video{max-height:calc((100vh - 330px) / var(--z))}
+  .auto .player video{max-height:calc(70vh / var(--z))}
+  .auto-box{max-width:600px;padding:44px 36px;gap:28px}
+  .auto-line{font-size:30px}
+  .auto-play{width:140px;height:140px;font-size:56px}
+  .auto-ok{width:92px;height:92px;font-size:44px}
+}
+.auto .cl-video .player{width:fit-content;max-width:100%}   /* (AUTO) the player hugs the video, no wide black box */

@@ -11,10 +11,18 @@
   const $ = (s, el = document) => el.querySelector(s);
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms * SPEED));
-  const short = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(Math.round(n || 0));
+  const short = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(1).replace(/\.0$/, "")}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(Math.round(n || 0));
   const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } } };
   const yt = (id) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
   let D, M, T, OUT, run = 0;
+  // One tap plays the whole B-roll (the owner, 2026-11-09: "even I am super confused… there's no guide"): the walkthrough
+  // opens on one start card, then ChannelRecipe's own part plays by itself and ends on "Done": the creator never types,
+  // picks or copies anything. It plays on their laptop and they film the screen with their phone. Google and YouTube
+  // are never mocked here: creators film the real ones (the owner: "the psychology won't transfer").
+  // ?manual=1 keeps the old click-through page.
+  const AUTO = !/[?&]manual=1/.test(location.search);
+  // in AUTO, does what the creator used to do, after a natural pause (never after the run changed)
+  const pilot = (my, fn, ms = 900) => { if (AUTO) wait(ms).then(() => { if (my === run) fn(); }); };
 
   async function json(name) {
     for (const url of [CDN + name + `?h=${Math.floor(Date.now() / 6e5)}`, BASE + name]) {
@@ -47,6 +55,7 @@
         if (me !== my) return;
         const k = Math.min(1, (performance.now() - t0) / dur);
         input.value = t.slice(0, Math.round(t.length * k));
+        input.scrollLeft = input.scrollWidth;            // (the words being typed stay in view, not the link's start)
         if (k >= 1) return;
         await new Promise((r) => setTimeout(r, 16));
       }
@@ -78,6 +87,7 @@
     const jump = () => { const room = (v.duration || 0) - 12; v.currentTime = room > 1 ? Math.random() * room : 0; };
     const go = () => { jump(); v.play().catch(() => {}); };
     v.loop = false;
+    if (AUTO) v.removeAttribute("controls");             // (a phone showed its scrub bar and time over the B-roll)
     v.addEventListener("timeupdate", () => { if (v.duration && v.currentTime > v.duration - 4) jump(); });
     v.addEventListener("ended", () => { jump(); v.play().catch(() => {}); });
     if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
@@ -87,6 +97,9 @@
     $("#methods").innerHTML = D.methods.map((m) => `<button type="button" data-m="${m.id}" class="${m === M ? "on" : ""}" ${m.soon ? "disabled" : ""}>
       <span class="ic">${{ clone: "⧉", claude: "✳︎", like: "🔗", ranking: "🏆", clipping: "✂︎", amazon: "📦" }[m.id] || "•"}</span>${esc(m.name)}${m.soon ? "<small>soon</small>" : ""}</button>`).join("");
     $("#methods").onclick = (e) => { const b = e.target.closest("button[data-m]"); if (b && !b.disabled) { location.hash = `${b.dataset.m}/`; } };
+    // on a phone the methods are one row that scrolls sideways: show the open one
+    const nv = $("#methods"), on = $("#methods button.on");
+    if (on && nv.scrollWidth > nv.clientWidth) nv.scrollLeft = on.offsetLeft - nv.offsetLeft - 14;
   }
 
   /* ---------- copy a viral channel ---------- */
@@ -97,7 +110,8 @@
       <div class="bigin"><input id="url" placeholder="Paste a YouTube channel or video link" autocomplete="off">${button("Analyze channel", "go")}</div>
       ${refs.length ? `<p class="label" style="margin-top:22px">Going viral in ${esc(T.name)}</p><div class="chips">${refs.slice(0, 4).map((r) => `<button class="chip" type="button" data-u="${esc(r.channel_url)}">${esc(r.channel)}<small>${short(r.views)} views</small></button>`).join("")}</div>` : ""}`);
     $(".chips")?.addEventListener("click", (e) => { const c = e.target.closest("[data-u]"); if (c) $("#url").value = c.dataset.u; });
-    $("#url").focus();
+    if (!AUTO) $("#url").focus();
+    pilot(my, async () => { const c = $(".chips [data-u]"); if (c) c.click(); else $("#url").value = (refs[0] || {}).channel_url || "https://www.youtube.com/"; await wait(900); if (my === run) $("#go").click(); }, 1200);
     await new Promise((res) => { const go = () => { if ($("#url").value.trim()) res(); else $("#url").focus(); }; $("#go").onclick = go; $("#url").onkeydown = (e) => { if (e.key === "Enter") go(); }; });
     if (my !== run) return;
     const url = $("#url").value.trim().toLowerCase();
@@ -132,6 +146,7 @@
     const target = 92 + Math.floor(Math.random() * 7);
     const iv = setInterval(() => { p = Math.min(target, p + 3); ring.style.setProperty("--p", p); $("#pct").textContent = p + "%"; if (p >= target) clearInterval(iv); }, 40 * SPEED);
     for (const li of document.querySelectorAll(".traits li")) { await wait(420); li.classList.add("in"); }
+    pilot(my, () => $("#next")?.click(), 1400);
     await clicked();
     if (my !== run) return;
     // idea
@@ -144,7 +159,8 @@
     const typeIdea = typer(input);
     $(".chips").onclick = (e) => { const c = e.target.closest(".chip"); if (c) { const o = T.outputs.find((x) => x.title === c.textContent); if (o) OUT = o; typeIdea(c.textContent); } };
     input.onkeydown = (e) => { if (e.key === "Tab" && !input.value) { e.preventDefault(); typeIdea(OUT.title); } if (e.key === "Enter") $("#make").click(); };
-    input.focus();
+    if (!AUTO) input.focus();
+    pilot(my, async () => { typeIdea(OUT.title); await wait(OUT.title.length * 32 + 900); if (my === run) $("#make").click(); }, 1000);
     await clicked("make");
     if (my !== run) return;
     await build(my, typeIdea.value() || OUT.title, "clone");
@@ -160,7 +176,8 @@
     const typeIt = typer(input);
     $(".chips").onclick = (e) => { const c = e.target.closest("[data-t]"); if (c) { T = M.topics.find((t) => t.id === c.dataset.t); OUT = pickOutput(); typeIt(T.name); } };
     input.onkeydown = (e) => { if (e.key === "Tab" && !input.value) { e.preventDefault(); typeIt(T.name); } if (e.key === "Enter") $("#go").click(); };
-    input.focus();
+    if (!AUTO) input.focus();
+    pilot(my, async () => { typeIt(T.name); await wait(T.name.length * 32 + 900); if (my === run) $("#go").click(); }, 1000);
     await clicked("go");
     if (my !== run) return;
     const clips = (T.clips || []).slice(0, 12);
@@ -188,9 +205,56 @@
     screen(`<p class="label">Ranked by reactions and replays</p><h1>Your <em>top 5</em></h1><ol class="rank-list">${picks.map(([, i], k) => `<li><b>${5 - k}</b><img src="${yt(clips[i].id)}" alt=""><span>${esc(clips[i].title).slice(0, 70)}</span></li>`).reverse().join("")}</ol><div class="row">${button("Make the Short →")}</div>`);
     const items = [...document.querySelectorAll(".rank-list li")].reverse();
     for (const li of items) { li.classList.add("in"); await wait(380); }
+    pilot(my, () => $("#next")?.click(), 1400);
     await clicked();
     if (my !== run) return;
     await build(my, T.name, "ranking");
+  }
+
+  /* ---------- clipping: a stream in, its viral moments out as captioned Shorts (real clips cut from that stream) ---------- */
+  const hms = (n) => { n = Math.round(n || 0); const h = Math.floor(n / 3600), m = Math.floor(n % 3600 / 60), x = String(n % 60).padStart(2, "0"); return h ? `${h}:${String(m).padStart(2, "0")}:${x}` : `${m}:${x}`; };
+  async function clipping(my) {
+    const o = OUT, src = o.source || {}, clips = (o.clips || []).filter((c) => c.video);
+    steps(1, 4);
+    screen(`<h1>Clip any <em>stream</em></h1><p class="lead">Paste a stream or podcast. ChannelRecipe watches all of it, finds the moments that go viral and cuts them into captioned Shorts.</p>
+      <div class="bigin"><input id="url" placeholder="Paste a YouTube video link" autocomplete="off">${button("Find the viral clips", "go")}</div>`);
+    const input = $("#url"), typeUrl = typer(input);
+    input.onkeydown = (e) => { if (e.key === "Tab" && !input.value) { e.preventDefault(); typeUrl(src.url || ""); } if (e.key === "Enter") $("#go").click(); };
+    if (!AUTO) input.focus();
+    pilot(my, async () => { typeUrl(src.url || ""); await wait((src.url || "").length * 32 + 900); if (my === run) $("#go").click(); }, 1000);
+    await new Promise((res) => { $("#go").onclick = () => { if (input.value.trim()) res(); else input.focus(); }; });
+    if (my !== run) return;
+    // watching the whole stream: the playhead runs, each clip's real place lights up as it passes
+    steps(2, 4);
+    const len = src.seconds || 1;
+    screen(`<div class="chan"><img class="srcthumb" src="${esc(src.thumb || "")}" alt=""><div><b>${esc(src.title || "")}</b><small>${esc(src.channel || "")} · ${hms(len)} · watching all of it…</small></div></div>
+      <div class="timeline"><i id="tlbar"></i>${clips.map((c) => `<b style="left:${Math.min(99, (c.start || 0) / len * 100).toFixed(2)}%" data-at="${(c.start || 0) / len}"></b>`).join("")}</div>
+      <div class="stats"><div class="stat"><b id="s1">0:00</b><small>watched</small></div><div class="stat"><b id="s2">0</b><small>viral moments found</small></div></div>`);
+    const marks = [...document.querySelectorAll(".timeline b")];
+    for (let k = 0; k <= 1.0001; k += 0.025) {
+      $("#tlbar").style.width = `${k * 100}%`; $("#s1").textContent = hms(len * k);
+      const lit = marks.filter((m) => +m.dataset.at <= k); lit.forEach((m) => m.classList.add("on")); $("#s2").textContent = String(lit.length);
+      await wait(110);
+      if (my !== run) return;
+    }
+    await wait(700);
+    // the clips themselves
+    steps(3, 4);
+    screen(`<p class="label">Cut, captioned and vertical</p><h1><em>${clips.length}</em> viral clips</h1>
+      <div class="grid four">${clips.map((c) => `<div class="thumb tall"><img src="${esc(c.poster)}" alt=""><span class="v">${hms(c.seconds)}</span></div>`).join("")}</div>`);
+    for (const t of document.querySelectorAll(".thumb")) { t.classList.add("in"); await wait(160); }
+    await wait(1600);
+    if (my !== run) return;
+    // one of them plays
+    steps(4, 4);
+    const c = clips[Math.floor(Math.random() * clips.length)] || {};
+    screen(`<div class="reveal"><div class="player"><video id="v" src="${esc(c.video || "")}" poster="${esc(c.poster || "")}" playsinline muted loop controls></video><button class="unmute" id="um" type="button">🔊 Sound on</button></div>
+      <div><span class="done-badge">✓ ${clips.length} clips ready</span><h1 style="font-size:28px">${esc(c.title || "")}</h1>
+      <ul class="checks"><li>Its best moments, found by watching all of it</li><li>Cut vertical, captioned</li><li>Ready to post</li></ul></div></div>`);
+    const v = $("#v");
+    playFrom(v);
+    $("#um").onclick = () => { v.muted = false; v.play(); $("#um").remove(); };
+    finish(my);
   }
 
   /* ---------- ChannelRecipe in Claude (the corpus's biggest angle: "connect it to Claude") ---------- */
@@ -208,7 +272,8 @@
       <p class="hint">Tab types the request · Enter sends it</p></div>`);
     const input = $("#ask"), typeAsk = typer(input);
     input.onkeydown = (e) => { if (e.key === "Tab" && !input.value) { e.preventDefault(); typeAsk(ask); } if (e.key === "Enter") $("#send").click(); };
-    input.focus();
+    if (!AUTO) input.focus();
+    pilot(my, async () => { typeAsk(ask); await wait(ask.length * 32 + 1000); if (my === run) $("#send").click(); }, 1000);
     await new Promise((res) => { $("#send").onclick = () => { if (input.value.trim()) res(); else input.focus(); }; });
     if (my !== run) return;
     const said = typeAsk.value() || input.value.trim() || ask;
@@ -258,9 +323,12 @@
     chat.scrollTop = chat.scrollHeight;
     const v = $("#v");
     playFrom(v);
+    // the video's height is only known once it loads: then the chat scrolls to show it whole
+    v.addEventListener("loadedmetadata", () => { chat.scrollTop = chat.scrollHeight; }, { once: true });
     $("#um").onclick = () => { v.muted = false; v.play(); $("#um").remove(); };
     $("#again").onclick = () => start();
     $("#dl").onclick = (e) => { e.target.textContent = "✓ Saved to Downloads"; e.target.disabled = true; };
+    finish(my);
   }
 
   /* ---------- building and the reveal (both flows) ---------- */
@@ -307,6 +375,25 @@
     $("#um").onclick = () => { v.muted = false; v.play(); $("#um").remove(); };
     $("#again").onclick = () => start();
     $("#dl").onclick = (e) => { e.target.textContent = "✓ Saved to Downloads"; e.target.disabled = true; };
+    finish(run);
+  }
+
+  /* ---------- the one-tap B-roll (AUTO) ---------- */
+  function card(html) {
+    $(".auto-card")?.remove();
+    const c = document.createElement("div");
+    c.className = "auto-card"; c.innerHTML = `<div class="auto-box">${html}</div>`;
+    document.body.append(c);
+    return c;
+  }
+  // the finished video plays a while, then one line tells them they're done
+  function finish(my) {
+    if (!AUTO) return;
+    wait(7000).then(() => { if (my === run) card(`<div class="auto-ok">✓</div><p class="auto-line">Done ✅ Send the clip to the bot.</p>`); });
+  }
+  async function play(my) {
+    $(".auto-card")?.remove();
+    ({ ranking, claude: claudeFlow, clipping }[M.flow] || clone)(my);
   }
 
   function start() {
@@ -318,10 +405,15 @@
     OUT = pickOutput();
     $("#crumb").textContent = M.name;
     nav();
-    ({ ranking, claude: claudeFlow }[M.flow] || clone)(run);
+    if (!AUTO) { ({ ranking, claude: claudeFlow, clipping }[M.flow] || clone)(run); return; }
+    const my = run;
+    screen("");
+    card(`<p class="auto-line">Open this on your laptop. Tap ▶ and film the screen with your phone.</p><button class="auto-play" id="autoplay" type="button" aria-label="Play">▶</button>`);
+    $("#autoplay").onclick = () => play(my);
   }
 
   async function main() {
+    if (AUTO) document.body.classList.add("auto");
     D = await json("strategies.json");
     window.addEventListener("hashchange", start);
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") start(); });

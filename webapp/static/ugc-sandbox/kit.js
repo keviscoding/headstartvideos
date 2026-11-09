@@ -60,13 +60,6 @@
       // the "like" walkthrough's pasted link: the topic's own viral video (strategies.json "link")
       .replaceAll("{link}", t.link || (r && r.id ? `https://www.youtube.com/shorts/${r.id}` : "the video's link"));
   }
-  // The Claude walkthrough films real Claude with ChannelRecipe connected: each creator's own sandboxed connector
-  // (site webapp/ugc_mcp.py), set up once, then the one prompt the kit fills in for the topic.
-  const MCP = `${location.origin}/ugc-mcp/${location.pathname.split("/")[2] || ""}/mcp`;
-  // Every promise in a script needs its asset in the kit (owner 2026-11-03: "how do the UGC people know what prompt to
-  // paste?"): the prompt sits inside the walkthrough shot, and "comment KEYWORD" comes with the reply to send.
-  const promptBox = (p) => `<div class="hook prompt-inline"><span>Paste this prompt in Claude</span><b>${esc(fill(method.prompt, p))}</b>
-      <button class="btn ghost small" type="button" data-copy="${esc(fill(method.prompt, p))}">Copy the prompt</button></div>`;
   function dmBox(p) {
     // the reply backs every close's promise ("the prompt I use", "my guide", "step-by-step"): the method's own steps
     const kw = fill("{keyword}", p), steps = (method.guide || []).map((g, i) => `${i + 1}) ${fill(g, p)}`);
@@ -75,24 +68,6 @@
     return `<div class="hook dm-box"><span>When people comment ${esc(kw)}, send them this</span><b>${esc(msg)}</b>
       <button class="btn ghost small" type="button" data-copy="${esc(msg)}">Copy the reply</button></div>`;
   }
-  // Connecting ChannelRecipe to Claude, as close to one button as Claude allows (owner 2026-11-03: creators got lost):
-  // three numbered buttons at the TOP of the video, before any shot; once done it folds to one line.
-  const setupDone = () => store.get("claude-setup") === "done";
-  const claudeBox = (p) => {
-    const pr = fill(method.prompt || "", p);
-    if (setupDone()) return `<div class="setup done"><b>✓ ChannelRecipe is connected to Claude</b>
-      <button class="btn ghost small" type="button" id="setup-again">Show the setup again</button></div>`;
-    return `<div class="setup"><span>Before you film · connect ChannelRecipe to Claude (1 minute, only once)</span>
-      <ol>
-        <li><button class="btn" type="button" data-copy="${esc(MCP)}">1 · Copy your ChannelRecipe link</button></li>
-        <li><a class="btn" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener">2 · Open Claude's connectors ↗</a>
-          <small>Click <b>Add custom connector</b>, name it <b>ChannelRecipe</b>, paste the link, click <b>Add</b>.
-          (In the Claude app: Settings → Connectors.)</small></li>
-        <li><a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener" data-copy="${esc(pr)}">3 · Copy the prompt and open Claude ↗</a>
-          <small>Paste it in the new chat: <b>${esc(pr)}</b>. If Claude asks, choose <b>Always allow</b>. The video plays right in the chat.</small></li>
-      </ol>
-      <button class="btn ghost small" type="button" id="setup-done">It worked, hide this</button></div>`;
-  };
   const shotsFor = (tp, m) => tp.shots.map((s) => s.what === "The walkthrough" && m.walk_say ? { ...s, say: m.walk_say } : s);
   const embed = (plat, id) => plat === "tt" ? `https://www.tiktok.com/embed/v2/${id}` : `https://www.instagram.com/reel/${id}/embed/`;
   const thumb = (plat, id) => `${MEDIA}ex_${plat === "tt" ? "tt" : "ig"}-${id}.jpg`;
@@ -134,14 +109,37 @@
     tpl = D.templates.find((t) => t.id === (saved.get("t") || def.t)) || D.templates[day % D.templates.length];
     path = ready().find((p) => p.id === (saved.get("p") || def.p)) || ready()[day % ready().length];
     if (!usable(tpl)) { const us = D.templates.filter(usable); tpl = us[day % us.length]; }
+    // A link's method/topic always wins over a format's lock (the hub, 2026-11-09: the bot's sheets link #m=like&p=highway,
+    // and the kit's default GTA 6 countdown, locked to claude + gta6, used to undo it): a format whose lock agrees with
+    // the link is kept or found, else an unlocked one
+    const wantM = saved.get("m"), wantP = saved.get("p");
+    const agrees = (t) => { const l = lockOf(t); return !l || ((!wantM || (l.m && l.m.id === wantM)) && (!wantP || !t.topic || (l.p && l.p.id === wantP))); };
+    if ((wantM || wantP) && !agrees(tpl)) {
+      const us = D.templates.filter((t) => usable(t) && agrees(t));
+      tpl = us.find((t) => lockOf(t)) || us[0] || free() || tpl;
+    }
     const l = lockOf(tpl);
-    if (l) { method = l.m; path = l.p; }
+    if (l) { method = l.m; path = (wantP && !tpl.topic && ready(l.m).find((x) => x.id === wantP)) || l.p; }
   }
 
   function player(ex) {
     const [plat, id, views, who] = ex;
     return `<div class="player" data-plat="${plat}" data-id="${esc(id)}"><img src="${thumb(plat, id)}" alt="">
       <button type="button" aria-label="Play the example">▶</button><small>${esc(views)} views · @${esc(who)}</small></div>`;
+  }
+
+  // The B-roll library (handoffs/ugc-broll-library.md): creators film each standard screen ONCE in the bot and every
+  // video reuses it, so the kit lists face shots and one-off extras only; a method screen reads "✅ Your B-roll".
+  const BROLL = { connector: "🔌 Add ChannelRecipe to Claude", pay: "💰 What YouTube pays", channel: "📺 Copy a channel",
+                  like: "🔗 Copy one video", clip: "✂️ Clip a stream", post: "⬆️ Post it" };
+  // a screen shot's type: the scriptwriter's `type` when it has one (or "extra"), else read from the shot and the method
+  function brollOf(sh) {
+    if (sh.type) return sh.type in BROLL ? sh.type : "extra";
+    const txt = `${sh.what} ${sh.say} ${sh.how}`;
+    if (/how much does youtube pay|per (1 |one )?million|google/i.test(txt)) return "pay";
+    if (/connector|settings/i.test(sh.what)) return "connector";
+    if (method.flow === "ranking") return "extra";              // (ranking isn't a standard B-roll yet)
+    return method.id === "like" ? "like" : method.id === "clipping" ? "clip" : "channel";
   }
 
   function renderToday() {
@@ -164,8 +162,7 @@
         <p class="label">Today's video</p>
         <h3>${esc(fill(t.name, p))}</h3>
         <div class="chips"><span class="chip">${esc(method.name)}: ${esc(p.name)}</span><span class="chip plain">${esc(t.length)}</span><span class="chip plain">${esc(t.tag)}</span></div>
-        <p class="muted">${esc(t.why)} Watch the example first, then film these shots, in any order:</p>
-        ${method.prompt && shots.some((s) => s.kind === "screen") ? claudeBox(p) : ""}
+        <p class="muted">${esc(t.why)} Watch the example first, then film your face shots, in any order. Your B-rolls are the ones you filmed once in the bot.</p>
         ${hook ? `<div class="hook"><span>Your hook · ${hook.how === "screen" ? "we put it on screen" : t.hook_shot ? `say it in shot ${t.hook_shot + 1}` : "say it first"}</span>
           <b>${esc(fill(hook.line, p))}</b>${hooks.length > 1 ? `<button class="btn ghost small" type="button" id="next-h">↻ Another hook</button>` : ""}</div>` : ""}
         ${clip ? `<div class="react"><span>The clip you react to · we add it, you don't film it</span>
@@ -177,16 +174,21 @@
         <ol class="shots">${shots.map((s, i) => s.kind === "added" ? `
           <li class="shot we-add"><span class="plus">＋</span>
             <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">we add this</span></div>
-            <p class="how">${esc(s.how)}</p></div></li>` : `
+            <p class="how">${esc(s.how)}</p></div></li>` : s.kind === "screen" && brollOf(s) !== "extra" ? `
+          <li class="shot broll"><span class="plus">✅</span>
+            <div><div class="t">${i + 1}. Your B-roll: ${esc(BROLL[brollOf(s)])}<span class="kind">we use yours</span></div>
+            <p class="how">The one you filmed once in the bot plays here. Say this to camera; it goes over your words.</p>
+            <div class="say">${esc(fill(s.say, p))}</div></div></li>` : s.kind === "screen" ? `
           <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
-            <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">${s.kind === "screen" ? "film your laptop" : "your face"}</span></div>
-            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div>${s.kind === "screen" && method.prompt && !s.no_prompt ? promptBox(p) : ""}</div></li>`).join("")}</ol>
+            <div><div class="t">${i + 1}. 🎬 Also film: ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">film it with your phone, point</span></div>
+            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div></div></li>` : `
+          <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
+            <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">your face</span></div>
+            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div></div></li>`).join("")}</ol>
         ${dmBox(p)}
+        <p class="added"><b>✅ Your B-rolls:</b> filmed once in the bot, used in every video. Not filmed one yet? The bot asks for it when a video needs it.</p>
         <p class="added"><b>＋ The earnings proof: we add it for you.</b> Don't film it or edit it in. Your video comes back with it already in place.</p>
         <div class="actions">
-          ${method.prompt ? `<a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener">Open Claude →</a>
-          <a class="btn ghost" href="studio#${esc(method.id)}/${esc(p.id)}" target="_blank" rel="noopener">Practice on the website</a>`
-            : `<a class="btn" href="studio#${esc(method.id)}/${esc(p.id)}" target="_blank" rel="noopener">Open the walkthrough →</a>`}
           ${t.id === "dayn" && p.pathway ? `<a class="btn ghost" href="${MEDIA}wheel_${esc(p.pathway)}.mp4" target="_blank" rel="noopener">Open the wheel</a>` : ""}
           ${says.length ? `<button class="btn ghost" type="button" id="copy-says">Copy what to say</button>` : ""}
           <a class="btn ghost" href="${botLink(t, p, hook, clip)}" target="_blank" rel="noopener">Send my clips to the bot</a>
@@ -204,8 +206,6 @@
       if (done.size === filmable) toast("All filmed: send your clips to the bot!");
     }));
     $("#copy-says")?.addEventListener("click", () => copy(says.join("\n\n")));
-    $("#setup-done")?.addEventListener("click", () => { store.set("claude-setup", "done"); renderToday(); });
-    $("#setup-again")?.addEventListener("click", () => { store.set("claude-setup", ""); renderToday(); });
     $("#next-h")?.addEventListener("click", () => { store.set(`hook:${t.id}`, hooks.indexOf(hook) + 1); renderToday(); });
     $("#next-c")?.addEventListener("click", () => { store.set(`clip:${feedOf(t)}`, clips.indexOf(clip) + 1); renderToday(); });
     $("#next-t").addEventListener("click", () => { const us = D.templates.filter(usable); choose(us[(us.indexOf(t) + 1) % us.length], p); });
@@ -221,7 +221,8 @@
     const l = lockOf(t);
     if (l && l.p) { p = t.topic ? l.p : ready(l.m).find((x) => x.id === (p && p.id)) || l.p; if (l.m !== method) { method = l.m; renderPaths(); } }
     tpl = t; path = p; renderToday();
-    if (scroll) $("#today").scrollIntoView({ behavior: "smooth", block: "start" });
+    // (a phone jumps: a long smooth scroll was cut short by the re-render, leaving the creator at the old picker)
+    if (scroll) $("#today").scrollIntoView({ behavior: PHONE() ? "auto" : "smooth", block: "start" });
   }
 
   function renderTemplates() {
@@ -241,7 +242,11 @@
       return `<button class="pcard" type="button" data-p="${esc(p.id)}" ${n ? "" : "disabled"}>
         <div><small>${esc(tag)}</small><b>${esc(p.name)}</b><small class="state ${n ? "" : "wait"}">${n ? `${n} ready-made video${n > 1 ? "s" : ""}` : "Coming soon"}</small></div></button>`;
     }).join("");
-    $("#paths").innerHTML = `<div style="grid-column:1/-1" class="switch">${tabs}</div>${cards}`;
+    $("#paths").innerHTML = `<div style="grid-column:1/-1" class="switch">${tabs}</div><div class="pcards">${cards}</div>`;
+    // the rows scroll sideways on a phone: show the chosen method and topic, not the start of the row
+    for (const el of $("#paths").querySelectorAll(".switch .btn:not(.ghost), .pcard.on, .pcard[data-p=\"" + (path && path.id) + "\"]")) {
+      const row = el.parentElement; if (row.scrollWidth > row.clientWidth) row.scrollLeft = el.offsetLeft - row.offsetLeft - 16;
+    }
     $("#paths").onclick = (e) => {
       const mb = e.target.closest("[data-m]");
       // picking another method or topic leaves a locked format for a free one (the lock would undo the pick)
@@ -324,6 +329,18 @@
     if (c) copy(c.dataset.copy);
   });
 
+  // On a phone the method and topic picker sits right above today's video, as two rows that scroll sideways (the hub,
+  // 2026-11-09: it was ~18 screens down, under the viral list); the viral list stays where it was.
+  const PHONE = () => window.matchMedia("(max-width:700px)").matches;
+  function pickerUp() {
+    if (!PHONE() || $(".picker-top")) return;
+    const sec = document.createElement("section");
+    sec.className = "block picker-top";
+    sec.innerHTML = `<h2>Your walkthrough and its topic</h2><p class="muted">Tap one: the shots below change to it.</p>`;
+    sec.append($("#paths"));
+    $("#today").before(sec);
+  }
+
   async function main() {
     D = await json("pathways.json");
     S = await json("strategies.json");
@@ -331,6 +348,7 @@
     O = await json("outliers.json");
     if (D.tutorial) { const t = $("#tutorial"); t.hidden = false; $("video", t).src = D.tutorial; $("video", t).poster = D.tutorial.replace(/\.mp4$/, ".jpg"); if (!store.get("seen-tutorial")) t.open = true; t.addEventListener("toggle", () => store.set("seen-tutorial", "1")); }
     pickToday();
+    pickerUp();
     renderTemplates(); renderPaths(); renderInspo(); renderToday();
     if (O) { wireOutliers(); renderOutliers(); }
     document.querySelectorAll(".pcard").forEach((c) => c.classList.toggle("on", c.dataset.p === path.id));

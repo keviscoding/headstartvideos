@@ -80,3 +80,18 @@ h2{font-size:20px;margin:0 0 4px}
 .setup li small{display:block;margin-top:6px;font-size:13.5px;line-height:1.45;color:var(--muted)}
 .setup li small b{color:var(--text)}
 .setup.done{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-width:1px}
+
+/* the topic cards' wrapper is invisible on a laptop (the cards stay #paths' grid items); on a phone the picker is two rows
+   that scroll sideways, above today's video (kit.js pickerUp) */
+.pcards{display:contents}
+#today{scroll-margin-top:72px}
+@media (max-width:700px){
+  #paths{display:block}
+  #paths .switch{flex-wrap:nowrap;overflow-x:auto;margin:0 0 10px;padding-bottom:4px;scrollbar-width:none}
+  #paths .switch .btn{flex:0 0 auto;white-space:nowrap}
+  .pcards{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;scroll-snap-type:x proximity;scrollbar-width:none}
+  .pcards .pcard{flex:0 0 150px;scroll-snap-align:start}
+  .picker-top{margin-top:8px}
+}
+/* a pasted link (the like prompt) never widens the page */
+.today>*{min-width:0}.setup b,.setup small,.prompt-inline b,.dm-box b,.say{overflow-wrap:anywhere}
