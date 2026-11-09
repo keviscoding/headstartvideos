@@ -115,3 +115,5 @@ h1 em{font-style:normal;background:linear-gradient(90deg,#b79cff,var(--a2));-web
 .mini{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}.mini img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;opacity:0;transform:translateY(6px);transition:.3s}.mini img.in{opacity:1;transform:none}.wave.small{height:40px}
 .cl-video{align-self:flex-start;display:flex;flex-direction:column;gap:10px;width:100%}.cl-video .player{max-width:300px}.cl-video .player.wide{max-width:560px}.cl-box{display:flex;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:8px}.cl-box input{flex:1;background:none;border:0;color:var(--text);font:500 15px Inter;padding:8px 10px;outline:none}.cl-box .go{border-radius:12px;padding:8px 14px}.hint{color:var(--muted);font-size:12px;text-align:center;margin:0}
 .cl-chat>*{flex-shrink:0}
+/* on a phone nothing in the chat may widen the page (2026-11-09: the like flow's pasted link and the tool rows made it 456 px on a 375 px screen) */
+.msg{overflow-wrap:anywhere}.tool .th{flex-wrap:wrap}.stage,.cl,.cl-chat,.tool{min-width:0}
