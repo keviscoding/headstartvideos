@@ -209,6 +209,52 @@
     await build(my, T.name, "ranking");
   }
 
+  /* ---------- clipping: a stream in, its viral moments out as captioned Shorts (real clips cut from that stream) ---------- */
+  const hms = (n) => { n = Math.round(n || 0); const h = Math.floor(n / 3600), m = Math.floor(n % 3600 / 60), x = String(n % 60).padStart(2, "0"); return h ? `${h}:${String(m).padStart(2, "0")}:${x}` : `${m}:${x}`; };
+  async function clipping(my) {
+    const o = OUT, src = o.source || {}, clips = (o.clips || []).filter((c) => c.video);
+    steps(1, 4);
+    screen(`<h1>Clip any <em>stream</em></h1><p class="lead">Paste a stream or podcast. ChannelRecipe watches all of it, finds the moments that go viral and cuts them into captioned Shorts.</p>
+      <div class="bigin"><input id="url" placeholder="Paste a YouTube video link" autocomplete="off">${button("Find the viral clips", "go")}</div>`);
+    const input = $("#url"), typeUrl = typer(input);
+    input.onkeydown = (e) => { if (e.key === "Tab" && !input.value) { e.preventDefault(); typeUrl(src.url || ""); } if (e.key === "Enter") $("#go").click(); };
+    if (!AUTO) input.focus();
+    pilot(my, async () => { typeUrl(src.url || ""); await wait((src.url || "").length * 32 + 900); if (my === run) $("#go").click(); }, 1000);
+    await new Promise((res) => { $("#go").onclick = () => { if (input.value.trim()) res(); else input.focus(); }; });
+    if (my !== run) return;
+    // watching the whole stream: the playhead runs, each clip's real place lights up as it passes
+    steps(2, 4);
+    const len = src.seconds || 1;
+    screen(`<div class="chan"><img class="srcthumb" src="${esc(src.thumb || "")}" alt=""><div><b>${esc(src.title || "")}</b><small>${esc(src.channel || "")} · ${hms(len)} · watching all of it…</small></div></div>
+      <div class="timeline"><i id="tlbar"></i>${clips.map((c) => `<b style="left:${Math.min(99, (c.start || 0) / len * 100).toFixed(2)}%" data-at="${(c.start || 0) / len}"></b>`).join("")}</div>
+      <div class="stats"><div class="stat"><b id="s1">0:00</b><small>watched</small></div><div class="stat"><b id="s2">0</b><small>viral moments found</small></div></div>`);
+    const marks = [...document.querySelectorAll(".timeline b")];
+    for (let k = 0; k <= 1.0001; k += 0.025) {
+      $("#tlbar").style.width = `${k * 100}%`; $("#s1").textContent = hms(len * k);
+      const lit = marks.filter((m) => +m.dataset.at <= k); lit.forEach((m) => m.classList.add("on")); $("#s2").textContent = String(lit.length);
+      await wait(110);
+      if (my !== run) return;
+    }
+    await wait(700);
+    // the clips themselves
+    steps(3, 4);
+    screen(`<p class="label">Cut, captioned and vertical</p><h1><em>${clips.length}</em> viral clips</h1>
+      <div class="grid four">${clips.map((c) => `<div class="thumb tall"><img src="${esc(c.poster)}" alt=""><span class="v">${hms(c.seconds)}</span></div>`).join("")}</div>`);
+    for (const t of document.querySelectorAll(".thumb")) { t.classList.add("in"); await wait(160); }
+    await wait(1600);
+    if (my !== run) return;
+    // one of them plays
+    steps(4, 4);
+    const c = clips[Math.floor(Math.random() * clips.length)] || {};
+    screen(`<div class="reveal"><div class="player"><video id="v" src="${esc(c.video || "")}" poster="${esc(c.poster || "")}" playsinline muted loop controls></video><button class="unmute" id="um" type="button">🔊 Sound on</button></div>
+      <div><span class="done-badge">✓ ${clips.length} clips ready</span><h1 style="font-size:28px">${esc(c.title || "")}</h1>
+      <ul class="checks"><li>Its best moments, found by watching all of it</li><li>Cut vertical, captioned</li><li>Ready to post</li></ul></div></div>`);
+    const v = $("#v");
+    playFrom(v);
+    $("#um").onclick = () => { v.muted = false; v.play(); $("#um").remove(); };
+    finish(my);
+  }
+
   /* ---------- ChannelRecipe in Claude (the corpus's biggest angle: "connect it to Claude") ---------- */
   async function claudeFlow(my) {
     const refs = T.refs || [], ref = refs[0] || {};
@@ -341,17 +387,17 @@
   // the finished video plays a while, then one line tells them they're done
   function finish(my) {
     if (!AUTO) return;
-    wait(7000).then(() => { if (my === run) card(`<div class="auto-ok">✓</div><p class="auto-line">Done. Stop recording and send it to the bot.</p>`); });
+    wait(7000).then(() => { if (my === run) card(`<div class="auto-ok">✓</div><p class="auto-line">Done ✅ Stop recording and send it to the bot.</p>`); });
   }
   // the screens before the method: the viral video with its real views, then what YouTube pays (a real, cited figure)
-  async function intro(my) {
+  async function intro(my, given) {
     const refs = T.refs || [];
     const lid = (String(T.link || "").match(/(?:v=|shorts\/|youtu\.be\/)([\w-]{11})/) || [])[1];
-    const ref = refs.find((r) => r.id === lid) || refs[0];
+    const ref = given || refs.find((r) => r.id === lid) || refs[0];
     if (ref && ref.views) {
       steps(0, 4);
       screen(`<p class="label">Going viral right now</p><h1><em id="vv">0</em> views</h1>
-        <div class="viral-card"><img src="https://i.ytimg.com/vi/${esc(ref.id)}/hqdefault.jpg" alt=""><div><b>${esc(ref.title || "")}</b><small>${esc(ref.channel || "")}</small></div></div>`);
+        <div class="viral-card"><img src="${esc(ref.thumb || `https://i.ytimg.com/vi/${ref.id}/hqdefault.jpg`)}" alt=""><div><b>${esc(ref.title || "")}</b><small>${esc(ref.channel || "")}</small></div></div>`);
       countUp($("#vv"), ref.views, 1600);
       await wait(3600);
       if (my !== run) return false;
@@ -371,8 +417,9 @@
   }
   async function play(my) {
     $(".auto-card")?.remove();
-    if (["claude", "clone"].includes(M.flow) && !(await intro(my))) return;
-    ({ ranking, claude: claudeFlow }[M.flow] || clone)(my);
+    const src = M.flow === "clipping" ? (OUT.source || null) : null;
+    if (["claude", "clone", "clipping"].includes(M.flow) && !(await intro(my, src))) return;
+    ({ ranking, claude: claudeFlow, clipping }[M.flow] || clone)(my);
   }
 
   function start() {
@@ -384,7 +431,7 @@
     OUT = pickOutput();
     $("#crumb").textContent = M.name;
     nav();
-    if (!AUTO) { ({ ranking, claude: claudeFlow }[M.flow] || clone)(run); return; }
+    if (!AUTO) { ({ ranking, claude: claudeFlow, clipping }[M.flow] || clone)(run); return; }
     const my = run;
     screen("");
     card(`<p class="auto-line">Start your screen recording, then tap ▶</p><button class="auto-play" id="autoplay" type="button" aria-label="Play">▶</button>`);

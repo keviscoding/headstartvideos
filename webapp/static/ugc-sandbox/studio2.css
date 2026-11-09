@@ -151,3 +151,12 @@ h1 em{font-style:normal;background:linear-gradient(90deg,#b79cff,var(--a2));-web
 /* (AUTO) the finished video shows whole inside the chat on a phone */
 .auto .cl-chat{max-height:calc(100vh - 210px)}
 .auto .cl-video .player video{max-height:calc(100vh - 330px);width:auto;max-width:100%;display:block;margin:0 auto}
+
+/* clipping: the stream's thumbnail and its timeline */
+.srcthumb{width:96px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;flex:0 0 auto}
+.timeline{position:relative;height:44px;margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.timeline #tlbar{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,rgba(139,108,240,.25),rgba(139,108,240,.45))}
+.timeline b{position:absolute;top:8px;bottom:8px;width:4px;margin-left:-2px;border-radius:3px;background:var(--line);transition:background .3s, transform .3s}
+.timeline b.on{background:var(--ok);transform:scaleY(1.15)}
+/* a 16:9 result on a phone: one column, the video full width (.reveal.wide's two columns came after the phone rule) */
+@media (max-width:860px){.reveal.wide{grid-template-columns:minmax(0,1fr)}.reveal.wide .player{width:100%}}
