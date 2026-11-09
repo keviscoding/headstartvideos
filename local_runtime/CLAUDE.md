@@ -238,8 +238,9 @@ under Saved ideas.
 - A video that stopped on its voice (`progress(id)` shows `voice_choices`, for example Kie answering "Internal Error"):
   tell them what failed and whether anything was charged (`voice_failed`), then ask which way to carry on: the same
   voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs or Fish Audio account, or their
-  own recording. When the again choice's note says Fish Audio may already have read part of it, again can pay for
-  that part twice (a few cents): say so and pass it only after they say yes.
+  own recording. When the again choice's note says Kie or Fish Audio may already have read part of it, again (or a
+  Gemini voice) can pay for that part twice (a small charge): say so and pass it only after they say yes. Without a
+  choice, Resume stops at that same part.
   Offer only the ready ones (an ElevenLabs key goes in Setup & accounts, never in chat) and never pick for them. For
   their own recording, show them the script (`script_file`) to read, then `resume_video(id, voice="own",
   recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.

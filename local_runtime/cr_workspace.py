@@ -683,16 +683,21 @@ def install(studio, activity, *, token, home=None):
         kie_empty = failed.get("provider") == "kie" and failed.get("category") == "balance"
         import cr_fish
         unsure = cr_fish.uncertain_parts(job)
+        hub_unsure = cr_media.uncertain_narration(job)      # a Kie (or Atlas) voice part sent with no task ID back
+        twice = (f"{failed.get('label') or 'The voice service'} may already have read part of this narration (no "
+                 "clear answer came back): reading it again can pay for that part twice (a small charge on your "
+                 "balance).")
         rows = [{"id": "again", "label": "Try the same voice again", "ready": True,
                  "note": ("Fish Audio may already have read part of this narration (its audio never arrived): trying "
                           "again reads that part once more, which can pay for it twice (a few cents at most)."
-                          if unsure else
+                          if unsure else twice if hub_unsure else
                           "The voice in Setup & accounts, once more. Best after waiting a few minutes.")}]
         if failed.get("model") != GEMINI_TTS or current != "again":
             for key, (voice, words) in GEMINI_VOICES.items():
                 rows.append({"id": key, "label": f"Gemini voice through Kie ({words})", "ready": kie and not kie_empty,
                              "note": ("Your Kie balance ran out: top it up first." if kie_empty else
-                                      f"The same Kie account, read by the Gemini voice {voice}." if kie
+                                      f"The same Kie account, read by the Gemini voice {voice}."
+                                      + (" " + twice if hub_unsure else "") if kie
                                       else "Needs a Kie.ai key in Setup & accounts.")})
         rows.append({"id": "elevenlabs", "label": "Your own ElevenLabs account", "ready": eleven,
                      "note": "Skips Kie: ElevenLabs reads it directly, charged to your ElevenLabs plan." if eleven
@@ -712,7 +717,8 @@ def install(studio, activity, *, token, home=None):
                              "the voice, and the video is timed to your reading."})
         script = job / "script.txt"
         return {"stopped_on_voice": bool(failed), "current": current, "choices": rows,
-                "failed": {k: failed.get(k) for k in ("label", "reason", "category", "charged", "uncertain", "at")}
+                "failed": {**{k: failed.get(k) for k in ("label", "reason", "category", "charged", "uncertain", "at")},
+                           "uncertain": bool(failed.get("uncertain") or unsure or hub_unsure)}
                 if failed else None,
                 "has_voice": (job / "audio.mp3").is_file(),
                 "script": script.read_text(encoding="utf-8", errors="replace")[:40000] if script.is_file() else "",
@@ -747,6 +753,8 @@ def install(studio, activity, *, token, home=None):
             import cr_fish
             if pick in ("again", "fish"):
                 cr_fish.release_uncertain(job)        # the creator's yes: an uncertain Fish Audio part is read again
+            if pick == "again" or pick in GEMINI_VOICES:
+                cr_media.retry_narration(job)         # and an uncertain Kie voice part (its note said it can pay twice)
             if pick == "again":
                 target.unlink(missing_ok=True)
             elif pick == "fish":

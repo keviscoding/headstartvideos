@@ -1149,9 +1149,44 @@ def _voice_failed(job, provider, model, failed) -> None:
         (Path(job) / VOICE_FAILED).write_text(json.dumps({
             "provider": provider, "label": PROVIDERS.get(provider, {}).get("label", provider), "model": model,
             "category": getattr(failed, "category", ""), "reason": str(getattr(failed, "reason", "") or failed)[:300],
-            "charged": getattr(failed, "credits", None), "at": int(time.time())}), encoding="utf-8")
+            "charged": getattr(failed, "credits", None), "uncertain": bool(uncertain_narration(job)),
+            "at": int(time.time())}), encoding="utf-8")
     except OSError:
         pass
+
+
+# A Windows customer's Kie voice part was sent and no task ID came back (2026-11-07): every Resume stopped on "This
+# media submission has an uncertain result", and nothing could get past it. The voice choices own a voice stop
+# (cr_recover leaves its receipts to them), but only Fish Audio's uncertain parts could be released there, and the
+# Gemini man's voice is the same request as Charon's, so it met the same receipt. Now "try the same voice again" (whose
+# note says it can pay for that part twice) sets these receipts aside, as retry_presenter does for a presenter.
+def uncertain_narration(job) -> list:
+    """The receipts of this video's voice parts whose submission has an uncertain result (sent, no task ID came back):
+    run() never sends those again by itself."""
+    models = {c.get("id") for p in PROVIDERS.values() if isinstance(p, dict)
+              for c in p.get("narration_models") or [] if isinstance(c, dict)}
+    out = []
+    for receipt in sorted(Path(job).glob("*-hub-voice/.cr-tasks/*.json")):
+        if ".uncertain-" in receipt.name or ".failed-" in receipt.name:
+            continue                                  # one set aside before: kept, never read by run() again
+        try:
+            data = json.loads(receipt.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("model") in models and data.get("status") == "submitting" \
+                and not data.get("id"):
+            out.append(receipt)
+    return out
+
+
+def retry_narration(job) -> int:
+    """The creator chose to read the voice again: an uncertain voice part's receipt is kept under its own name, so the
+    next run sends that part again (the choice said that can pay for it twice)."""
+    n = 0
+    for receipt in uncertain_narration(job):
+        receipt.replace(receipt.with_name(receipt.stem + f".uncertain-{int(time.time() * 1000)}.json"))
+        n += 1
+    return n
 
 
 STYLE_VOICES = "style_voices"            # settings: {style: Gemini voice} chosen in Create for a cloned style

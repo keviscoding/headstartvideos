@@ -415,6 +415,37 @@ def test_presenter_choices_work_for_videos_moved_to_another_drive(env, tmp_path)
     assert refused()
 
 
+def test_an_uncertain_kie_voice_part_is_offered_again_with_its_note_and_released_on_yes(env, monkeypatch):
+    """A Windows customer's Charon voice stopped every Resume on an uncertain part (2026-11-07): free to resume, no
+    recovery key, and the Gemini man's voice is Charon too. The voice stop now says it's uncertain, the again choice's
+    note says it can pay for that part twice, and picking it sets that receipt aside so Resume reads the part again."""
+    import cr_media
+    job = env.home / "output" / "documentary" / "_work" / "europa--c98e2160"
+    job.mkdir(parents=True)
+    env.jobs["europa--c98e2160"] = job
+    (job / "script.txt").write_text("Europa hides an ocean.", encoding="utf-8")
+    (job / cr_media.VOICE_FAILED).write_text(json.dumps({"provider": "kie", "label": "Kie.ai", "category": "",
+        "reason": "This media submission has an uncertain result.", "charged": None, "model": "google/gemini-3-8-flash-tts"}))
+    tasks = job / "audio-hub-voice" / ".cr-tasks"
+    tasks.mkdir(parents=True)
+    (tasks / "0123456789abcdef.json").write_text(json.dumps({"provider": "kie", "model": "google/gemini-3-8-flash-tts",
+                                                             "status": "submitting", "created_at": 1}))
+    (tasks / "fedcba9876543210.json").write_text(json.dumps({"provider": "kie", "model": "google/gemini-3-8-flash-tts",
+                                                             "status": "complete", "id": "task-7"}))
+    monkeypatch.setenv("KIE_API_KEY", "customer-test-key")
+    got = env.get("/cr-workspace/voice/europa--c98e2160").json
+    assert got["stopped_on_voice"] and got["current"] == "again" and got["failed"]["uncertain"] is True
+    again = next(c for c in got["choices"] if c["id"] == "again")
+    assert again["ready"] and "Kie.ai may already have read part" in again["note"] and "twice" in again["note"]
+    pick = lambda body: env.client.post("/cr-workspace/voice/europa--c98e2160", base_url=BASE, json=body,
+                                       headers={"X-CR-Local-Token": TOKEN})
+    assert pick({"choice": "again"}).json["saved"]
+    assert cr_media.uncertain_narration(job) == []
+    assert (tasks / "fedcba9876543210.json").is_file(), "a finished part's receipt is never touched"
+    assert len(list(tasks.glob("0123456789abcdef.uncertain-*.json"))) == 1, "the uncertain receipt is kept aside"
+    assert env.get("/cr-workspace/voice/europa--c98e2160").json["failed"]["uncertain"] is False, "nothing left unsure"
+
+
 def test_a_video_whose_voice_stopped_can_be_voiced_another_way(env, monkeypatch):
     """Kie's ElevenLabs voice answered "Internal Error" three times and the creator could only wait. A video whose
     voice stopped now offers the same voice again, Gemini through the same Kie key, their own ElevenLabs account or

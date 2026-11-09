@@ -1192,7 +1192,9 @@ def _job_status(slug: str) -> dict:
             out["voice_failed"] = voice.get("failed")
             out["voice_choices"] = [{k: c.get(k) for k in ("id", "label", "ready", "note")} for c in voice.get("choices") or []]
             out["voice_note"] = ("The voice service couldn't record this video's voice. Ask the creator which way to carry "
-                                 "on (only the ready choices work now), then resume_video(id, voice=<choice id>). For "
+                                 "on (only the ready choices work now), then resume_video(id, voice=<choice id>). When "
+                                 "voice_failed.uncertain is true, resume_video(id) without a choice stops at the same "
+                                 "part: read them the choice's note (it can pay for that part twice) first. For "
                                  "their own recording, show them the script (script_file) to read, then pass the "
                                  "recording's path as recording. An ElevenLabs key goes in Setup & accounts, never in chat.")
             if voice.get("script_file"):
@@ -2296,7 +2298,10 @@ TOOLS = {
                      "stopped it first (progress(id)). When progress(id) shows voice_choices (its voice service "
                      "failed), ask which they want and pass it as voice: the same voice again, Gemini through Kie, "
                      "their own ElevenLabs account, their own Fish Audio account, or their own recording (pass its "
-                     "file path as recording). When it "
+                     "file path as recording). When voice_failed.uncertain is true, a voice part was sent with no "
+                     "clear answer: resume_video(id) as it is stops at that part again, and again (or a Gemini "
+                     "voice) reads it once more, which can pay for it twice; read them that choice's note and "
+                     "pass it only after they say yes. When it "
                      "shows presenter_choices (its AI presenter failed), ask and pass presenter: skip (finish without "
                      "the presenter) or again. Before again, read them the again choice's note: when "
                      "presenter_failed.uncertain is true, the last attempt got no clear answer and may have started, "

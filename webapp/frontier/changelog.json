@@ -1,5 +1,14 @@
 [
   {
+    "build": 132,
+    "date": "2026-11-09",
+    "title": "A voice that stopped on an unclear answer can carry on",
+    "items": [
+      "When Kie was sent part of a video's voice and never confirmed it, every Resume stopped on \"This media submission has an uncertain result\" and nothing got past it.",
+      "Try the same voice again now reads that part once more, in the same voice, and the video carries on. Its note says first that this can pay for that one part twice."
+    ]
+  },
+  {
     "build": 131,
     "date": "2026-11-07",
     "title": "Videos no longer stop on \"has an empty name\"",
