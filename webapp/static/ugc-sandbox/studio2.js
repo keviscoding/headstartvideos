@@ -72,9 +72,14 @@
   }
 
   // Every play starts at a random second of the video (the hub, 2026-11-09: no two creators show the same clip from the
-  // same second), late enough to leave 12 s to play; "Sound on" keeps that place.
+  // same second), late enough to leave 12 s to play; "Sound on" keeps that place. It never reaches the video's end (a
+  // sourced video's end card): 4 s before it, it jumps to another random second.
   function playFrom(v) {
-    const go = () => { const room = (v.duration || 0) - 12; if (room > 1) v.currentTime = Math.random() * room; v.play().catch(() => {}); };
+    const jump = () => { const room = (v.duration || 0) - 12; v.currentTime = room > 1 ? Math.random() * room : 0; };
+    const go = () => { jump(); v.play().catch(() => {}); };
+    v.loop = false;
+    v.addEventListener("timeupdate", () => { if (v.duration && v.currentTime > v.duration - 4) jump(); });
+    v.addEventListener("ended", () => { jump(); v.play().catch(() => {}); });
     if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
   }
 
