@@ -256,3 +256,51 @@ def test_no_two_runs_look_alike_titles_start_points_frames_and_clips(mcp, monkey
     _, ui = mcp.tool("rank_clips", topic="cats")
     assert 9 <= len(ui["clips"]) <= 12 and [c["views"] for c in ui["top"]] == sorted(
         (c["views"] for c in ui["clips"]), reverse=True)[:5]
+
+
+def _with_highway(monkeypatch):
+    highway = {"id": "highway", "name": "Highway karma cartoons", "pathway": "highway", "pin": "Allyollyo",
+               "link": "https://www.youtube.com/shorts/Xm28RfaNvic", "reels": ["DfffaYxFBco", "Dfd8wRuhUpb"], "look": [],
+               "outputs": [_out("highway_1", "Lane hogging truck gets instant karma", tall=True),
+                           _out("highway_2", "A car that speeds up every time you pass", tall=True)], "refs": []}
+    monkeypatch.setattr(ugc_mcp, "_data", {"at": 0.0, "value": None})
+    monkeypatch.setattr(ugc_mcp, "_fetch", lambda: {**DATA, "methods": [
+        {**DATA["methods"][0], "topics": [*TOPICS, highway]}, *DATA["methods"][1:]]})
+
+
+@pytest.mark.parametrize("link", ["https://www.youtube.com/shorts/Xm28RfaNvic",
+                                  "https://www.instagram.com/reel/DfffaYxFBco/?igsh=abc",
+                                  "https://www.instagram.com/reels/Dfd8wRuhUpb/"])
+def test_a_pasted_video_link_makes_that_videos_kind_never_a_gta_6_video(mcp, monkeypatch, link):
+    """The hub for the owner, 2026-11-09: "the cloned videos' outputs have to be similar to what their outputs are". A
+    creator pastes the viral cartoon's link (or the reel that shows it) and asks for a video like this."""
+    _with_highway(monkeypatch)
+    text, ui = mcp.tool("clone_channel", channel=link)
+    assert ui["view"] == "clone" and ui["topic"] == "Highway karma cartoons" and ui["channel"] == "Allyollyo"
+    for _ in range(4):
+        text, ui = mcp.tool("make_video", idea=f"{link} Make me a video like this with ChannelRecipe", channel=link)
+        assert ui["view"] == "make" and ui["video"]["video"].startswith(V + "highway_"), ui
+    text, ui = mcp.tool("make_video", idea=f"{link} Make me a video like this with ChannelRecipe")   # link in the ask only
+    assert ui["video"]["video"].startswith(V + "highway_")
+
+
+def test_a_pasted_link_of_a_scouted_video_or_its_channels_upload_finds_its_topic(mcp, monkeypatch):
+    _, ui = mcp.tool("make_video", idea="make me one like this", channel="https://www.youtube.com/watch?v=0qCw4co8QCg")
+    assert ui["video"]["video"].startswith(V + "gta6_")
+    channels = {"https://www.youtube.com/channel/UCglooby": [{"id": "Lucia0Expl1", "title": "Lucia Explained", "views": 3}]}
+    monkeypatch.setattr(ugc_mcp, "_data", {"at": 0.0, "value": None})
+    monkeypatch.setattr(ugc_mcp, "_fetch", lambda: {**DATA, "channels": channels})
+    _, ui = mcp.tool("clone_channel", channel="https://youtu.be/Lucia0Expl1")        # one of Glooby's uploads
+    assert ui["view"] == "clone" and ui["channel"] == "Glooby"
+    _, ui = mcp.tool("make_video", idea="a video like https://www.youtube.com/watch?v=Unknown0001")   # unknown video
+    assert ui["view"] == "note"
+
+
+def test_a_start_point_stays_inside_the_file_that_plays(mcp, monkeypatch):
+    """A 3-minute video plays its first 90 s (strategies.py prepare): the start is drawn from clip_seconds."""
+    gta = {**TOPICS[1], "outputs": [{**_out("gta6_1", "The GTA 6 map is impossible"), "seconds": 181, "clip_seconds": 90.0}]}
+    monkeypatch.setattr(ugc_mcp, "_data", {"at": 0.0, "value": None})
+    monkeypatch.setattr(ugc_mcp, "_fetch", lambda: {**DATA, "methods": [{**DATA["methods"][0], "topics": [TOPICS[0], gta]},
+                                                                         *DATA["methods"][1:]]})
+    starts = [mcp.tool("make_video", idea="a GTA 6 video", channel="Glooby")[1]["video"]["start"] for _ in range(20)]
+    assert all(0 <= s <= 90 - 25 for s in starts) and len(set(starts)) > 3
