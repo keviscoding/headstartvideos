@@ -35,7 +35,8 @@ INSTRUCTIONS = (
     "This is ChannelRecipe's creator demo workspace: it plays real videos ChannelRecipe has already made, so results "
     "show in seconds and nothing is rendered or charged. "
     "When the user asks for a video like a channel (\"make me a GTA 6 video like Glooby\"): call clone_channel with "
-    "the channel, then make_video with their idea and the same channel. For ranking Shorts call rank_clips. To clip a stream, podcast or long video into Shorts call clip_video (with the link or the name). To find "
+    "the channel, then make_video with their idea and the same channel. When they paste a video's link and ask for one "
+    "like it: call clone_channel with that link, then make_video with the same link as the channel. For ranking Shorts call rank_clips. To clip a stream, podcast or long video into Shorts call clip_video (with the link or the name). To find "
     "what's going viral in a niche call find_viral_channels. "
     "Each tool shows its own card with the work and the video. After a tool, reply in one short, upbeat sentence; "
     "don't repeat what the card shows. When a video is ready, end by pointing them to channelrecipe.com."
@@ -129,6 +130,29 @@ def find_channel(d: dict, asked: str) -> tuple[dict, dict] | None:
                 if best is None or score > best[0]:
                     best = (score, r, t)
     return (best[1], best[2]) if best else None
+
+
+# a pasted video link (YouTube watch/shorts/youtu.be, an Instagram reel or post, a TikTok video) -> its id
+_LINK_ID = re.compile(r"(?:v=|youtu\.be/|/shorts/|/live/|/embed/|/reels?/|/p/|/video/)([A-Za-z0-9_-]{6,})")
+
+
+def find_link(d: dict, *texts: str) -> tuple[dict, dict] | None:
+    """A pasted video link -> (its channel's best ref, its topic), so "make me a video like this" makes that video's
+    kind (the hub for the owner, 2026-11-09: never a GTA 6 video for a cartoon's link). Known ids: the topic's own
+    `link` and `reels` (the viral reels that show its videos), its scouted refs and their channels' uploads."""
+    ids = {m.group(1) for t in texts if t for m in _LINK_ID.finditer(t)}
+    if not ids:
+        return None
+    channels = d.get("channels") or {}
+    for t in _method(d, "clone").get("topics") or []:
+        refs = t.get("refs") or []
+        own = {m.group(1) for m in _LINK_ID.finditer(str(t.get("link") or ""))} | set(t.get("reels") or [])
+        if ids & own:
+            return (refs[0] if refs else {"channel": t.get("pin") or t["name"], "channel_url": ""}), t
+        for r in refs:
+            if r.get("id") in ids or ids & {u.get("id") for u in channels.get(r.get("channel_url") or "", [])}:
+                return r, t
+    return None
 
 
 # words in topic names that say nothing about the topic ("Best shark moments" is about sharks)
@@ -253,7 +277,7 @@ def _title(o: dict, key: str) -> str:
 def _take(o: dict, key: str) -> dict:
     v = _video(o)
     v["title"] = _title(o, key)
-    secs = float(o.get("seconds") or 0)
+    secs = float(o.get("clip_seconds") or o.get("seconds") or 0)   # the file that plays is the video's first 90 s
     v["start"] = round(random.uniform(0, secs - 25), 1) if secs >= 30 else 0
     frames = list(o.get("frames") or [])
     if len(frames) > 4:                                  # 4-6 of them, in story order
@@ -286,7 +310,7 @@ def find_viral_channels(d: dict, args: dict, key: str) -> dict:
 
 def clone_channel(d: dict, args: dict, key: str) -> dict:
     asked = str(args.get("channel") or "").strip()
-    hit = find_channel(d, asked)
+    hit = find_channel(d, asked) or find_link(d, asked)
     if hit:
         ref, t = hit
         exact = True
@@ -324,7 +348,7 @@ def clone_channel(d: dict, args: dict, key: str) -> dict:
 def make_video(d: dict, args: dict, key: str) -> dict:
     idea = str(args.get("idea") or "").strip()
     style = str(args.get("channel") or "").strip()
-    hit = find_channel(d, style) if style else None
+    hit = (find_channel(d, style) if style else None) or find_link(d, style, idea)
     t = (hit[1] if hit else None) or find_topic(d, "clone", idea, style)
     if not t:
         return _not_here(d, "clone", f"\"{idea}\"" if idea else "That video")
@@ -404,17 +428,18 @@ TOOLS = [
          "required": ["niche"]}},
     {"name": "clone_channel", "title": "Clone a channel's style", "fn": clone_channel,
      "description": "Study a YouTube channel's style (its uploads, views, pacing and look) so make_video can copy it. "
-                    "Accepts a channel name, @handle or channel link. Call it before make_video when the user names a "
-                    "channel.",
+                    "Accepts a channel name, @handle or channel link, or a video's link (to make videos like it). Call it "
+                    "before make_video when the user names a channel or pastes a video's link.",
      "inputSchema": {"type": "object", "properties": {
-         "channel": {"type": "string", "description": "Channel name, @handle or YouTube channel link"}},
+         "channel": {"type": "string", "description": "Channel name, @handle, channel link or a video's link"}},
          "required": ["channel"]}},
     {"name": "make_video", "title": "Make a video", "fn": make_video,
      "description": "Make a finished faceless YouTube video for an idea, in a cloned channel's style when one is "
                     "given. Shows the script, voice, scenes and edit, then the finished video.",
      "inputSchema": {"type": "object", "properties": {
          "idea": {"type": "string", "description": "What the video is about, in the user's words"},
-         "channel": {"type": "string", "description": "The channel whose style to copy (from clone_channel), if any"}},
+         "channel": {"type": "string", "description": "The channel whose style to copy (from clone_channel), or the "
+                                                     "video link the user pasted, if any"}},
          "required": ["idea"]}},
     {"name": "rank_clips", "title": "Make a ranking Short", "fn": rank_clips,
      "description": "Make a viral ranking Short: finds the most-viewed clips for a topic, picks each one's best "

@@ -71,9 +71,16 @@
     return out;
   }
 
+  // Every play starts at a random second of the video (the hub, 2026-11-09: no two creators show the same clip from the
+  // same second), late enough to leave 12 s to play; "Sound on" keeps that place.
+  function playFrom(v) {
+    const go = () => { const room = (v.duration || 0) - 12; if (room > 1) v.currentTime = Math.random() * room; v.play().catch(() => {}); };
+    if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
+  }
+
   function nav() {
     $("#methods").innerHTML = D.methods.map((m) => `<button type="button" data-m="${m.id}" class="${m === M ? "on" : ""}" ${m.soon ? "disabled" : ""}>
-      <span class="ic">${{ clone: "⧉", claude: "✳︎", ranking: "🏆", clipping: "✂︎", amazon: "📦" }[m.id] || "•"}</span>${esc(m.name)}${m.soon ? "<small>soon</small>" : ""}</button>`).join("");
+      <span class="ic">${{ clone: "⧉", claude: "✳︎", like: "🔗", ranking: "🏆", clipping: "✂︎", amazon: "📦" }[m.id] || "•"}</span>${esc(m.name)}${m.soon ? "<small>soon</small>" : ""}</button>`).join("");
     $("#methods").onclick = (e) => { const b = e.target.closest("button[data-m]"); if (b && !b.disabled) { location.hash = `${b.dataset.m}/`; } };
   }
 
@@ -186,7 +193,9 @@
     const refs = T.refs || [], ref = refs[0] || {};
     const chan = ref.channel || "a viral channel";
     const poss = (n) => (/s$/i.test(n) ? `${n}'` : `${n}'s`);
-    const ask = `Use ChannelRecipe: copy ${poss(chan)} style and make me a video about "${OUT.title}"`;
+    const like = M.ask === "like", link = T.link || (ref.id ? `https://www.youtube.com/shorts/${ref.id}` : "");
+    const ask = like ? `${link} Make me a video like this with ChannelRecipe`
+      : `Use ChannelRecipe: copy ${poss(chan)} style and make me a video about "${OUT.title}"`;
     steps(1, 4);
     screen(`<div class="cl"><div class="cl-top"><b>Claude</b><span class="conn"><i></i>ChannelRecipe connected</span></div>
       <div class="cl-chat" id="chat"><div class="cl-hello">How can I help you today?</div></div>
@@ -206,10 +215,11 @@
     steps(2, 4);
     await wait(700);
     const intro = add("msg ai", "");
-    await typeText(intro, "I'll use ChannelRecipe to study the channel's style, then make your video in it.", 60);
+    await typeText(intro, like ? "I'll use ChannelRecipe to study that video and its channel, then make you one like it."
+      : "I'll use ChannelRecipe to study the channel's style, then make your video in it.", 60);
     // tool 1: study the channel
     const t1 = add("tool", `<div class="th"><span class="ic">⧉</span><b>ChannelRecipe</b><code>clone_style</code><em>running…</em></div>
-      <div class="tb"><small>Studying ${esc(poss(chan))} videos</small><div class="mini">${(refs.length >= 3 ? refs.slice(0, 6).map((r) => yt(r.id)) : (OUT.frames || [])).map((u) => `<img src="${esc(u)}" alt="">`).join("")}</div></div>`);
+      <div class="tb"><small>${like ? `Studying the video and ${esc(poss(chan))} channel` : `Studying ${esc(poss(chan))} videos`}</small><div class="mini">${(refs.length >= 3 ? refs.slice(0, 6).map((r) => yt(r.id)) : (OUT.frames || [])).map((u) => `<img src="${esc(u)}" alt="">`).join("")}</div></div>`);
     for (const img of t1.querySelectorAll(".mini img")) { img.classList.add("in"); await wait(240); }
     await wait(500);
     $("em", t1).textContent = `✓ style learned · ${92 + Math.floor(Math.random() * 7)}% match`; t1.classList.add("done");
@@ -237,12 +247,13 @@
     steps(4, 4);
     const tall = OUT.tall;
     const out = add("msg ai", "");
-    await typeText(out, `Done! Here's "${OUT.title}" in ${poss(chan)} style:`, 60);
-    add("cl-video", `<div class="player ${tall ? "" : "wide"}"><video id="v" src="${esc(OUT.video)}" poster="${esc(OUT.poster)}" playsinline autoplay muted loop controls></video><button class="unmute" id="um" type="button">🔊 Sound on</button></div>
+    await typeText(out, like ? `Done! Here's one like it: "${OUT.title}"` : `Done! Here's "${OUT.title}" in ${poss(chan)} style:`, 60);
+    add("cl-video", `<div class="player ${tall ? "" : "wide"}"><video id="v" src="${esc(OUT.video)}" poster="${esc(OUT.poster)}" playsinline muted loop controls></video><button class="unmute" id="um" type="button">🔊 Sound on</button></div>
       <div class="row"><button class="go" id="dl" type="button">Download</button><button class="ghost" id="again" type="button">Make another</button></div>`);
     chat.scrollTop = chat.scrollHeight;
     const v = $("#v");
-    $("#um").onclick = () => { v.muted = false; v.currentTime = 0; v.play(); $("#um").remove(); };
+    playFrom(v);
+    $("#um").onclick = () => { v.muted = false; v.play(); $("#um").remove(); };
     $("#again").onclick = () => start();
     $("#dl").onclick = (e) => { e.target.textContent = "✓ Saved to Downloads"; e.target.disabled = true; };
   }
@@ -282,12 +293,13 @@
   function reveal(title) {
     steps(5, 5);
     const wide = !OUT.tall;
-    screen(`<div class="reveal ${wide ? "wide" : ""}"><div class="player ${wide ? "wide" : ""}"><video id="v" src="${esc(OUT.video)}" poster="${esc(OUT.poster)}" playsinline autoplay muted loop controls></video><button class="unmute" id="um" type="button">🔊 Sound on</button></div>
+    screen(`<div class="reveal ${wide ? "wide" : ""}"><div class="player ${wide ? "wide" : ""}"><video id="v" src="${esc(OUT.video)}" poster="${esc(OUT.poster)}" playsinline muted loop controls></video><button class="unmute" id="um" type="button">🔊 Sound on</button></div>
       <div><span class="done-badge">✓ Your video is ready</span><h1 style="font-size:32px">${esc(title)}</h1>
       <ul class="checks"><li>Script, voice and every scene</li><li>Captions and music</li><li>${M.id === "ranking" ? "Counted down #5 to #1" : "In the channel's style"}</li><li>Ready to post</li></ul>
       <div class="row"><button class="go" id="dl" type="button">Download</button><button class="ghost" id="again" type="button">Make another</button></div></div></div>`);
     const v = $("#v");
-    $("#um").onclick = () => { v.muted = false; v.currentTime = 0; v.play(); $("#um").remove(); };
+    playFrom(v);
+    $("#um").onclick = () => { v.muted = false; v.play(); $("#um").remove(); };
     $("#again").onclick = () => start();
     $("#dl").onclick = (e) => { e.target.textContent = "✓ Saved to Downloads"; e.target.disabled = true; };
   }

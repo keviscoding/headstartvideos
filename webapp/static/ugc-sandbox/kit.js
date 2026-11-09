@@ -56,7 +56,9 @@
     return String(s).replaceAll("{short}", w.short).replaceAll("{search}", w.search)
       .replaceAll("{channel}", r ? r.channel : "this channel").replaceAll("{views}", r ? short(r.views) : "millions of")
       .replaceAll("{clip_views}", clipNow && clipNow.views ? spokenViews(clipNow.views) : "millions of")
-      .replaceAll("{topic}", w.idea).replaceAll("{keyword}", w.keyword).replaceAll("{n}", "N");
+      .replaceAll("{topic}", w.idea).replaceAll("{keyword}", w.keyword).replaceAll("{n}", "N")
+      // the "like" walkthrough's pasted link: the topic's own viral video (strategies.json "link")
+      .replaceAll("{link}", t.link || (r && r.id ? `https://www.youtube.com/shorts/${r.id}` : "the video's link"));
   }
   // The Claude walkthrough films real Claude with ChannelRecipe connected: each creator's own sandboxed connector
   // (site webapp/ugc_mcp.py), set up once, then the one prompt the kit fills in for the topic.
