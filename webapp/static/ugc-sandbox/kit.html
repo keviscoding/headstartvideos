@@ -16,7 +16,13 @@
   <a class="btn ghost small" href="https://t.me/CRCreatorsBot" target="_blank" rel="noopener">Open the bot ↗</a>
 </header>
 <main>
-  <section class="hero">
+  <section id="today" class="today card" aria-label="Today's video"></section>
+
+  <!-- everything else, closed by default (the owner on his phone, 2026-11-10: "impossible to follow") -->
+  <details class="more" id="more">
+    <summary>More options</summary>
+    <div id="more-today"></div>
+  <section class="hero block">
     <h1>Your video for today, step by step.</h1>
     <ol class="flow">
       <li><b>1</b><span>Watch the example</span></li>
@@ -27,7 +33,6 @@
     <details id="tutorial" class="tutorial" hidden><summary>▶ New here? Watch the 90-second tutorial first</summary><video controls playsinline preload="none"></video></details>
   </section>
 
-  <section id="today" class="today card" aria-label="Today's video"></section>
 
   <section class="block">
     <h2>Or pick another video to remake</h2>
@@ -60,6 +65,7 @@
     <h2>Want to be creative? Find inspiration here</h2>
     <ul id="inspo" class="inspo"></ul>
   </section>
+  </details>
 </main>
 <script src="/ugc-sandbox/kit.js" defer></script>
 </body>

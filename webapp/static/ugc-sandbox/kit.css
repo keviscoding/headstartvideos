@@ -95,3 +95,17 @@ h2{font-size:20px;margin:0 0 4px}
 }
 /* a pasted link (the like prompt) never widens the page */
 .today>*{min-width:0}.setup b,.setup small,.prompt-inline b,.dm-box b,.say{overflow-wrap:anywhere}
+/* the minimal kit: one copy box, a small storyboard, everything else behind "More options" */
+.lines{margin:14px 0;border:1px solid var(--line);border-radius:14px;background:var(--card);overflow:hidden}
+.lines-top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px 8px 14px;border-bottom:1px solid var(--line)}
+.lines-top span{font-weight:700;font-size:14px}
+.lines pre{margin:0;padding:12px 14px;white-space:pre-wrap;overflow-wrap:anywhere;font:500 15px/1.5 Inter,system-ui,sans-serif;color:var(--text)}
+.board{list-style:none;margin:12px 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.board li{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.board .ic{flex:0 0 22px;text-align:center;font-size:16px;line-height:22px}
+.board b{display:block;font-size:14px;line-height:1.35}.board small{display:block;color:var(--muted);font-size:12px}
+.board details{margin-top:4px}.board summary{cursor:pointer;color:var(--accent);font-size:12px;font-weight:600}.board details p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.more{margin:18px 0 40px;border:1px solid var(--line);border-radius:16px;background:var(--card)}
+.more>summary{cursor:pointer;padding:14px 16px;font-weight:700;list-style:none}.more>summary::after{content:" ▾";color:var(--muted)}
+.more[open]>summary::after{content:" ▴"}
+.more>*:not(summary){margin-left:14px;margin-right:14px}
