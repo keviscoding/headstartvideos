@@ -16,8 +16,10 @@
   const yt = (id) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
   let D, M, T, OUT, run = 0;
   // One tap plays the whole B-roll (the owner, 2026-11-09: "even I am super confused… there's no guide"): the walkthrough
-  // opens on one start card, then every screen plays by itself and ends on "Done": the creator never types, picks or
-  // copies anything. ?manual=1 keeps the old click-through page.
+  // opens on one start card, then ChannelRecipe's own part plays by itself and ends on "Done": the creator never types,
+  // picks or copies anything. It plays on their laptop and they film the screen with their phone. Google and YouTube
+  // are never mocked here: creators film the real ones (the owner: "the psychology won't transfer").
+  // ?manual=1 keeps the old click-through page.
   const AUTO = !/[?&]manual=1/.test(location.search);
   // in AUTO, does what the creator used to do, after a natural pause (never after the run changed)
   const pilot = (my, fn, ms = 900) => { if (AUTO) wait(ms).then(() => { if (my === run) fn(); }); };
@@ -387,38 +389,10 @@
   // the finished video plays a while, then one line tells them they're done
   function finish(my) {
     if (!AUTO) return;
-    wait(7000).then(() => { if (my === run) card(`<div class="auto-ok">✓</div><p class="auto-line">Done ✅ Stop recording and send it to the bot.</p>`); });
-  }
-  // the screens before the method: the viral video with its real views, then what YouTube pays (a real, cited figure)
-  async function intro(my, given) {
-    const refs = T.refs || [];
-    const lid = (String(T.link || "").match(/(?:v=|shorts\/|youtu\.be\/)([\w-]{11})/) || [])[1];
-    const ref = given || refs.find((r) => r.id === lid) || refs[0];
-    if (ref && ref.views) {
-      steps(0, 4);
-      screen(`<p class="label">Going viral right now</p><h1><em id="vv">0</em> views</h1>
-        <div class="viral-card"><img src="${esc(ref.thumb || `https://i.ytimg.com/vi/${ref.id}/hqdefault.jpg`)}" alt=""><div><b>${esc(ref.title || "")}</b><small>${esc(ref.channel || "")}</small></div></div>`);
-      countUp($("#vv"), ref.views, 1600);
-      await wait(3600);
-      if (my !== run) return false;
-    }
-    const q = "how much does YouTube pay per 1 million views";
-    screen(`<p class="label">And what does YouTube pay for that?</p>
-      <div class="search"><span class="search-ic">⌕</span><span id="q"></span></div>
-      <div class="answer" id="ans" hidden><b>$1,000 – $4,000</b><small>per 1 million long-form views</small>
-        <p>“between $1,000 and $4,000 per 1 million long-form views”</p>
-        <cite>vidiq.com · How Much Does YouTube Pay for 1 Million Views? · Dec 7, 2023</cite></div>`);
-    await typeText($("#q"), q, 30);
-    await wait(500);
-    if (my !== run) return false;
-    $("#ans").hidden = false;
-    await wait(3800);
-    return my === run;
+    wait(7000).then(() => { if (my === run) card(`<div class="auto-ok">✓</div><p class="auto-line">Done ✅ Send the clip to the bot.</p>`); });
   }
   async function play(my) {
     $(".auto-card")?.remove();
-    const src = M.flow === "clipping" ? (OUT.source || null) : null;
-    if (["claude", "clone", "clipping"].includes(M.flow) && !(await intro(my, src))) return;
     ({ ranking, claude: claudeFlow, clipping }[M.flow] || clone)(my);
   }
 
@@ -434,7 +408,7 @@
     if (!AUTO) { ({ ranking, claude: claudeFlow, clipping }[M.flow] || clone)(run); return; }
     const my = run;
     screen("");
-    card(`<p class="auto-line">Start your screen recording, then tap ▶</p><button class="auto-play" id="autoplay" type="button" aria-label="Play">▶</button>`);
+    card(`<p class="auto-line">Open this on your laptop. Tap ▶ and film the screen with your phone.</p><button class="auto-play" id="autoplay" type="button" aria-label="Play">▶</button>`);
     $("#autoplay").onclick = () => play(my);
   }
 

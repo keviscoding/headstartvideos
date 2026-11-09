@@ -140,14 +140,6 @@ h1 em{font-style:normal;background:linear-gradient(90deg,#b79cff,var(--a2));-web
 .auto-line{font:700 22px/1.35 Inter;color:var(--text);margin:0}
 .auto-play{width:112px;height:112px;border-radius:50%;border:0;cursor:pointer;color:#fff;font-size:44px;padding-left:8px;background:linear-gradient(90deg,var(--a),var(--a2));box-shadow:0 12px 40px rgba(139,108,240,.45)}
 .auto-ok{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;font:800 34px Inter;color:#fff;background:var(--ok)}
-.viral-card{display:flex;gap:14px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;max-width:560px}
-.viral-card img{width:46%;max-width:240px;aspect-ratio:16/9;object-fit:cover;border-radius:10px}.viral-card b{display:block;font-size:16px;line-height:1.35}.viral-card small{color:var(--muted)}
-.search{display:flex;align-items:center;gap:10px;background:#fff;color:#202124;border-radius:999px;padding:14px 18px;font:500 17px Inter;max-width:640px;min-height:24px}
-.search-ic{font-size:20px;color:#5f6368}
-.answer{margin-top:16px;max-width:640px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:6px;animation:rise .4s ease}
-.answer b{font:800 34px Inter;color:var(--text)}.answer small{color:var(--muted);font-size:14px}.answer p{margin:6px 0 0;font-size:15px;color:#e6e6f0}.answer cite{font-style:normal;font-size:12px;color:var(--muted)}
-@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-@media (max-width:560px){.viral-card{flex-direction:column;align-items:stretch}.viral-card img{width:100%;max-width:none}}
 /* (AUTO) the finished video shows whole inside the chat on a phone */
 .auto .cl-chat{max-height:calc(100vh - 210px)}
 .auto .cl-video .player video{max-height:calc(100vh - 330px);width:auto;max-width:100%;display:block;margin:0 auto}
@@ -160,3 +152,16 @@ h1 em{font-style:normal;background:linear-gradient(90deg,#b79cff,var(--a2));-web
 .timeline b.on{background:var(--ok);transform:scaleY(1.15)}
 /* a 16:9 result on a phone: one column, the video full width (.reveal.wide's two columns came after the phone rule) */
 @media (max-width:860px){.reveal.wide{grid-template-columns:minmax(0,1fr)}.reveal.wide .player{width:100%}}
+/* (AUTO) on a laptop the run is filmed by a phone at arm's length: everything 1.3x (the height limits divide by it) */
+@media (min-width:1000px){
+  .auto{--z:1.3}
+  .auto .stage{zoom:var(--z);max-width:calc(1180px / var(--z))}
+  .auto .cl-chat{max-height:calc((100vh - 240px) / var(--z))}
+  .auto .cl-video .player video{max-height:calc((100vh - 330px) / var(--z))}
+  .auto .player video{max-height:calc(70vh / var(--z))}
+  .auto-box{max-width:600px;padding:44px 36px;gap:28px}
+  .auto-line{font-size:30px}
+  .auto-play{width:140px;height:140px;font-size:56px}
+  .auto-ok{width:92px;height:92px;font-size:44px}
+}
+.auto .cl-video .player{width:fit-content;max-width:100%}   /* (AUTO) the player hugs the video, no wide black box */
