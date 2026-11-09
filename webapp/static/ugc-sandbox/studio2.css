@@ -131,3 +131,23 @@ h1 em{font-style:normal;background:linear-gradient(90deg,#b79cff,var(--a2));-web
   .bigin{flex-direction:column;align-items:stretch}
   .bigin .go{width:100%}
 }
+
+/* the one-tap B-roll (studio2.js AUTO): no menus, one start card, one "Done" line */
+.auto .side{display:none}.auto .app{grid-template-columns:minmax(0,1fr)}
+.auto #dl,.auto #again,.auto .unmute,.auto .hint{display:none}
+.auto-card{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:24px;background:rgba(8,8,12,.86);backdrop-filter:blur(6px)}
+.auto-box{max-width:420px;width:100%;text-align:center;display:flex;flex-direction:column;align-items:center;gap:22px;background:var(--panel);border:1px solid var(--line);border-radius:24px;padding:34px 26px}
+.auto-line{font:700 22px/1.35 Inter;color:var(--text);margin:0}
+.auto-play{width:112px;height:112px;border-radius:50%;border:0;cursor:pointer;color:#fff;font-size:44px;padding-left:8px;background:linear-gradient(90deg,var(--a),var(--a2));box-shadow:0 12px 40px rgba(139,108,240,.45)}
+.auto-ok{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;font:800 34px Inter;color:#fff;background:var(--ok)}
+.viral-card{display:flex;gap:14px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;max-width:560px}
+.viral-card img{width:46%;max-width:240px;aspect-ratio:16/9;object-fit:cover;border-radius:10px}.viral-card b{display:block;font-size:16px;line-height:1.35}.viral-card small{color:var(--muted)}
+.search{display:flex;align-items:center;gap:10px;background:#fff;color:#202124;border-radius:999px;padding:14px 18px;font:500 17px Inter;max-width:640px;min-height:24px}
+.search-ic{font-size:20px;color:#5f6368}
+.answer{margin-top:16px;max-width:640px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:6px;animation:rise .4s ease}
+.answer b{font:800 34px Inter;color:var(--text)}.answer small{color:var(--muted);font-size:14px}.answer p{margin:6px 0 0;font-size:15px;color:#e6e6f0}.answer cite{font-style:normal;font-size:12px;color:var(--muted)}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (max-width:560px){.viral-card{flex-direction:column;align-items:stretch}.viral-card img{width:100%;max-width:none}}
+/* (AUTO) the finished video shows whole inside the chat on a phone */
+.auto .cl-chat{max-height:calc(100vh - 210px)}
+.auto .cl-video .player video{max-height:calc(100vh - 330px);width:auto;max-width:100%;display:block;margin:0 auto}

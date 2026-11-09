@@ -11,10 +11,16 @@
   const $ = (s, el = document) => el.querySelector(s);
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms * SPEED));
-  const short = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(Math.round(n || 0));
+  const short = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(1).replace(/\.0$/, "")}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(Math.round(n || 0));
   const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } } };
   const yt = (id) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
   let D, M, T, OUT, run = 0;
+  // One tap plays the whole B-roll (the owner, 2026-11-09: "even I am super confused… there's no guide"): the walkthrough
+  // opens on one start card, then every screen plays by itself and ends on "Done": the creator never types, picks or
+  // copies anything. ?manual=1 keeps the old click-through page.
+  const AUTO = !/[?&]manual=1/.test(location.search);
+  // in AUTO, does what the creator used to do, after a natural pause (never after the run changed)
+  const pilot = (my, fn, ms = 900) => { if (AUTO) wait(ms).then(() => { if (my === run) fn(); }); };
 
   async function json(name) {
     for (const url of [CDN + name + `?h=${Math.floor(Date.now() / 6e5)}`, BASE + name]) {
@@ -47,6 +53,7 @@
         if (me !== my) return;
         const k = Math.min(1, (performance.now() - t0) / dur);
         input.value = t.slice(0, Math.round(t.length * k));
+        input.scrollLeft = input.scrollWidth;            // (the words being typed stay in view, not the link's start)
         if (k >= 1) return;
         await new Promise((r) => setTimeout(r, 16));
       }
@@ -78,6 +85,7 @@
     const jump = () => { const room = (v.duration || 0) - 12; v.currentTime = room > 1 ? Math.random() * room : 0; };
     const go = () => { jump(); v.play().catch(() => {}); };
     v.loop = false;
+    if (AUTO) v.removeAttribute("controls");             // (a phone showed its scrub bar and time over the B-roll)
     v.addEventListener("timeupdate", () => { if (v.duration && v.currentTime > v.duration - 4) jump(); });
     v.addEventListener("ended", () => { jump(); v.play().catch(() => {}); });
     if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
@@ -100,7 +108,8 @@
       <div class="bigin"><input id="url" placeholder="Paste a YouTube channel or video link" autocomplete="off">${button("Analyze channel", "go")}</div>
       ${refs.length ? `<p class="label" style="margin-top:22px">Going viral in ${esc(T.name)}</p><div class="chips">${refs.slice(0, 4).map((r) => `<button class="chip" type="button" data-u="${esc(r.channel_url)}">${esc(r.channel)}<small>${short(r.views)} views</small></button>`).join("")}</div>` : ""}`);
     $(".chips")?.addEventListener("click", (e) => { const c = e.target.closest("[data-u]"); if (c) $("#url").value = c.dataset.u; });
-    $("#url").focus();
+    if (!AUTO) $("#url").focus();
+    pilot(my, async () => { const c = $(".chips [data-u]"); if (c) c.click(); else $("#url").value = (refs[0] || {}).channel_url || "https://www.youtube.com/"; await wait(900); if (my === run) $("#go").click(); }, 1200);
     await new Promise((res) => { const go = () => { if ($("#url").value.trim()) res(); else $("#url").focus(); }; $("#go").onclick = go; $("#url").onkeydown = (e) => { if (e.key === "Enter") go(); }; });
     if (my !== run) return;
     const url = $("#url").value.trim().toLowerCase();
@@ -135,6 +144,7 @@
     const target = 92 + Math.floor(Math.random() * 7);
     const iv = setInterval(() => { p = Math.min(target, p + 3); ring.style.setProperty("--p", p); $("#pct").textContent = p + "%"; if (p >= target) clearInterval(iv); }, 40 * SPEED);
     for (const li of document.querySelectorAll(".traits li")) { await wait(420); li.classList.add("in"); }
+    pilot(my, () => $("#next")?.click(), 1400);
     await clicked();
     if (my !== run) return;
     // idea
@@ -147,7 +157,8 @@
     const typeIdea = typer(input);
     $(".chips").onclick = (e) => { const c = e.target.closest(".chip"); if (c) { const o = T.outputs.find((x) => x.title === c.textContent); if (o) OUT = o; typeIdea(c.textContent); } };
     input.onkeydown = (e) => { if (e.key === "Tab" && !input.value) { e.preventDefault(); typeIdea(OUT.title); } if (e.key === "Enter") $("#make").click(); };
-    input.focus();
+    if (!AUTO) input.focus();
+    pilot(my, async () => { typeIdea(OUT.title); await wait(OUT.title.length * 32 + 900); if (my === run) $("#make").click(); }, 1000);
     await clicked("make");
     if (my !== run) return;
     await build(my, typeIdea.value() || OUT.title, "clone");
@@ -163,7 +174,8 @@
     const typeIt = typer(input);
     $(".chips").onclick = (e) => { const c = e.target.closest("[data-t]"); if (c) { T = M.topics.find((t) => t.id === c.dataset.t); OUT = pickOutput(); typeIt(T.name); } };
     input.onkeydown = (e) => { if (e.key === "Tab" && !input.value) { e.preventDefault(); typeIt(T.name); } if (e.key === "Enter") $("#go").click(); };
-    input.focus();
+    if (!AUTO) input.focus();
+    pilot(my, async () => { typeIt(T.name); await wait(T.name.length * 32 + 900); if (my === run) $("#go").click(); }, 1000);
     await clicked("go");
     if (my !== run) return;
     const clips = (T.clips || []).slice(0, 12);
@@ -191,6 +203,7 @@
     screen(`<p class="label">Ranked by reactions and replays</p><h1>Your <em>top 5</em></h1><ol class="rank-list">${picks.map(([, i], k) => `<li><b>${5 - k}</b><img src="${yt(clips[i].id)}" alt=""><span>${esc(clips[i].title).slice(0, 70)}</span></li>`).reverse().join("")}</ol><div class="row">${button("Make the Short →")}</div>`);
     const items = [...document.querySelectorAll(".rank-list li")].reverse();
     for (const li of items) { li.classList.add("in"); await wait(380); }
+    pilot(my, () => $("#next")?.click(), 1400);
     await clicked();
     if (my !== run) return;
     await build(my, T.name, "ranking");
@@ -211,7 +224,8 @@
       <p class="hint">Tab types the request · Enter sends it</p></div>`);
     const input = $("#ask"), typeAsk = typer(input);
     input.onkeydown = (e) => { if (e.key === "Tab" && !input.value) { e.preventDefault(); typeAsk(ask); } if (e.key === "Enter") $("#send").click(); };
-    input.focus();
+    if (!AUTO) input.focus();
+    pilot(my, async () => { typeAsk(ask); await wait(ask.length * 32 + 1000); if (my === run) $("#send").click(); }, 1000);
     await new Promise((res) => { $("#send").onclick = () => { if (input.value.trim()) res(); else input.focus(); }; });
     if (my !== run) return;
     const said = typeAsk.value() || input.value.trim() || ask;
@@ -261,9 +275,12 @@
     chat.scrollTop = chat.scrollHeight;
     const v = $("#v");
     playFrom(v);
+    // the video's height is only known once it loads: then the chat scrolls to show it whole
+    v.addEventListener("loadedmetadata", () => { chat.scrollTop = chat.scrollHeight; }, { once: true });
     $("#um").onclick = () => { v.muted = false; v.play(); $("#um").remove(); };
     $("#again").onclick = () => start();
     $("#dl").onclick = (e) => { e.target.textContent = "✓ Saved to Downloads"; e.target.disabled = true; };
+    finish(my);
   }
 
   /* ---------- building and the reveal (both flows) ---------- */
@@ -310,6 +327,52 @@
     $("#um").onclick = () => { v.muted = false; v.play(); $("#um").remove(); };
     $("#again").onclick = () => start();
     $("#dl").onclick = (e) => { e.target.textContent = "✓ Saved to Downloads"; e.target.disabled = true; };
+    finish(run);
+  }
+
+  /* ---------- the one-tap B-roll (AUTO) ---------- */
+  function card(html) {
+    $(".auto-card")?.remove();
+    const c = document.createElement("div");
+    c.className = "auto-card"; c.innerHTML = `<div class="auto-box">${html}</div>`;
+    document.body.append(c);
+    return c;
+  }
+  // the finished video plays a while, then one line tells them they're done
+  function finish(my) {
+    if (!AUTO) return;
+    wait(7000).then(() => { if (my === run) card(`<div class="auto-ok">✓</div><p class="auto-line">Done. Stop recording and send it to the bot.</p>`); });
+  }
+  // the screens before the method: the viral video with its real views, then what YouTube pays (a real, cited figure)
+  async function intro(my) {
+    const refs = T.refs || [];
+    const lid = (String(T.link || "").match(/(?:v=|shorts\/|youtu\.be\/)([\w-]{11})/) || [])[1];
+    const ref = refs.find((r) => r.id === lid) || refs[0];
+    if (ref && ref.views) {
+      steps(0, 4);
+      screen(`<p class="label">Going viral right now</p><h1><em id="vv">0</em> views</h1>
+        <div class="viral-card"><img src="https://i.ytimg.com/vi/${esc(ref.id)}/hqdefault.jpg" alt=""><div><b>${esc(ref.title || "")}</b><small>${esc(ref.channel || "")}</small></div></div>`);
+      countUp($("#vv"), ref.views, 1600);
+      await wait(3600);
+      if (my !== run) return false;
+    }
+    const q = "how much does YouTube pay per 1 million views";
+    screen(`<p class="label">And what does YouTube pay for that?</p>
+      <div class="search"><span class="search-ic">⌕</span><span id="q"></span></div>
+      <div class="answer" id="ans" hidden><b>$1,000 – $4,000</b><small>per 1 million long-form views</small>
+        <p>“between $1,000 and $4,000 per 1 million long-form views”</p>
+        <cite>vidiq.com · How Much Does YouTube Pay for 1 Million Views? · Dec 7, 2023</cite></div>`);
+    await typeText($("#q"), q, 30);
+    await wait(500);
+    if (my !== run) return false;
+    $("#ans").hidden = false;
+    await wait(3800);
+    return my === run;
+  }
+  async function play(my) {
+    $(".auto-card")?.remove();
+    if (["claude", "clone"].includes(M.flow) && !(await intro(my))) return;
+    ({ ranking, claude: claudeFlow }[M.flow] || clone)(my);
   }
 
   function start() {
@@ -321,10 +384,15 @@
     OUT = pickOutput();
     $("#crumb").textContent = M.name;
     nav();
-    ({ ranking, claude: claudeFlow }[M.flow] || clone)(run);
+    if (!AUTO) { ({ ranking, claude: claudeFlow }[M.flow] || clone)(run); return; }
+    const my = run;
+    screen("");
+    card(`<p class="auto-line">Start your screen recording, then tap ▶</p><button class="auto-play" id="autoplay" type="button" aria-label="Play">▶</button>`);
+    $("#autoplay").onclick = () => play(my);
   }
 
   async function main() {
+    if (AUTO) document.body.classList.add("auto");
     D = await json("strategies.json");
     window.addEventListener("hashchange", start);
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") start(); });
