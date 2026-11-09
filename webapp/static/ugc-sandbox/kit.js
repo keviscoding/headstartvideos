@@ -150,10 +150,15 @@
     if (hook && hook.how === "spoken" && Number.isInteger(t.hook_shot) && shots[t.hook_shot]) shots[t.hook_shot].say = hook.line;
     const added = shots.findIndex((s) => s.kind === "added");
     if (clip && clip.react && added >= 0 && added + 1 !== t.hook_shot && shots[added + 1] && shots[added + 1].kind === "face") shots[added + 1].say = clip.react;
-    const filmable = shots.filter((s) => s.kind !== "added").length;
-    const key = `done:${new Date().toDateString()}:${t.id}:${p.id}`;
-    const done = new Set(JSON.parse(store.get(key) || "[]"));
-    const says = shots.map((s) => fill(s.say, p)).filter((s) => !s.startsWith("("));
+    // The minimal kit (the owner, 2026-11-10, on his phone: "impossible to follow"): the example, the hook, ONE copy box,
+    // a small storyboard (one short line a shot, the framing tip only on tap), the B-roll line, the extras. The rest sits
+    // behind "More options".
+    const lines = shots.map((s) => fill(s.say, p)).filter((x) => x && !x.startsWith("("));
+    const short7 = (x) => { const w = String(x || "").split(/\s+/); return w.length > 7 ? `${w.slice(0, 7).join(" ")}…` : String(x || ""); };
+    const tagOf = (s) => s.kind === "added" ? ["＋", "we add it"] : s.kind === "screen" && brollOf(s) !== "extra" ? ["✅", "your B-roll · we use yours"]
+      : s.kind === "screen" ? ["🎬", "also film · with your phone, point"] : ["🙂", "your face"];
+    const nameOf = (s) => s.kind === "screen" && brollOf(s) !== "extra" ? BROLL[brollOf(s)] : s.kind === "screen" ? `Also film: ${short7(s.what)}` : short7(s.what);
+    const hasBroll = shots.some((s) => s.kind === "screen" && brollOf(s) !== "extra");
     $("#today").innerHTML = `
       <div>${player(t.examples[0])}
         ${t.examples.length > 1 ? `<div class="others">${t.examples.map((e, i) => `<button type="button" data-ex="${i}">Example ${i + 1} · ${esc(e[2])}</button>`).join("")}</div>` : ""}
@@ -161,51 +166,32 @@
       <div>
         <p class="label">Today's video</p>
         <h3>${esc(fill(t.name, p))}</h3>
-        <div class="chips"><span class="chip">${esc(method.name)}: ${esc(p.name)}</span><span class="chip plain">${esc(t.length)}</span><span class="chip plain">${esc(t.tag)}</span></div>
-        <p class="muted">${esc(t.why)} Watch the example first, then film your face shots, in any order. Your B-rolls are the ones you filmed once in the bot.</p>
         ${hook ? `<div class="hook"><span>Your hook · ${hook.how === "screen" ? "we put it on screen" : t.hook_shot ? `say it in shot ${t.hook_shot + 1}` : "say it first"}</span>
           <b>${esc(fill(hook.line, p))}</b>${hooks.length > 1 ? `<button class="btn ghost small" type="button" id="next-h">↻ Another hook</button>` : ""}</div>` : ""}
-        ${clip ? `<div class="react"><span>The clip you react to · we add it, you don't film it</span>
+        ${clip ? `<div class="react"><span>The clip · we add it, you don't film it</span>
           <div class="yt ${clip.kind === "cr" && !clip.tall ? "wide" : ""}">${clip.kind === "cr"
             ? `<video src="${esc(clip.url)}" poster="${esc(clip.poster || "")}" muted autoplay loop playsinline controls></video>`
             : `<iframe src="https://www.youtube.com/embed/${esc(clip.id)}?start=${clip.start || 0}${t.clip_whole ? "" : `&end=${clip.end || 8}`}&rel=0" allow="encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`}</div>
-          <small>${esc(clip.title)} · ${clip.kind === "cr" ? "made with ChannelRecipe" : `${esc(clip.channel)} · ${short(clip.views)} views`}</small>
           ${clips.length > 1 ? `<button class="btn ghost small" type="button" id="next-c">↻ Another clip</button>` : ""}</div>` : ""}
-        <ol class="shots">${shots.map((s, i) => s.kind === "added" ? `
-          <li class="shot we-add"><span class="plus">＋</span>
-            <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">we add this</span></div>
-            <p class="how">${esc(s.how)}</p></div></li>` : s.kind === "screen" && brollOf(s) !== "extra" ? `
-          <li class="shot broll"><span class="plus">✅</span>
-            <div><div class="t">${i + 1}. Your B-roll: ${esc(BROLL[brollOf(s)])}<span class="kind">we use yours</span></div>
-            <p class="how">The one you filmed once in the bot plays here. Say this to camera; it goes over your words.</p>
-            <div class="say">${esc(fill(s.say, p))}</div></div></li>` : s.kind === "screen" ? `
-          <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
-            <div><div class="t">${i + 1}. 🎬 Also film: ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">film it with your phone, point</span></div>
-            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div></div></li>` : `
-          <li class="shot ${done.has(i) ? "done" : ""}"><input type="checkbox" data-shot="${i}" ${done.has(i) ? "checked" : ""} aria-label="Filmed">
-            <div><div class="t">${i + 1}. ${esc(s.what)}<small>${esc(s.secs)}</small><span class="kind">your face</span></div>
-            <p class="how">${esc(s.how)}</p><div class="say">${esc(fill(s.say, p))}</div></div></li>`).join("")}</ol>
-        ${dmBox(p)}
-        <p class="added"><b>✅ Your B-rolls:</b> filmed once in the bot, used in every video. Not filmed one yet? The bot asks for it when a video needs it.</p>
-        <p class="added"><b>＋ The earnings proof: we add it for you.</b> Don't film it or edit it in. Your video comes back with it already in place.</p>
+        ${lines.length ? `<div class="lines"><div class="lines-top"><span>What you say</span><button class="btn small" type="button" id="copy-says">Copy</button></div><pre>${esc(lines.join("\n\n"))}</pre></div>` : ""}
+        <ol class="board">${shots.map((s, i) => { const [ic, lab] = tagOf(s); return `
+          <li><span class="ic">${ic}</span><div><b>${i + 1}. ${esc(nameOf(s))}</b><small>${esc(lab)}${s.secs ? ` · ${esc(s.secs)}` : ""}</small>
+            ${s.how && s.kind !== "added" && !(s.kind === "screen" && brollOf(s) !== "extra") ? `<details><summary>Framing tip</summary><p>${esc(s.how)}</p></details>` : ""}</div></li>`; }).join("")}</ol>
+        ${hasBroll ? `<p class="added"><b>✅ Your B-roll: we use yours.</b> Filmed once in the bot.</p>` : ""}
         <div class="actions">
+          <a class="btn" href="${botLink(t, p, hook, clip)}" target="_blank" rel="noopener">Send my clips to the bot</a>
           ${t.id === "dayn" && p.pathway ? `<a class="btn ghost" href="${MEDIA}wheel_${esc(p.pathway)}.mp4" target="_blank" rel="noopener">Open the wheel</a>` : ""}
-          ${says.length ? `<button class="btn ghost" type="button" id="copy-says">Copy what to say</button>` : ""}
-          <a class="btn ghost" href="${botLink(t, p, hook, clip)}" target="_blank" rel="noopener">Send my clips to the bot</a>
         </div>
-        <div class="switch"><button class="btn ghost small" type="button" id="next-t">↻ Different video</button>
-          <button class="btn ghost small" type="button" id="next-p">↻ Different topic</button></div>
       </div>`;
+    // the rest of today's options live in the fold
+    $("#more-today").innerHTML = `${dmBox(p)}
+      <p class="added"><b>＋ The earnings proof: we add it for you.</b> Don't film it or edit it in.</p>
+      <div class="switch"><button class="btn ghost small" type="button" id="next-t">↻ Different video</button>
+        <button class="btn ghost small" type="button" id="next-p">↻ Different topic</button></div>`;
     $("#today").querySelectorAll("[data-ex]").forEach((b) => b.addEventListener("click", () => {
       $("#today .player").outerHTML = player(t.examples[+b.dataset.ex]);
     }));
-    $("#today").querySelectorAll("[data-shot]").forEach((c) => c.addEventListener("change", () => {
-      c.checked ? done.add(+c.dataset.shot) : done.delete(+c.dataset.shot);
-      store.set(key, JSON.stringify([...done]));
-      c.closest(".shot").classList.toggle("done", c.checked);
-      if (done.size === filmable) toast("All filmed: send your clips to the bot!");
-    }));
-    $("#copy-says")?.addEventListener("click", () => copy(says.join("\n\n")));
+    $("#copy-says")?.addEventListener("click", () => copy(lines.join("\n\n")));
     $("#next-h")?.addEventListener("click", () => { store.set(`hook:${t.id}`, hooks.indexOf(hook) + 1); renderToday(); });
     $("#next-c")?.addEventListener("click", () => { store.set(`clip:${feedOf(t)}`, clips.indexOf(clip) + 1); renderToday(); });
     $("#next-t").addEventListener("click", () => { const us = D.templates.filter(usable); choose(us[(us.indexOf(t) + 1) % us.length], p); });
@@ -329,17 +315,7 @@
     if (c) copy(c.dataset.copy);
   });
 
-  // On a phone the method and topic picker sits right above today's video, as two rows that scroll sideways (the hub,
-  // 2026-11-09: it was ~18 screens down, under the viral list); the viral list stays where it was.
   const PHONE = () => window.matchMedia("(max-width:700px)").matches;
-  function pickerUp() {
-    if (!PHONE() || $(".picker-top")) return;
-    const sec = document.createElement("section");
-    sec.className = "block picker-top";
-    sec.innerHTML = `<h2>Your walkthrough and its topic</h2><p class="muted">Tap one: the shots below change to it.</p>`;
-    sec.append($("#paths"));
-    $("#today").before(sec);
-  }
 
   async function main() {
     D = await json("pathways.json");
@@ -348,7 +324,6 @@
     O = await json("outliers.json");
     if (D.tutorial) { const t = $("#tutorial"); t.hidden = false; $("video", t).src = D.tutorial; $("video", t).poster = D.tutorial.replace(/\.mp4$/, ".jpg"); if (!store.get("seen-tutorial")) t.open = true; t.addEventListener("toggle", () => store.set("seen-tutorial", "1")); }
     pickToday();
-    pickerUp();
     renderTemplates(); renderPaths(); renderInspo(); renderToday();
     if (O) { wireOutliers(); renderOutliers(); }
     document.querySelectorAll(".pcard").forEach((c) => c.classList.toggle("on", c.dataset.p === path.id));
