@@ -2408,7 +2408,7 @@ app.mount("/ugc-sandbox", web_assets.RevalidatedStatic(directory=str(UGC_SANDBOX
 # The same creators' ChannelRecipe connector for Claude (webapp/ugc_mcp.py, owner 2026-11-03): a sandboxed MCP server
 # they add in claude.ai and film, answering from the sandbox's cached data. Not the real MCP (/mcp), no sign-in.
 def _ugc_mcp_ok(key: str) -> bool:
-    """A creator kit's key, or the connect page's (UGC_CONNECT_KEY: the connector only)."""
+    """A creator kit's key, or the connect page's (_ugc_connect_key: the connector only)."""
     import hmac
     connect = _ugc_connect_key()
     return _ugc_key_ok(key) or bool(connect) and hmac.compare_digest(key, connect)
