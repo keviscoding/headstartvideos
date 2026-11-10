@@ -2354,6 +2354,27 @@ def _ugc_key_ok(key: str) -> bool:
     return any(hmac.compare_digest(key, k) for k in keys)
 
 
+def _ugc_connect_key() -> str:
+    """UGC_CONNECT_KEY: the key in the shared connector link /ugc/connect shows. It opens only the demo connector
+    (/ugc-mcp/, cached data), never a creator kit, so a public page can carry it; unset = no connect page."""
+    return (os.getenv("UGC_CONNECT_KEY") or "").strip()
+
+
+# The connector link, short to type on the laptop (the scriptwriter's walk, 2026-11-10: the link arrives on the creator's
+# phone in Telegram but goes into claude.ai on their laptop, and nobody retypes 50 characters). Nothing per-creator, no
+# sign-in. Declared before /ugc/{key}, which would take "connect" as a key.
+@app.get("/ugc/connect", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/ugc/connect/", response_class=HTMLResponse, include_in_schema=False)
+def ugc_connect():
+    from html import escape
+    key = _ugc_connect_key()
+    if not key:
+        raise HTTPException(404)
+    link = f"https://channelrecipe.com/ugc-mcp/{key}/mcp"
+    return web_assets.html_page(UGC_SANDBOX_DIR / "connect.html", cache="private, no-store", headers=_UGC_HEADERS,
+                                fill={"{{LINK}}": escape(link)})
+
+
 @app.get("/ugc/{key}", include_in_schema=False)
 def ugc_sandbox_root(key: str):
     if not _ugc_key_ok(key):
@@ -2380,9 +2401,16 @@ app.mount("/ugc-sandbox", web_assets.RevalidatedStatic(directory=str(UGC_SANDBOX
 
 # The same creators' ChannelRecipe connector for Claude (webapp/ugc_mcp.py, owner 2026-11-03): a sandboxed MCP server
 # they add in claude.ai and film, answering from the sandbox's cached data. Not the real MCP (/mcp), no sign-in.
+def _ugc_mcp_ok(key: str) -> bool:
+    """A creator kit's key, or the connect page's (UGC_CONNECT_KEY: the connector only)."""
+    import hmac
+    connect = _ugc_connect_key()
+    return _ugc_key_ok(key) or bool(connect) and hmac.compare_digest(key, connect)
+
+
 @app.post("/ugc-mcp/{key}/mcp", include_in_schema=False)
 async def ugc_mcp_post(key: str, request: Request):
-    if not _ugc_key_ok(key):
+    if not _ugc_mcp_ok(key):
         raise HTTPException(404)
     from webapp import ugc_mcp
     body = await request.body()
@@ -2394,7 +2422,7 @@ async def ugc_mcp_post(key: str, request: Request):
 
 @app.api_route("/ugc-mcp/{key}/mcp", methods=["GET", "DELETE"], include_in_schema=False)
 def ugc_mcp_other(key: str):
-    if not _ugc_key_ok(key):
+    if not _ugc_mcp_ok(key):
         raise HTTPException(404)
     return Response(status_code=405, headers={"Allow": "POST", **_UGC_HEADERS})   # no server stream, no sessions
 
