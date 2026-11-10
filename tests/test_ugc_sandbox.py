@@ -34,23 +34,28 @@ def test_a_creator_with_the_key_gets_the_kit_and_the_studio_walkthrough(monkeypa
 
 def test_the_connect_page_shows_the_connector_link_to_copy_and_never_a_creator_key(monkeypatch):
     """channelrecipe.com/ugc/connect (the scriptwriter's walk, 2026-11-10): the link arrives on the creator's phone but goes
-    into claude.ai on their laptop. A short page with the shared connector link, one Copy button and the four steps.
-    Its key (UGC_CONNECT_KEY) opens only the demo connector, never a kit, so the public page never shows a kit's key."""
+    into claude.ai on their laptop. A short page with the shared connector link, one Copy button, the four steps and a
+    button to Claude's connectors. Its key is derived from the sandbox key (HMAC "ugc-connect-v1": no new setting to
+    deploy) and opens only the demo connector, never a kit, so the public page never shows a kit's key."""
+    import hashlib
+    import hmac
     client = TestClient(server.app)
-    monkeypatch.setenv("UGC_SANDBOX_KEY", "k3y-one, k3y-two")
-    monkeypatch.delenv("UGC_CONNECT_KEY", raising=False)
-    assert client.get("/ugc/connect").status_code == 404                   # unset: no page (and never a kit's key)
-    monkeypatch.setenv("UGC_CONNECT_KEY", "c0nnect")
+    monkeypatch.delenv("UGC_SANDBOX_KEY", raising=False)
+    assert client.get("/ugc/connect").status_code == 404                   # no sandbox key: no page
+    monkeypatch.setenv("UGC_SANDBOX_KEY", "k3y-one-0123456789, k3y-two")
+    connect = hmac.new(b"k3y-one-0123456789", b"ugc-connect-v1", hashlib.sha256).hexdigest()[:18]
+    assert server._ugc_connect_key() == connect and connect not in ("k3y-one-0123456789", "k3y-two")
     for path in ("/ugc/connect", "/ugc/connect/"):
         r = client.get(path)
-        assert r.status_code == 200 and "https://channelrecipe.com/ugc-mcp/c0nnect/mcp" in r.text
+        assert r.status_code == 200 and f"https://channelrecipe.com/ugc-mcp/{connect}/mcp" in r.text
         assert "k3y-" not in r.text and r.headers["x-robots-tag"].startswith("noindex")
     page = client.get("/ugc/connect").text
     for words in ("<b>Customize</b> (on the left)", "<b>Connectors</b>", "+ Add", "Add custom connector", "ChannelRecipe",
                   "<b>Add</b> at the bottom", "<b>Connect</b>", "Copy the link", "https://claude.ai/new#customize/connectors/yours"):
         assert words in page, words
     assert "Settings" not in page                                            # (claude.ai moved it: Customize › Connectors)
-    assert client.get("/ugc/c0nnect/").status_code == 404                    # the connect key opens no kit
+    assert client.get(f"/ugc/{connect}/").status_code == 404                 # the connect key opens no kit
+    assert client.get(f"/ugc/{connect}/studio").status_code == 404
     body = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
-    assert client.post("/ugc-mcp/c0nnect/mcp", json=body).status_code == 200   # but it opens the connector
+    assert client.post(f"/ugc-mcp/{connect}/mcp", json=body).status_code == 200   # but it opens the connector
     assert client.post("/ugc-mcp/wrong/mcp", json=body).status_code == 404

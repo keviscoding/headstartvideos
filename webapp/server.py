@@ -2355,9 +2355,15 @@ def _ugc_key_ok(key: str) -> bool:
 
 
 def _ugc_connect_key() -> str:
-    """UGC_CONNECT_KEY: the key in the shared connector link /ugc/connect shows. It opens only the demo connector
-    (/ugc-mcp/, cached data), never a creator kit, so a public page can carry it; unset = no connect page."""
-    return (os.getenv("UGC_CONNECT_KEY") or "").strip()
+    """The key in the shared connector link /ugc/connect shows: HMAC-SHA256(the first UGC_SANDBOX_KEY, "ugc-connect-v1"),
+    as long as that key (16-64 hex). Deterministic, never a kit's key, and it opens only the demo connector (/ugc-mcp/,
+    cached data), so a public page can carry it. No sandbox key: no connect page."""
+    import hashlib
+    import hmac
+    keys = [k.strip() for k in (os.getenv("UGC_SANDBOX_KEY") or "").split(",") if k.strip()]
+    if not keys:
+        return ""
+    return hmac.new(keys[0].encode(), b"ugc-connect-v1", hashlib.sha256).hexdigest()[:min(64, max(16, len(keys[0])))]
 
 
 # The connector link, short to type on the laptop (the scriptwriter's walk, 2026-11-10: the link arrives on the creator's
