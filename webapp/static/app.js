@@ -37,6 +37,7 @@ let heygenConfigured = false;
 // Boot
 // ---------------------------------------------------------------------------
 let currentUser = null;
+let _studioAccount = null; // who the Studio page was last drawn for (updateAuthUI redraws it only when this changes)
 let authReady = false;
 let pendingAuthAction = null;
 
@@ -6561,8 +6562,14 @@ function updateAuthUI() {
     navSettings?.classList.toggle('hidden', !signedIn);
     navSettingsMobile?.classList.toggle('hidden', !signedIn);
     const isAdmin = !!(currentUser && currentUser.is_admin);
-    // The Studio page explains itself to everyone; it re-renders on sign-in/out.
-    if (state.page === 'local-studio') window.CRLocalStudio?.open();
+    // The Studio page explains itself to everyone; it re-renders on sign-in/out or a plan change. Only then: the
+    // 45 s account refresh and every tab focus land here too, and a rebuild closes the setup guide and stops its video
+    // (a customer, 2026-11-10: "every 2-3 minutes it redirects me back to the MAX PLAN tab").
+    const studioAccount = signedIn ? [currentUser.id ?? '', currentUser.plan ?? '', isAdmin].join('|') : '';
+    if (studioAccount !== _studioAccount) {
+        _studioAccount = studioAccount;
+        if (state.page === 'local-studio') window.CRLocalStudio?.open();
+    }
     document.getElementById('nav-niche-intel')?.classList.toggle('hidden', !isAdmin);
     document.getElementById('nav-niche-intel-mobile')?.classList.toggle('hidden', !isAdmin);
     document.getElementById('nav-showcase')?.classList.toggle('hidden', !isAdmin);
