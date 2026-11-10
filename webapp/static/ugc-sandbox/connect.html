@@ -24,6 +24,8 @@ h1{font-size:34px;line-height:1.15;margin:0 0 8px;letter-spacing:-.02em}
 .copy{display:block;width:100%;font:700 22px Inter,system-ui,sans-serif;color:#fff;background:var(--accent);border:0;
   border-radius:14px;padding:18px;cursor:pointer}
 .copy.done{background:var(--ok)}
+.open{display:block;text-align:center;margin:12px 0 0;font:700 20px Inter,system-ui,sans-serif;color:var(--accent);
+  background:transparent;border:2px solid var(--accent);border-radius:14px;padding:15px;text-decoration:none}
 ol{list-style:none;padding:0;margin:28px 0 0;counter-reset:s}
 ol li{counter-increment:s;display:grid;grid-template-columns:44px 1fr;gap:14px;align-items:start;margin:0 0 20px}
 ol li::before{content:counter(s);width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;display:grid;
@@ -42,13 +44,14 @@ ol li b{font-weight:700}
     <p class="label">Your link</p>
     <p class="link" id="link">{{LINK}}</p>
     <button class="copy" id="copy" type="button">Copy the link</button>
+    <a class="open" href="https://claude.ai/new#customize/connectors/yours" target="_blank" rel="noopener">Open Claude Connectors ↗</a>
   </section>
 
   <ol>
-    <li><span>In Claude, open <b>Customize › Connectors</b>.</span></li>
+    <li><span>In Claude, click <b>Customize</b> (on the left), then <b>Connectors</b>. The button above opens it for you.</span></li>
     <li><span>Click <b>+ Add</b>, then <b>Add custom connector</b>.</span></li>
     <li><span>Name: <b>ChannelRecipe</b>. URL: <b>paste the link</b>.</span></li>
-    <li><span>Click <b>Add</b>, then <b>Connect</b>.</span></li>
+    <li><span>Click <b>Add</b> at the bottom, then <b>Connect</b>.</span></li>
   </ol>
   <p class="done-line">Done ✅ ChannelRecipe is in your Claude.</p>
 </main>

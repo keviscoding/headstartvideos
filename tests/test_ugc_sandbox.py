@@ -46,7 +46,8 @@ def test_the_connect_page_shows_the_connector_link_to_copy_and_never_a_creator_k
         assert r.status_code == 200 and "https://channelrecipe.com/ugc-mcp/c0nnect/mcp" in r.text
         assert "k3y-" not in r.text and r.headers["x-robots-tag"].startswith("noindex")
     page = client.get("/ugc/connect").text
-    for words in ("Customize › Connectors", "+ Add", "Add custom connector", "ChannelRecipe", "Connect", "Copy the link"):
+    for words in ("<b>Customize</b> (on the left)", "<b>Connectors</b>", "+ Add", "Add custom connector", "ChannelRecipe",
+                  "<b>Add</b> at the bottom", "<b>Connect</b>", "Copy the link", "https://claude.ai/new#customize/connectors/yours"):
         assert words in page, words
     assert "Settings" not in page                                            # (claude.ai moved it: Customize › Connectors)
     assert client.get("/ugc/c0nnect/").status_code == 404                    # the connect key opens no kit
