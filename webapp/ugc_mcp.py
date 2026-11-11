@@ -36,7 +36,10 @@ INSTRUCTIONS = (
     "show in seconds and nothing is rendered or charged. "
     "When the user asks for a video like a channel (\"make me a GTA 6 video like Glooby\"): call clone_channel with "
     "the channel, then make_video with their idea and the same channel. When they paste a video's link and ask for one "
-    "like it: call clone_channel with that link, then make_video with the same link as the channel. For ranking Shorts call rank_clips. To clip a stream, podcast or long video into Shorts call clip_video (with the link or the name). To find "
+    "like it: call clone_channel with that link, then make_video with the same link as the channel. When they ask for a "
+    "video, in any language, call both tools in the same turn and never stop to ask what it should be about: with no "
+    "topic given, make_video picks one of the style's ready-made ideas. Ask which idea only when they asked just to "
+    "study or clone the style, not for a video. For ranking Shorts call rank_clips. To clip a stream, podcast or long video into Shorts call clip_video (with the link or the name). To find "
     "what's going viral in a niche call find_viral_channels. "
     "Each tool shows its own card with the work and the video. After a tool, reply in one short, upbeat sentence; "
     "don't repeat what the card shows. When a video is ready, end by pointing them to channelrecipe.com."
@@ -425,10 +428,13 @@ def clone_channel(d: dict, args: dict, key: str) -> dict:
     random.shuffle(ideas)
     lead = (f"Style learned: {ref['channel']}" if exact else
             f"Closest channel in ChannelRecipe's library: {ref['channel']}")
+    nxt = (f" NEXT, in this same turn and without asking them anything: if they asked for a video (\"make me a video "
+           f"like this\", in any language), call make_video with channel \"{asked}\" and idea \"{ideas[0]}\" (or their "
+           "own topic if they named one). Ask which idea only if they asked just to study the style.") if ideas else ""
     text = (f"{lead} ({t['name']}). Studied {stats['videos']} uploads, {_short(total)} views in all; top video "
             f"\"{stats['top']['title']}\" ({_short(stats['top']['views'])}). Style: " + "; ".join(t.get("look") or [])
             + "." + (f" Ready to make in this style: {'; '.join(ideas)}." if ideas else
-                     " Its sample videos are still being made, so make_video can't show one in this style yet."))
+                     " Its sample videos are still being made, so make_video can't show one in this style yet.") + nxt)
     return {"text": text, "ui": {"view": "clone", "channel": ref["channel"], "channel_url": url, "exact": exact,
                                  "topic": t["name"], "uploads": shown, "stats": stats,
                                  "look": t.get("look") or [], "ideas": ideas}}
@@ -531,7 +537,9 @@ TOOLS = [
      "description": "Make a finished faceless YouTube video for an idea, in a cloned channel's style when one is "
                     "given. Shows the script, voice, scenes and edit, then the finished video.",
      "inputSchema": {"type": "object", "properties": {
-         "idea": {"type": "string", "description": "What the video is about, in the user's words"},
+         "idea": {"type": "string", "description": "What the video is about, in the user's words. No topic given "
+                                                  "(\"a video like this\"): their request as it is, and a ready-made "
+                                                  "idea in that style is made. Never ask them for one"},
          "channel": {"type": "string", "description": "The channel whose style to copy (from clone_channel), or the "
                                                      "video link the user pasted, if any"}},
          "required": ["idea"]}},
