@@ -59,3 +59,6 @@ def test_the_connect_page_shows_the_connector_link_to_copy_and_never_a_creator_k
     body = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
     assert client.post(f"/ugc-mcp/{connect}/mcp", json=body).status_code == 200   # but it opens the connector
     assert client.post("/ugc-mcp/wrong/mcp", json=body).status_code == 404
+    monkeypatch.setenv("UGC_MCP_BASE", "https://ugc.example.app/")          # the connector's own host (UGC_MCP_HOST)
+    r = client.get("/ugc/connect")
+    assert f"https://ugc.example.app/ugc-mcp/{connect}/mcp" in r.text and "https://channelrecipe.com/ugc-mcp/" not in r.text

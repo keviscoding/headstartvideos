@@ -2376,7 +2376,8 @@ def ugc_connect():
     key = _ugc_connect_key()
     if not key:
         raise HTTPException(404)
-    link = f"https://channelrecipe.com/ugc-mcp/{key}/mcp"
+    base = (os.getenv("UGC_MCP_BASE") or "").strip().rstrip("/") or "https://channelrecipe.com"   # (the bot's same base:
+    link = f"{base}/ugc-mcp/{key}/mcp"                  #  UGC_MCP_HOST's, where claude.ai finds no paid OAuth to force)
     return web_assets.html_page(UGC_SANDBOX_DIR / "connect.html", cache="private, no-store", headers=_UGC_HEADERS,
                                 fill={"{{LINK}}": escape(link)})
 
