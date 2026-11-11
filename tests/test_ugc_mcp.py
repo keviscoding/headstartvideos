@@ -377,3 +377,26 @@ def test_a_link_that_cant_be_read_is_asked_again_later_not_every_call(monkeypatc
     monkeypatch.setattr(ugc_mcp, "ABOUT_FAIL_S", 0.0)
     monkeypatch.setattr(ugc_mcp, "_oembed", lambda url: {"title": "GTA 6 trailer", "author_name": "IGN"})
     assert ugc_mcp.link_about("https://youtu.be/abcdefghijk") == ("GTA 6 trailer", "IGN")
+
+
+
+def test_a_slow_link_lookup_waits_at_most_three_seconds_and_then_asks_which_kind(mcp, monkeypatch):
+    """The owner's rule (keep the web server fast): the oEmbed look waits ABOUT_S (3 s) at most; on a timeout the reply is
+    the "which kind?" note, at once, and the link isn't looked up again on every call."""
+    import requests
+    _kinds(monkeypatch)
+    assert ugc_mcp.ABOUT_S <= 3.0
+    seen = []
+
+    def get(url, params=None, timeout=None, headers=None):
+        seen.append(timeout)
+        raise requests.Timeout("slow")
+    monkeypatch.setattr(requests, "get", get)
+    monkeypatch.setattr(ugc_mcp, "_oembed", _real_oembed)            # (the real one, over a requests that times out)
+    for _ in range(2):
+        _, ui = mcp.tool("clone_channel", channel="https://youtube.com/shorts/slow0000001")
+        assert ui["view"] == "note" and ui["title"] == "Which kind of video?"
+    assert seen == [3.0]                                              # (one look, its 3 s cap, then kept)
+
+
+_real_oembed = ugc_mcp._oembed
