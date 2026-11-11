@@ -7578,6 +7578,11 @@ try:
 except Exception as e:
     print(f"[mcp] wrap skipped: {e}")
 
+# The UGC creators' demo connector on its own host (web_assets.UgcHostGate, UGC_MCP_HOST): there only /ugc-mcp/* and
+# /ugc/connect, so claude.ai finds no OAuth metadata and connects without a sign-in. Outside the MCP wrap, so its
+# /.well-known routes are covered too.
+app = web_assets.UgcHostGate(app)
+
 
 # ---------------------------------------------------------------------------
 # Entry point
