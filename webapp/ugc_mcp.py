@@ -78,7 +78,7 @@ WORDS = {
 _data: dict[str, Any] = {"at": 0.0, "value": None}
 _about: OrderedDict[str, tuple[float, str]] = OrderedDict()   # a pasted link -> (when, its title and channel), recent ones
 _about_lock = threading.Lock()
-ABOUT_S, ABOUT_FAIL_S, ABOUT_KEEP = 4.0, 600.0, 512           # the oEmbed wait; a failed look is asked again after this
+ABOUT_S, ABOUT_FAIL_S, ABOUT_KEEP = 3.0, 600.0, 512           # the oEmbed wait; a failed look is asked again after this
 _data_lock = threading.Lock()
 
 
