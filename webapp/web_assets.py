@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -153,3 +154,35 @@ class SecurityHeaders:
             await send(message)
 
         return await self.app(scope, receive, sending)
+
+
+class UgcHostGate:
+    """The UGC creators' demo connector on a host of its own (UGC_MCP_HOST, comma-separated; unset: nothing changes).
+    On that host only /ugc-mcp/* and /ugc/connect answer; everything else is a 404, /.well-known/*, /authorize, /token,
+    /register and /mcp included. Claude.ai reads a host's OAuth metadata (the paid connector's, wrap_fastapi_with_mcp)
+    as applying to every MCP URL on it, so on channelrecipe.com it sent creators to the paid sign-in (2026-11-11: "you
+    started connecting... but didn't finish"). It wraps the whole app, outside the MCP routes."""
+
+    PATHS = ("/ugc/connect", "/ugc/connect/")
+
+    def __init__(self, app):
+        self.app = app
+
+    @staticmethod
+    def hosts(scope) -> set[str]:
+        """The request's host names, the proxy's forwarded one too, lower case, no port."""
+        h = dict(scope.get("headers") or [])
+        names = (h.get(b"host", b""), h.get(b"x-forwarded-host", b"").split(b",")[0])
+        return {n.decode("latin-1").strip().lower().rsplit(":", 1)[0] for n in names if n.strip()}
+
+    async def __call__(self, scope, receive, send):
+        gated = {g.strip().lower() for g in (os.environ.get("UGC_MCP_HOST") or "").split(",") if g.strip()}
+        if (scope.get("type") not in ("http", "websocket") or not gated or not gated & self.hosts(scope)
+                or scope.get("path", "").startswith("/ugc-mcp/") or scope.get("path") in self.PATHS):
+            return await self.app(scope, receive, send)
+        if scope["type"] == "websocket":
+            return await send({"type": "websocket.close", "code": 1008})
+        await send({"type": "http.response.start", "status": 404,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8"), (b"content-length", b"9"),
+                                (b"x-robots-tag", b"noindex, nofollow")]})
+        await send({"type": "http.response.body", "body": b"Not Found"})
