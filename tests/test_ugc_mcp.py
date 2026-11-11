@@ -400,3 +400,23 @@ def test_a_slow_link_lookup_waits_at_most_three_seconds_and_then_asks_which_kind
 
 
 _real_oembed = ugc_mcp._oembed
+
+
+def test_a_video_request_goes_straight_from_clone_to_make_and_only_a_style_study_asks_which_idea(mcp):
+    """A creator, 2026-11-11: her video didn't look like the guide's example. After clone_channel, Claude asked "what should the
+    new video be about?", so her B-roll had no finished-video card. Checked with real `claude -p` (Haiku, Sonnet; English,
+    Spanish, Portuguese) against this connector: before, Haiku stopped and asked; now a video request is clone_channel
+    then make_video in the same turn, and "just study the style" stops after the clone. What tells Claude so:"""
+    init = mcp("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "claude"}})
+    said = init["result"]["instructions"]
+    assert "same turn" in said and "never stop to ask" in said and "just to study" in said
+    tools = {t["name"]: t for t in mcp("tools/list")["result"]["tools"]}
+    assert "Never ask them for one" in tools["make_video"]["inputSchema"]["properties"]["idea"]["description"]
+    text, ui = mcp.tool("clone_channel", channel="Glooby")
+    assert "NEXT, in this same turn and without asking" in text and 'call make_video with channel "Glooby"' in text
+    first = text.split('and idea "')[1].split('"')[0]
+    assert first in ui["ideas"] and first == ui["ideas"][0]                 # (the first idea the card shows)
+    _, made = mcp.tool("make_video", idea=first, channel="Glooby")
+    assert made["view"] == "make" and made["video"]["title"]                  # (that idea's video is the one that plays)
+    _, roblox = mcp.tool("clone_channel", channel="Roblox stories")
+    assert "NEXT" not in roblox.get("text", "") and "NEXT" not in str(roblox)  # (no ideas ready: nothing to go on to)
