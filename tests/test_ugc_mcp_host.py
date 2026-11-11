@@ -11,8 +11,9 @@ INIT = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "claude"}}}
 CLOSED = [("GET", "/.well-known/oauth-authorization-server"), ("GET", "/.well-known/oauth-protected-resource"),
           ("GET", "/.well-known/oauth-protected-resource/ugc-mcp/k3y-two/mcp"), ("GET", "/authorize"), ("POST", "/token"),
-          ("POST", "/register"), ("POST", "/mcp"), ("GET", "/"), ("GET", "/ugc/k3y-two/"), ("GET", "/static/favicon.svg"),
-          ("GET", "/oauth/mcp/login"), ("GET", "/api/health")]
+          ("POST", "/register"), ("POST", "/mcp"), ("GET", "/mcp"), ("GET", "/oauth/mcp/login")]
+TO_SITE = [("GET", "/"), ("GET", "/ugc/k3y-two/"), ("GET", "/static/favicon.svg"), ("GET", "/api/health"),
+           ("GET", "/pricing?ref=video"), ("POST", "/api/anything"), ("GET", "/mcpx"), ("GET", "/tokens")]
 
 
 def _client(host: str) -> TestClient:
@@ -21,16 +22,19 @@ def _client(host: str) -> TestClient:
 
 def test_on_the_ugc_host_only_the_demo_connector_answers_without_a_sign_in(monkeypatch):
     monkeypatch.setenv("UGC_SANDBOX_KEY", "k3y-one, k3y-two")
-    monkeypatch.setenv("UGC_MCP_HOST", f"{DO}, ugc.channelrecipe.com")
-    for host in (DO, "ugc.channelrecipe.com", f"{DO.upper()}:443"):
+    monkeypatch.setenv("UGC_MCP_HOST", f"{DO}, connect.channelrecipe.com")
+    for host in (DO, "connect.channelrecipe.com", f"{DO.upper()}:443"):
         c = _client(host)
         r = c.post("/ugc-mcp/k3y-two/mcp", json=INIT)                       # no Authorization header
         assert r.status_code == 200 and r.json()["result"]["serverInfo"]["title"] == "ChannelRecipe", host
         assert c.get("/ugc-mcp/k3y-two/mcp").status_code == 405
         assert c.post("/ugc-mcp/wrong/mcp", json=INIT).status_code == 404   # (still a creator's key only)
-        for method, path in CLOSED:
-            got = c.request(method, path)
+        for method, path in CLOSED:                                     # (no OAuth to discover there, ever)
+            got = c.request(method, path, follow_redirects=False)
             assert got.status_code == 404 and got.text == "Not Found", (host, method, path, got.status_code)
+        for method, path in TO_SITE:                                    # (a viewer who types the host lands on the site)
+            got = c.request(method, path, follow_redirects=False)
+            assert got.status_code == 302 and got.headers["location"] == "https://channelrecipe.com", (host, method, path)
 
 
 def test_the_proxys_forwarded_host_is_gated_too(monkeypatch):

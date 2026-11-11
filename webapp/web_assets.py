@@ -156,14 +156,25 @@ class SecurityHeaders:
         return await self.app(scope, receive, sending)
 
 
+async def send_redirect(send, to: str) -> None:
+    """A plain 302 to `to` (ASGI), never cached by the browser."""
+    await send({"type": "http.response.start", "status": 302,
+                "headers": [(b"location", to.encode()), (b"content-length", b"0"), (b"cache-control", b"no-store"),
+                            (b"x-robots-tag", b"noindex, nofollow")]})
+    await send({"type": "http.response.body", "body": b""})
+
+
 class UgcHostGate:
     """The UGC creators' demo connector on a host of its own (UGC_MCP_HOST, comma-separated; unset: nothing changes).
-    On that host only /ugc-mcp/* and /ugc/connect answer; everything else is a 404, /.well-known/*, /authorize, /token,
-    /register and /mcp included. Claude.ai reads a host's OAuth metadata (the paid connector's, wrap_fastapi_with_mcp)
+    On that host only /ugc-mcp/* and /ugc/connect answer. The OAuth routes are a 404 there: /.well-known/*, /authorize,
+    /token, /register, /mcp, /oauth/*. Claude.ai reads a host's OAuth metadata (the paid connector's, wrap_fastapi_with_mcp)
     as applying to every MCP URL on it, so on channelrecipe.com it sent creators to the paid sign-in (2026-11-11: "you
-    started connecting... but didn't finish"). It wraps the whole app, outside the MCP routes."""
+    started connecting... but didn't finish"). Anything else goes to https://channelrecipe.com (302): a viewer who types
+    the connector's host from a video lands on the site. It wraps the whole app, outside the MCP routes."""
 
     PATHS = ("/ugc/connect", "/ugc/connect/")
+    OAUTH = ("/.well-known/", "/authorize", "/token", "/register", "/mcp", "/oauth/")
+    SITE = "https://channelrecipe.com"
 
     def __init__(self, app):
         self.app = app
@@ -182,6 +193,9 @@ class UgcHostGate:
             return await self.app(scope, receive, send)
         if scope["type"] == "websocket":
             return await send({"type": "websocket.close", "code": 1008})
+        path = scope.get("path", "")
+        if not any(path == o.rstrip("/") or path.startswith(o.rstrip("/") + "/") for o in self.OAUTH):
+            return await send_redirect(send, self.SITE)
         await send({"type": "http.response.start", "status": 404,
                     "headers": [(b"content-type", b"text/plain; charset=utf-8"), (b"content-length", b"9"),
                                 (b"x-robots-tag", b"noindex, nofollow")]})
