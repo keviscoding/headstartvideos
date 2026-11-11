@@ -63,6 +63,12 @@ WORDS = {
     "rank-dogs": ("dog", "dogs", "puppy", "puppies"),
     "rank-sharks": ("shark", "sharks"),
     "clip-gta6": ("kai", "cenat", "gta", "stream", "streamer", "live reaction", "trailer"),
+    "kids": ("nursery", "rhyme", "rhymes", "kids song", "kids songs", "toddler", "toddlers", "lullaby", "cocomelon",
+             "humpty", "wheels on the", "baby shark", "children s song", "for kids"),
+    "highway": ("karma", "instant karma", "highway", "reckless", "road rage", "semi truck", "bad driver", "drivers"),
+    "fruit": ("fruit", "fruits", "veggie", "veggies", "banana", "strawberry", "watermelon", "mango", "pineapple"),
+    "zack": ("how it works", "how does", "how do", "what happens", "inside your", "medical", "stitches", "injection",
+             "your body"),
 }
 
 
@@ -70,6 +76,9 @@ WORDS = {
 # the sandbox data (cached; a CDN miss keeps the last copy)
 
 _data: dict[str, Any] = {"at": 0.0, "value": None}
+_about: OrderedDict[str, tuple[float, str]] = OrderedDict()   # a pasted link -> (when, its title and channel), recent ones
+_about_lock = threading.Lock()
+ABOUT_S, ABOUT_FAIL_S, ABOUT_KEEP = 4.0, 600.0, 512           # the oEmbed wait; a failed look is asked again after this
 _data_lock = threading.Lock()
 
 
@@ -155,9 +164,59 @@ def find_link(d: dict, *texts: str) -> tuple[dict, dict] | None:
     return None
 
 
-# words in topic names that say nothing about the topic ("Best shark moments" is about sharks)
+_URL = re.compile(r"https?://\S+|(?:www\.)?(?:youtube\.com|youtu\.be|tiktok\.com|instagram\.com)/\S+", re.I)
+
+
+def _no_links(s: str) -> str:
+    """The words of a request without its links: a link's own text says nothing of its topic (2026-11-11: "shorts" in
+    every youtube.com/shorts/ link matched '3D "how it works" Shorts', so every unknown Short became Zack D. Films)."""
+    return _URL.sub(" ", s or "")
+
+
+def _oembed(url: str) -> dict | None:
+    """The public oEmbed answer for a YouTube or TikTok video link (its title and channel; no key, one small GET)."""
+    import requests
+    if re.search(r"youtube\.com|youtu\.be", url, re.I):
+        api, params = "https://www.youtube.com/oembed", {"format": "json", "url": url}
+    elif re.search(r"tiktok\.com", url, re.I):
+        api, params = "https://www.tiktok.com/oembed", {"url": url}
+    else:
+        return None                                   # (Instagram's oEmbed needs a Facebook app token)
+    r = requests.get(api, params=params, timeout=ABOUT_S, headers={"User-Agent": "ChannelRecipe/1.0"})
+    r.raise_for_status()
+    return r.json()
+
+
+def link_about(*texts: str) -> tuple[str, str]:
+    """A pasted video link's (title, channel), read once and kept (a few hundred recent links); ("", "") for no link, an
+    Instagram one, or one that can't be read (asked again after ABOUT_FAIL_S)."""
+    m = next((m for x in texts if x for m in _URL.finditer(x)), None)
+    if not m:
+        return "", ""
+    url = m.group(0).rstrip(").,]>\"'")
+    url = url if url.lower().startswith("http") else "https://" + url
+    with _about_lock:
+        got = _about.get(url)
+        if got and (got[1] or time.time() - got[0] < ABOUT_FAIL_S):
+            _about.move_to_end(url)
+            return tuple(got[1].split("\n", 1)) if got[1] else ("", "")
+    try:
+        o = _oembed(url) or {}
+        said = f"{o.get('title') or ''}\n{o.get('author_name') or ''}" if o.get("title") else ""
+    except Exception as e:                            # noqa: BLE001 - unknown, as before: Claude asks which kind
+        print(f"[ugc-mcp] oembed {url[:80]}: {type(e).__name__}")
+        said = ""
+    with _about_lock:
+        _about[url] = (time.time(), said)
+        while len(_about) > ABOUT_KEEP:
+            _about.popitem(last=False)
+    return tuple(said.split("\n", 1)) if said else ("", "")
+
+
+# words in topic names that say nothing about the topic ("Best shark moments" is about sharks; a Short's "#shorts")
 PLAIN = {"best", "funniest", "moments", "video", "videos", "stories", "story", "channels", "channel", "explained",
-         "places", "make", "about", "facts", "what", "your", "with", "that", "this", "from"}
+         "places", "make", "about", "facts", "what", "your", "with", "that", "this", "from", "shorts", "short",
+         "youtube", "reels", "tiktok"}
 
 
 def _sig(s: str) -> set[str]:
@@ -165,8 +224,9 @@ def _sig(s: str) -> set[str]:
 
 
 def find_topic(d: dict, mid: str, *texts: str) -> dict | None:
-    """The topic of method `mid` a request is about: its words, its videos' titles, its channels' names."""
-    blob = _words(" ".join(t for t in texts if t))
+    """The topic of method `mid` a request is about: its words, its videos' titles, its channels' names (never a link's
+    own text: _no_links)."""
+    blob = _words(" ".join(_no_links(t) for t in texts if t))
     scored = []
     for t in _method(d, mid).get("topics") or []:
         score = sum(3 for w in WORDS.get(t["id"], ()) if f" {w} " in blob)
@@ -290,6 +350,29 @@ def _menu(d: dict, mid: str) -> list[str]:
     return [t["name"] for t in _ready(_method(d, mid))]
 
 
+def _which_kind(d: dict, title: str = "") -> dict:
+    """A pasted link whose kind the demo can't tell: Claude asks them which kind, never a guess (2026-11-11: every unknown
+    Short became Zack D. Films for a creator: GTA 6, kids, karma)."""
+    names = _menu(d, "clone")
+    text = ((f"Couldn't tell which kind of video \"{title}\" is. " if title else "Couldn't tell which kind of video that "
+             "link is. ") + "Ask them in one short line which kind they want, then call clone_channel with that kind: "
+            + ", ".join(names) + ".")
+    return {"text": text, "ui": {"view": "note", "title": "Which kind of video?", "text": text, "options": names}}
+
+
+def link_topic(d: dict, *texts: str) -> tuple[dict | None, dict | None, str] | None:
+    """An unknown pasted link, by what the video is (its oEmbed title and channel): (a scouted channel's ref, its topic,
+    the title) or (None, the topic by the title's words, the title); (None, None, title) when it can't be told; None for
+    no readable link."""
+    title, author = link_about(*texts)
+    if not title:
+        return None
+    hit = find_channel(d, author) if author else None
+    if hit:
+        return hit[0], hit[1], title
+    return None, find_topic(d, "clone", title, *texts), title
+
+
 def _not_here(d: dict, mid: str, what: str) -> dict:
     names = _menu(d, mid)
     text = (f"{what} isn't in ChannelRecipe's demo workspace yet. Ready-made here: {', '.join(names)}."
@@ -315,8 +398,14 @@ def clone_channel(d: dict, args: dict, key: str) -> dict:
         ref, t = hit
         exact = True
     else:
-        t = find_topic(d, "clone", asked)
-        ref, exact = ((t or {}).get("refs") or [None])[0], False
+        seen = link_topic(d, asked) if _URL.search(asked) else None   # (an unknown link: what the video is)
+        if seen and seen[0]:
+            ref, t, exact = seen[0], seen[1], True
+        else:
+            t = seen[1] if seen else find_topic(d, "clone", asked)
+            ref, exact = ((t or {}).get("refs") or [None])[0], False
+            if not t and _URL.search(asked):
+                return _which_kind(d, seen[2] if seen else "")
     if not t or not ref:
         return _not_here(d, "clone", f"The channel \"{asked}\"" if asked else "That channel")
     url = ref.get("channel_url") or ""
@@ -349,7 +438,12 @@ def make_video(d: dict, args: dict, key: str) -> dict:
     idea = str(args.get("idea") or "").strip()
     style = str(args.get("channel") or "").strip()
     hit = (find_channel(d, style) if style else None) or find_link(d, style, idea)
-    t = (hit[1] if hit else None) or find_topic(d, "clone", idea, style)
+    seen = link_topic(d, style, idea) if not hit and _URL.search(f"{style} {idea}") else None
+    if seen and seen[0]:
+        hit = (seen[0], seen[1])
+    t = (hit[1] if hit else None) or (seen[1] if seen else None) or find_topic(d, "clone", idea, style)
+    if not t and _URL.search(f"{style} {idea}"):
+        return _which_kind(d, seen[2] if seen else "")
     if not t:
         return _not_here(d, "clone", f"\"{idea}\"" if idea else "That video")
     outs = t.get("outputs") or []
