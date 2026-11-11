@@ -51,6 +51,8 @@ def mcp(monkeypatch):
     fetches = []
     monkeypatch.setattr(ugc_mcp, "_fetch", lambda: fetches.append(1) or DATA)
     monkeypatch.setattr(ugc_mcp, "_data", {"at": 0.0, "value": None})
+    monkeypatch.setattr(ugc_mcp, "_oembed", lambda url: None)        # (never the network: a test names its titles)
+    monkeypatch.setattr(ugc_mcp, "_about", ugc_mcp.OrderedDict())
     client = TestClient(server.app)
     key = "k3y-two"
 
@@ -304,3 +306,74 @@ def test_a_start_point_stays_inside_the_file_that_plays(mcp, monkeypatch):
                                                                          *DATA["methods"][1:]]})
     starts = [mcp.tool("make_video", idea="a GTA 6 video", channel="Glooby")[1]["video"]["start"] for _ in range(20)]
     assert all(0 <= s <= 90 - 25 for s in starts) and len(set(starts)) > 3
+
+
+
+def _kinds(monkeypatch):
+    """The sandbox with its 2026-11-11 pathways: GTA 6, kids nursery rhymes, highway karma, Zack-style "how it works"."""
+    more = [{"id": "kids", "name": "Kids nursery rhymes (3D)", "pin": "NuNu Tv Nursery Rhymes", "look": [],
+             "outputs": [_out("kids_1", "Ten Little Buses", tall=True)],
+             "refs": [{**GLOOBY, "id": "k1", "channel": "NuNu Tv Nursery Rhymes", "channel_url": "https://www.youtube.com/channel/UCnunu"}]},
+            {"id": "highway", "name": "Highway karma cartoons", "pin": "Allyollyo", "look": [],
+             "outputs": [_out("highway_1", "Semi Truck Teaches Reckless Driver a Lesson", tall=True)],
+             "refs": [{**GLOOBY, "id": "a1", "channel": "Allyollyo", "channel_url": "https://www.youtube.com/channel/UCally"}]},
+            {"id": "zack", "name": '3D "how it works" Shorts', "pin": "Zack D. Films", "look": [],
+             "outputs": [_out("zack_1", "How Stitches Work", tall=True)],
+             "refs": [{**GLOOBY, "id": "z1", "channel": "Zack D. Films", "channel_url": "https://www.youtube.com/channel/UCzack"}]}]
+    monkeypatch.setattr(ugc_mcp, "_data", {"at": 0.0, "value": None})
+    monkeypatch.setattr(ugc_mcp, "_fetch", lambda: {**DATA, "methods": [
+        {**DATA["methods"][0], "topics": [*TOPICS, *more]}, *DATA["methods"][1:]]})
+
+
+TITLES = {  # (real Shorts' oEmbed titles and channels, 2026-11-11)
+    "FSUXqJPECA4": ("How Does an Injection Work? 💉 | 3D Medical Animation #shorts #Injection", "Smart Doctor 3D"),
+    "eOrb93UZfPU": ("GTA 6 (Grand Theft Auto VI) - Official Trailer", "IGN"),
+    "nrv495corBc": ("Humpty Dumpty | Nursery Rhymes | Super Simple Songs", "Super Simple Songs - Kids Songs"),
+    "FcFiJR8hnJ0": ("CRAZY RACER Gets INSTANT KARMA 😂 | Hilarious Motorcycle Fail Animation! #animationshorts #shorts", "Factopia"),
+    "vlog0000001": ("my morning routine vlog #shorts", "someone"),
+}
+
+
+@pytest.mark.parametrize("vid,topic", [("FSUXqJPECA4", '3D "how it works" Shorts'), ("eOrb93UZfPU", "GTA 6 channels"),
+                                       ("nrv495corBc", "Kids nursery rhymes (3D)"), ("FcFiJR8hnJ0", "Highway karma cartoons")])
+def test_an_unknown_pasted_short_makes_its_own_kind_by_what_the_video_is(mcp, monkeypatch, vid, topic):
+    """A creator, 2026-11-11: a GTA 6, a kids and a karma Short each came back as Zack D. Films, "how stitches work":
+    an unknown link was matched by its URL's own words, and "shorts" (youtube.com/shorts/) is in Zack's topic name. Now
+    the link's own title (oEmbed) decides, and a URL's words never count."""
+    _kinds(monkeypatch)
+    asked = []
+    monkeypatch.setattr(ugc_mcp, "_oembed", lambda url: asked.append(url) or
+                        {"title": TITLES[url.rsplit("/", 1)[-1]][0], "author_name": TITLES[url.rsplit("/", 1)[-1]][1]})
+    link = f"https://youtube.com/shorts/{vid}"
+    _, ui = mcp.tool("clone_channel", channel=link)
+    assert ui["view"] == "clone" and ui["topic"] == topic, ui
+    _, ui = mcp.tool("make_video", idea=f"{link} Make me a video like this with ChannelRecipe", channel=link)
+    assert ui["view"] == "make" and ui["topic"] == topic, ui
+    assert asked == [link]                                            # (read once, then kept)
+
+
+def test_a_link_whose_kind_cant_be_told_asks_which_kind_never_zack(mcp, monkeypatch):
+    _kinds(monkeypatch)
+    monkeypatch.setattr(ugc_mcp, "_oembed", lambda url: {"title": TITLES["vlog0000001"][0], "author_name": "someone"})
+    for link in ("https://youtube.com/shorts/vlog0000001", "https://www.instagram.com/reel/Dunknown01/"):
+        text, ui = mcp.tool("clone_channel", channel=link)
+        assert ui["view"] == "note" and ui["title"] == "Which kind of video?" and "Ask them" in text, ui
+        assert "Kids nursery rhymes (3D)" in ui["options"] and "Zack" not in ui["text"]
+        _, ui = mcp.tool("make_video", idea=f"{link} Make me a video like this with ChannelRecipe", channel=link)
+        assert ui["view"] == "note" and ui["title"] == "Which kind of video?"
+    assert ugc_mcp.find_topic(ugc_mcp.data(), "clone", "https://youtube.com/shorts/abc123def45") is None   # (a URL says nothing)
+
+
+def test_a_link_that_cant_be_read_is_asked_again_later_not_every_call(monkeypatch):
+    monkeypatch.setattr(ugc_mcp, "_about", ugc_mcp.OrderedDict())
+    calls = []
+
+    def boom(url):
+        calls.append(url)
+        raise OSError("timed out")
+    monkeypatch.setattr(ugc_mcp, "_oembed", boom)
+    assert ugc_mcp.link_about("like https://youtu.be/abcdefghijk please") == ("", "")
+    assert ugc_mcp.link_about("https://youtu.be/abcdefghijk") == ("", "") and len(calls) == 1
+    monkeypatch.setattr(ugc_mcp, "ABOUT_FAIL_S", 0.0)
+    monkeypatch.setattr(ugc_mcp, "_oembed", lambda url: {"title": "GTA 6 trailer", "author_name": "IGN"})
+    assert ugc_mcp.link_about("https://youtu.be/abcdefghijk") == ("GTA 6 trailer", "IGN")
