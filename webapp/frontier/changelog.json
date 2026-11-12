@@ -1,5 +1,14 @@
 [
   {
+    "build": 133,
+    "date": "2026-11-12",
+    "title": "A video that comes out black stops instead of finishing",
+    "items": [
+      "A video could finish as a black screen with only the voice playing when its footage wouldn't render on your computer. Studio now looks at every finished video before handing it over.",
+      "If most of it came out black, Studio keeps it aside, stops and tells you why, naming the first shot that failed when it knows. Press Resume to make the picture again: the shots that failed are tried again."
+    ]
+  },
+  {
     "build": 132,
     "date": "2026-11-09",
     "title": "A voice that stopped on an unclear answer can carry on",

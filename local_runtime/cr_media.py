@@ -1577,6 +1577,8 @@ def install(engine):
         cr_panels.install(engine)
         import cr_sound_qc
         cr_sound_qc.install(engine)                 # the sound check on every finished video (measured)
+        import cr_picture_qc
+        cr_picture_qc.install(engine)               # a finished video that came out black stops instead of publishing
         cr_cta.install(engine)                      # your call to action: in the script, on screen, in the description
         import cr_presenters
         cr_presenters.install()                     # your own presenters, listed first

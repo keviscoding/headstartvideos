@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.132"
+VERSION = "5.3-admin.133"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -593,6 +593,42 @@ ENGINE_PATCHES = {
          '    segs = [None] * len(plan)\n'
          '    with ThreadPoolExecutor(max_workers=RENDER_WORKERS) as ex:\n'
          '        futs = {ex.submit(one, i, e): i for i, e in enumerate(plan)}\n'),
+        # A shot FFmpeg can't render five times became a black clip, silently, and the video still finished: a Windows
+        # customer's cloned F1 documentary came out as a black screen with the narration over it, twice, both "done"
+        # (2026-11-09). Each black shot is now recorded with FFmpeg's own last words and marked, so a Resume renders it
+        # again instead of reusing the black clip, and a video black for a quarter of its length stops with the reason.
+        ('    fxp = _fx_prepare(plan, job, style)\n',
+         '    fxp = _fx_prepare(plan, job, style)\n'
+         '    fell: list = []          # (seconds, shot, what FFmpeg said) of every shot that came out black\n'),
+        ('        if seg.exists() and not force and not _newer(Path(str(path)), seg) and _fx_stamp_ok(seg, fx, dur):\n'
+         '            return seg\n',
+         '        black = seg.with_suffix(".black")      # this shot came out black last time: render it again\n'
+         '        if seg.exists() and not force and not black.exists() and not _newer(Path(str(path)), seg) \\\n'
+         '                and _fx_stamp_ok(seg, fx, dur):\n'
+         '            return seg\n'
+         '        black.unlink(missing_ok=True)\n'),
+        ('        log(f"  segment {idx} ({Path(path).name}) would not render — using a black fallback")\n'
+         '        _render_black_segment(float(dur), seg)\n'
+         '        return seg\n',
+         '        log(f"  segment {idx} ({Path(path).name}) would not render — using a black fallback")\n'
+         '        _render_black_segment(float(dur), seg)\n'
+         '        err = getattr(last, "stderr", None) or b""\n'
+         '        err = err.decode("utf-8", "replace") if isinstance(err, bytes) else str(err)\n'
+         '        why = ([ln.strip() for ln in err.splitlines() if ln.strip()] or [""])[-1][:200]\n'
+         '        black.write_text(why, encoding="utf-8")\n'
+         '        fell.append((float(dur), Path(str(path)).name, why))\n'
+         '        return seg\n'),
+        ('    return segs\n\n\ndef _render_segments(',
+         '    gone = sum(d for d, _n, _w in fell)\n'
+         '    if fell and gone + empty >= 0.25 * whole:\n'
+         '        for _d, name, why in fell[:20]:\n'
+         '            log(f"  black shot {name}: {why or \'FFmpeg gave no reason\'}")\n'
+         '        _d, name, why = fell[0]\n'
+         '        raise RuntimeError(f"FFmpeg couldn\'t render {len(fell)} of the {len(plan)} shots ({gone + empty:.0f} s of this "\n'
+         '                           f"{whole:.0f} s video came out black), so Studio stopped instead of finishing it black. "\n'
+         '                           f"The first was {name}: {why or \'FFmpeg gave no reason\'}. Press Resume to try those "\n'
+         '                           "shots again.")\n'
+         '    return segs\n\n\ndef _render_segments('),
     ],
     # The background remover (removebg.py) works on kie.ai alone, but cut-out movement, photo spotlights and
     # objects were switched off without a WaveSpeed key, so drawn styles got no figure moves on a Kie-only setup.
