@@ -336,13 +336,20 @@ def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp
               b'        return True\n'
               b'    return False\n\n\n'
               b'def _render_astro_segments(plan, force, fxp, seg, dur, path, idx):\n'
+              b'    fxp = _fx_prepare(plan, job, style)\n'
               b'    def one(i, e):\n'
               b'        fx = fxp.get(idx)\n'
               b'        if seg.exists() and not force and not _newer(Path(str(path)), seg) and _fx_stamp_ok(seg, fx, dur):\n'
               b'            return seg\n'
+              b'        log(f"  segment {idx} ({Path(path).name}) would not render \xe2\x80\x94 using a black fallback")\n'
+              b'        _render_black_segment(float(dur), seg)\n'
+              b'        return seg\n'
               b'    segs = [None] * len(plan)\n'
               b'    with ThreadPoolExecutor(max_workers=RENDER_WORKERS) as ex:\n'
-              b'        futs = {ex.submit(one, i, e): i for i, e in enumerate(plan)}\n')
+              b'        futs = {ex.submit(one, i, e): i for i, e in enumerate(plan)}\n'
+              b'    return segs\n\n\n'
+              b'def _render_segments(plan):\n'
+              b'    return plan\n')
     patched = package.patch_engine("make_video.py", engine).decode()
     ns = {}
     exec(compile(patched, "make_video.py", "exec"), ns)
@@ -719,3 +726,52 @@ def test_a_slot_with_nothing_to_show_plays_black_and_a_mostly_empty_video_stops_
     stop([("photo", "", False, 2.0)] + [("video", "/j/a.mp4", False, 8.0)] * 4)    # 2 s of 34: a short hole plays black
     with pytest.raises(RuntimeError, match="no picture to show for 30 s of this 40 s video"):
         stop([("photo", "", False, 30.0), ("video", "/j/a.mp4", False, 10.0)])
+
+
+def test_a_shot_ffmpeg_cannot_render_is_named_rendered_again_on_resume_and_a_mostly_black_video_stops(tmp_path):
+    """A Windows customer's cloned F1 documentary finished twice as a black screen with the narration over it
+    (2026-11-09): a shot FFmpeg couldn't render became a black clip without a word, the video still finished, and a
+    Resume would have reused the black clip. The real engine function, patched as the release builds it."""
+    import subprocess
+    import sys
+    import types
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    source = Path.home() / "Downloads" / "Frontier" / "files" / "v5" / "Frontier-5.3-FULL.zip"
+    if not source.is_file():
+        pytest.skip("the private engine source is not on this computer")
+    with zipfile.ZipFile(source) as engine:
+        patched = package.patch_engine("make_video.py", engine.read("Frontier/make_video.py")).decode()
+    start = patched.index("def _render_astro_segments(")
+    body = patched[start:patched.index("\ndef ", start + 10)]
+    broken, rendered, lines = {"yt_b.mp4", "yt_c.mp4"}, [], []
+
+    def video(path, dur, seg, **kw):
+        if path.name in broken:
+            raise subprocess.CalledProcessError(1, "ffmpeg", stderr=b"frame=0\n[h264 @ 0x1] Invalid NAL unit size\n"
+                                                                     b"Error while decoding stream #0:0\n")
+        rendered.append(path.name)
+        seg.write_bytes(b"shot")
+    ns = {"ASTRO_ZOOM_TOTAL": 0.1, "FRAMED_EVERY": 0, "VINTAGE_EVERY": 0, "HERE": tmp_path, "PUNCH_KINDS": (),
+          "Path": Path, "RENDER_WORKERS": 1, "STYLE_INFO": {}, "STYLE_NO_DUST": set(), "STYLE_PLACEMENT": {},
+          "STYLE_ZOOM": {}, "ThreadPoolExecutor": ThreadPoolExecutor, "as_completed": as_completed, "json": json,
+          "subprocess": subprocess, "sys": sys, "time": types.SimpleNamespace(sleep=lambda s: None), "log": lines.append,
+          "_depth_dlc": lambda *a: (None, []), "_footage_seconds": lambda job: {}, "_fx_prepare": lambda *a: {},
+          "_fx_stamp_ok": lambda *a: True, "_fx_stamp_write": lambda *a: None, "_newer": lambda a, b: False,
+          "_render_video_segment": video, "_render_black_segment": lambda dur, seg: seg.write_bytes(b"black")}
+    exec(compile(body, "make_video.py", "exec"), ns)
+    job = tmp_path / "job"
+    job.mkdir()
+    plan = [("video", str(job / f"yt_{k}.mp4"), False, 4.0) for k in "abcd"]
+    with pytest.raises(RuntimeError, match=r"FFmpeg couldn't render 2 of the 4 shots \(8 s of this 16 s video came out "
+                                           r"black\).*The first was yt_b.mp4: Error while decoding stream #0:0\. Press Resume"):
+        ns["_render_astro_segments"](plan, job, False, style="cr_clone_f1")
+    assert (job / "segments/seg_001.black").read_text() == "Error while decoding stream #0:0"
+    assert "  black shot yt_c.mp4: Error while decoding stream #0:0" in lines
+    broken.clear()                                   # Resume: the black shots render again, the good ones are kept
+    rendered.clear()
+    segs = ns["_render_astro_segments"](plan, job, False, style="cr_clone_f1")
+    assert rendered == ["yt_b.mp4", "yt_c.mp4"] and [p.read_bytes() for p in segs] == [b"shot"] * 4
+    assert not list((job / "segments").glob("*.black"))
+    broken.add("yt_g.mp4")                           # one bad shot in a long video still plays black, as before
+    long_plan = [("video", str(job / f"yt_{k}.mp4"), False, 4.0) for k in "efghijkl"]
+    assert len(ns["_render_astro_segments"](long_plan, job, True, style="cr_clone_f1")) == 8

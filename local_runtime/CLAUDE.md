@@ -186,6 +186,10 @@ under Saved ideas.
   stopped it (`progress(id)`), then `resume_video(id)` carries it on and reuses everything already made. A video
   Studio closed or a crash on this computer stopped, with nothing uncertain, carries on by itself (at most twice;
   `carries_on_by_itself`).
+- A video that stopped because its picture came out black (`progress(id)` says FFmpeg couldn't render some shots, or
+  the finished video came out black): nothing was published. `resume_video(id)` makes the picture again and tries
+  the failed shots again. If it stops the same way, ask them to press Copy diagnostics and send it to ChannelRecipe
+  support (the Discord): the log names the shots and FFmpeg's reason.
 - A video that stopped on a Claude step or a paid media task (`progress(id)` shows `stopped_on` `claude_stage` or
   `media`): read them `what_to_tell_them`, each stuck item's reason and whether their Claude usage or money may
   already have gone on it. Only after they say yes, `recover_video(id, key=recovery_key)` allows exactly those
