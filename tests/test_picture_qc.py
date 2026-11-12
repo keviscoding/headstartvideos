@@ -52,6 +52,9 @@ def test_a_black_video_with_captions_is_set_aside_and_stops_with_the_reason(tmp_
     (job / "plan.json").write_text(json.dumps([["video", "/j/yt_intro.mp4", False, 2.0],
                                                ["video", "/j/yt_lando_03.mp4", False, 10.0],
                                                ["video", "/j/yt_lando_07.mp4", False, 10.0]]))
+    (job / "segments").mkdir()
+    for k in range(3):                                   # what Studio 132 rendered: the last two came out black
+        (job / "segments" / f"seg_{k:03d}.mp4").write_bytes(b"segment")
     engine = _Engine()
     qc.install(engine)
     with pytest.raises(RuntimeError, match=r"came out black for 0:2\d of its 0:22 .*Press Resume"):
@@ -61,6 +64,8 @@ def test_a_black_video_with_captions_is_set_aside_and_stops_with_the_reason(tmp_
     log = "\n".join(engine.lines)
     assert "yt_lando_03.mp4, yt_lando_07.mp4" in log and "yt_intro.mp4" not in log
     assert json.loads((job / "picture_qc.json").read_text())["frames"] >= 20, "read from its keyframes"
+    marks = sorted(p.name for p in (job / "segments").glob("*.black"))
+    assert marks == ["seg_001.black", "seg_002.black"], "Resume renders the black shots again, not the intro"
 
 
 def test_a_video_with_its_picture_publishes_and_is_measured_once(tmp_path, monkeypatch):

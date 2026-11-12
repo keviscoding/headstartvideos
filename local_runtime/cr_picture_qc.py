@@ -109,21 +109,34 @@ def _clock(s: float) -> str:
 
 
 def _shots_at(job: Path, black: list) -> list:
-    """The planned shots that play in the black stretches (plan.json: [kind, file, leak, seconds] in timeline order)."""
+    """[(plan index, file)] of the planned shots that play in the black stretches (plan.json: [kind, file, leak,
+    seconds] in timeline order)."""
     try:
         plan = json.loads((job / "plan.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    names, at = [], 0.0
-    for entry in plan if isinstance(plan, list) else []:
+    out, at = [], 0.0
+    for k, entry in enumerate(plan if isinstance(plan, list) else []):
         try:
             name, dur = Path(str(entry[1] or "")).name, float(entry[3])
         except (TypeError, ValueError, IndexError):
             continue
-        if name and any(a < at + dur and at < b for a, b in black) and name not in names:
-            names.append(name)
+        if name and any(a < at + dur and at < b for a, b in black):
+            out.append((k, name))
         at += dur
-    return names
+    return out
+
+
+def _render_again(job: Path, shots: list) -> int:
+    """Marks the segments of those shots (segments/seg_NNN.black) so the engine renders them again on Resume, as it
+    does a shot that came out black itself: a video finished black before Studio 133 left black segments with no mark."""
+    segments = job / "segments"
+    marked = 0
+    for k, _name in shots:
+        if (segments / f"seg_{k:03d}.mp4").is_file():
+            (segments / f"seg_{k:03d}.black").write_text("black in the finished video", encoding="utf-8")
+            marked += 1
+    return marked
 
 
 def stop(job, qc: dict, fresh: str = "", log=print) -> None:
@@ -133,7 +146,9 @@ def stop(job, qc: dict, fresh: str = "", log=print) -> None:
     log("picture check: black " + ", ".join(f"{_clock(a)}-{_clock(b)}" for a, b in black[:12]))
     shots = _shots_at(job, black)
     if shots:
-        log(f"picture check: shots planned there ({len(shots)}): " + ", ".join(shots[:15]))
+        names = list(dict.fromkeys(name for _k, name in shots))
+        log(f"picture check: shots planned there ({len(names)}): " + ", ".join(names[:15]))
+        log(f"picture check: {_render_again(job, shots)} segment(s) will be rendered again on Resume")
     aside = job / "video.black.mp4"
     aside.unlink(missing_ok=True)
     _video_of(job, fresh).replace(aside)
