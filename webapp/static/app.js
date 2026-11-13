@@ -86,6 +86,13 @@ async function readJson(res, fallback = null) {
     }
 }
 
+/** What to say when a failed reply carried no message of its own: an edge's HTML page came back instead of JSON, e.g.
+ *  Cloudflare's after 100 s, which Thumbnail Studio showed as "Unexpected token '<'" (customers 2026-11-06, 2026-11-13). */
+function noReplyMessage(res) {
+    return res && res.status >= 500 ? 'the server took too long to answer. Try again in a moment.'
+                                    : 'Something went wrong. Please try again.';
+}
+
 function safeJsonParse(text, fallback = null) {
     if (text == null || text === '') return fallback;
     try {
@@ -2430,8 +2437,8 @@ async function handleThumbFinalUpload(input) {
         const form = new FormData();
         form.append('file', file);
         const res = await fetch('/api/thumbnail/upload', { method: 'POST', body: form });
-        const data = await res.json();
-        if (!res.ok) throw new Error(friendlyApiError(data, 'Upload failed'));
+        const data = await readJson(res, {});
+        if (!res.ok) throw new Error(friendlyApiError(data, res.status >= 500 ? noReplyMessage(res) : 'Upload failed'));
         renderThumbnails([data.url], [data.path]);
     } catch (e) {
         alert(e.message || 'Thumbnail upload failed');
@@ -2457,9 +2464,9 @@ async function regenerateThumbnails() {
         formData.append('count', '2');
         state.thumbnailRefs.forEach(f => formData.append('refs', f));
         const res = await fetch('/api/thumbnail/with-refs', { method: 'POST', body: formData });
-        const data = await res.json();
+        const data = await readJson(res, {});
         if (res.ok && data.thumbnails?.length) renderThumbnails(data.thumbnails, data.paths);
-        else throw new Error(friendlyApiError(data, 'No thumbnails generated'));
+        else throw new Error(friendlyApiError(data, res.ok ? 'No thumbnails generated' : noReplyMessage(res)));
     } catch (e) {
         alert('Thumbnail generation failed: ' + e.message);
         document.getElementById('thumb-loading')?.classList.add('hidden');
@@ -4296,16 +4303,16 @@ async function generateStudioThumbnails() {
             formData.append('count', document.getElementById('ts-count').value);
             tsRefFiles.forEach(f => formData.append('refs', f));
             const res = await fetch('/api/thumbnail/with-refs', { method: 'POST', body: formData });
-            data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Failed');
+            data = await readJson(res, {});
+            if (!res.ok || !data.thumbnails?.length) throw new Error(friendlyApiError(data, noReplyMessage(res)));
         } else {
             const res = await fetch('/api/thumbnail', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ title: document.getElementById('ts-title').value.trim(), niche_style: document.getElementById('ts-style').value.trim(), count: parseInt(document.getElementById('ts-count').value) }),
             });
-            data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Failed');
+            data = await readJson(res, {});
+            if (!res.ok || !data.thumbnails?.length) throw new Error(friendlyApiError(data, noReplyMessage(res)));
         }
         gallery.innerHTML = '';
         (data.thumbnails || []).forEach((url, i) => {
