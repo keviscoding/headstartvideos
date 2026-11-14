@@ -3520,7 +3520,7 @@ def _provider_http_status(exc: Exception) -> int:
         return 503
     if "image_other" in msg or "no parts found" in msg or "no_image" in msg:
         return 503
-    if "thumbnail generation failed after retries" in msg:
+    if "thumbnail generation failed after retries" in msg or "thumbnails took too long" in msg:
         return 503
     if "output path missing" in msg:
         return 503
@@ -3887,8 +3887,8 @@ def generate_thumbnail_with_refs(
     from core.thumbnail_gen import generate_thumbnails
 
     ref_paths = []
-    for ref in refs:
-        dest = UPLOAD_DIR / f"ref_{int(time.time())}_{ref.filename}"
+    for k, ref in enumerate(refs):
+        dest = UPLOAD_DIR / f"ref_{int(time.time())}_{k}_{Path(ref.filename or 'ref.png').name}"
         with open(dest, "wb") as f:
             content = ref.file.read()
             f.write(content)
