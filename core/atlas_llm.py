@@ -117,6 +117,9 @@ def generate_text(
     Text completion via Atlas Cloud. Google GenAI only if ALLOW_GOOGLE_GEMINI=1
     (our Google project is access-denied — do not use it for cooks).
     """
+    from core import kie_site
+    if kie_site.active():                                # Atlas ran dry 2026-11-13; the site's text is Kie's now
+        return kie_site.chat(prompt, system=system, max_tokens=max_tokens, temperature=temperature)
     model = (model or getattr(config, "GEMINI_TEXT_MODEL", None) or "gemini-3.1-flash-lite").strip()
     if has_atlas():
         atlas_model = (
@@ -685,6 +688,24 @@ def generate_video_file(
     return False
 
 
+def _kie_image(prompt: str, output_path: str, family: str, *, aspect_ratio: str = "16:9", timeout_sec: float = 90,
+               progress: Callable[[str], None] | None = None) -> bool:
+    """One picture on Kie for the Atlas image helpers below: True when output_path holds it."""
+    from core import kie_site
+    if not (prompt or "").strip():
+        return False
+    try:
+        kie_site.image(prompt.strip(), output_path, family=family, aspect_ratio=aspect_ratio,
+                       timeout=max(float(timeout_sec), 90.0))
+        return True
+    except Exception as e:                                       # noqa: BLE001 - these helpers answer True/False
+        msg = f"[kie] image ({family}) failed: {str(e)[:200]}"
+        print(msg)
+        if progress:
+            progress(msg)
+        return False
+
+
 def generate_image_file(
     prompt: str,
     output_path: str,
@@ -696,9 +717,13 @@ def generate_image_file(
     progress: Callable[[str], None] | None = None,
 ) -> bool:
     """
-    Text-to-image via Atlas generateImage (Nano Banana / etc.).
+    Text-to-image via Atlas generateImage (Nano Banana / etc.), or the same family on Kie (core.kie_site).
     Returns True on success.
     """
+    from core import kie_site
+    if kie_site.active():
+        return _kie_image(prompt, output_path, kie_site.image_family(model or ATLAS_PREMIUM_IMAGE_MODEL),
+                          aspect_ratio=aspect_ratio, timeout_sec=timeout_sec, progress=progress)
     key = _atlas_key()
     if not key:
         msg = "[atlas] generateImage: no ATLASCLOUD_KEY"
@@ -815,7 +840,11 @@ def generate_hq_image_file(
     Cost-locked to the cheapest *valid* settings Atlas allows for 16:9:
       quality=low, size=1536x864 (exact 16:9 at 1K long-edge — not 2K/4K).
       Note: 1024x576 is rejected by GPT Image 2 (below min pixel budget).
+    On Kie (core.kie_site): GPT Image 2 at 1K.
     """
+    from core import kie_site
+    if kie_site.active():
+        return _kie_image(prompt, output_path, "gpt-image-2", timeout_sec=max(timeout_sec, 120))
     key = _atlas_key()
     if not key:
         return False
@@ -918,7 +947,17 @@ def generate_ernie_image_file_detailed(
     *,
     timeout_sec: float = 75,
 ) -> tuple[bool, str]:
-    """Like generate_ernie_image_file but returns (ok, error_message)."""
+    """Like generate_ernie_image_file but returns (ok, error_message). On Kie: the fast base Nano Banana."""
+    from core import kie_site
+    if kie_site.active():
+        if not (prompt or "").strip():
+            return False, "empty prompt"
+        try:
+            kie_site.image(prompt.strip()[:2000], output_path, family="fast", timeout=max(timeout_sec, 90))
+            return True, ""
+        except Exception as e:                                   # noqa: BLE001 - the caller falls back on (False, why)
+            print(f"[kie] fast image failed: {str(e)[:200]}")
+            return False, str(e)[:300]
     key = _atlas_key()
     if not key:
         return False, "ATLASCLOUD_KEY not set"

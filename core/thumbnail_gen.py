@@ -15,6 +15,7 @@ Thumbnail Studio showed as "Unexpected token '<', <!DOCTYPE ... is not valid JSO
 """
 
 from __future__ import annotations
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -95,8 +96,14 @@ def _get_headers() -> dict:
 
 
 def _upload_media(file_path: str, deadline: float | None = None) -> str:
-    """Upload a local file to Atlas Cloud and return its public URL."""
+    """Upload a local file to Atlas Cloud (Kie when the site uses Kie: core.kie_site) and return its public URL."""
     import httpx
+
+    from core import kie_site
+    if kie_site.active():
+        url = kie_site.upload(file_path, timeout=max(1.0, min(60.0, _left(deadline))))
+        print(f"[thumbnail] Uploaded {Path(file_path).name} to Kie")
+        return url
 
     key = ATLASCLOUD_KEY
     if not key:
@@ -212,6 +219,16 @@ def _submit_and_download(
 
     if _left(deadline) < MIN_TRY_S:
         raise TimeoutError(f"{label}: no time left in this request")
+    from core import kie_site
+    if kie_site.active():                    # the same picture on Kie: its model family, prompt, references and shape
+        try:
+            kie_site.image_from_atlas_payload(payload, out_path, timeout=min(150.0, _left(deadline) - 2.0))
+        except kie_site.KieError as e:
+            if "provider balance" in str(e):
+                raise RuntimeError("Kie insufficient balance") from e
+            raise
+        print(f"[thumbnail] Generated: {out_path.name} via Kie ({kie_site.image_family(payload.get('model', ''))})")
+        return True
     resp = httpx.post(
         f"{ATLAS_BASE}/model/generateImage",
         headers=_get_headers(),
@@ -247,7 +264,9 @@ def _submit_and_download(
 
 
 def _out_of_balance(err) -> bool:
-    return isinstance(err, Exception) and ("insufficient balance" in str(err).lower() or "402" in str(err))
+    # 402 as a status, never inside a number ("timed out after -3.000402 s" read as out of credit, 2026-11-15)
+    return isinstance(err, Exception) and ("insufficient balance" in str(err).lower()
+                                           or re.search(r"(?<![\d.])402(?![\d.])", str(err)) is not None)
 
 
 def _finish(results: list, deadline: float | None) -> list[str]:
@@ -257,7 +276,9 @@ def _finish(results: list, deadline: float | None) -> list[str]:
         return paths
     errors = [r for r in results if isinstance(r, Exception)]
     if any(_out_of_balance(e) for e in errors):
-        raise RuntimeError("Thumbnail service unavailable (provider balance). Try again later.")
+        from core import kie_site
+        raise RuntimeError("Thumbnail service unavailable (provider balance%s). Try again later."
+                           % (": Kie.ai credits are insufficient" if kie_site.active() else ""))
     if errors and (_left(deadline) < MIN_TRY_S or any(isinstance(e, TimeoutError) for e in errors)):
         print("[thumbnail] out of time for this request")
         raise RuntimeError(TOO_LONG)
@@ -277,7 +298,8 @@ def generate_thumbnails(
 ) -> list[str]:
     """Generate thumbnails with reference images (edit), falling back to T2I. The options are made at the same time,
     and everything fits in budget_s (None: no limit)."""
-    if not ATLASCLOUD_KEY:
+    from core import kie_site
+    if not ATLASCLOUD_KEY and not kie_site.active():
         raise ValueError("ATLASCLOUD_KEY is not set")
     deadline = None if budget_s is None else time.monotonic() + budget_s
 
@@ -423,7 +445,8 @@ def generate_thumbnail_no_refs(
     budget_s: float | None = BUDGET_S,
 ) -> list[str]:
     """Generate a thumbnail without reference images, the options at the same time, within budget_s."""
-    if not ATLASCLOUD_KEY:
+    from core import kie_site
+    if not ATLASCLOUD_KEY and not kie_site.active():
         raise ValueError("ATLASCLOUD_KEY is not set")
     deadline = None if budget_s is None else time.monotonic() + budget_s
     paths = _generate_text_only(title, style_description, count, output_dir, deadline=deadline)

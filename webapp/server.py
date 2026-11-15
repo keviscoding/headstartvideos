@@ -3630,15 +3630,18 @@ def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(require_
 
 @app.post("/api/voiceover/preview")
 def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
-    """Return a quick preview — prefer Atlas official sample URLs when available."""
+    """Return a quick preview — prefer Atlas official sample URLs when available. On Kie (core.kie_site) those samples
+    are another voice, so the preview is the Gemini voice that will read the video, made once and kept."""
+    from core import kie_site
+    on_kie = kie_site.active()
     for v in CURATED_VOICES:
-        if v["id"] == req.voice and v.get("preview_url"):
+        if v["id"] == req.voice and v.get("preview_url") and not on_kie:
             return {"url": v["preview_url"], "cached": True}
 
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voice_previews")
-    safe_name = "".join(c if c.isalnum() else "_" for c in req.voice.lower())[:40]
+    safe_name = ("kie_" if on_kie else "") + "".join(c if c.isalnum() else "_" for c in req.voice.lower())[:40]
     cache_path = Path(out_dir) / f"{safe_name}_preview.wav"
 
     if cache_path.exists():

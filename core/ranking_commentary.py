@@ -340,11 +340,9 @@ def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> s
 
     def _post(payload: dict) -> str:
         with httpx.Client(timeout=75) as client:
-            resp = client.post(
-                f"{ATLAS_LLM_BASE}/chat/completions",
-                headers=headers,
-                json=payload,
-            )
+            from core.kie_site import openai_target
+            url, sent_headers, sent = openai_target(f"{ATLAS_LLM_BASE}/chat/completions", headers, payload)
+            resp = client.post(url, headers=sent_headers, json=sent)
             if resp.status_code >= 400:
                 raise RuntimeError(f"Atlas vision {resp.status_code}: {resp.text[:350]}")
             data = resp.json()

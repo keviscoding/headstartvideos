@@ -18,10 +18,11 @@ ALERT_SECONDS = 6 * 3600
 OUT_OF_CREDIT = (
     ("Gemini (Google AI Studio prepaid)", re.compile(r"(?i)prepayment credits? (are|is) depleted|gemini http 402"),
      "https://aistudio.google.com/ (Billing)"),
-    ("Atlas Cloud", re.compile(r"(?i)insufficient balance|provider balance"), "https://www.atlascloud.ai/ (Billing)"),
-    ("Anthropic API", re.compile(r"(?i)credit balance is too low"), "https://console.anthropic.com/settings/billing"),
+    # Kie before Atlas: the site's Kie errors say "provider balance" too (core.kie_site.OUT_OF_CREDIT)
     ("Kie", re.compile(r"(?i)kie[^\n]{0,80}(insufficient|credits? (are|is) (not enough|insufficient))"),
      "https://kie.ai/ (Billing)"),
+    ("Atlas Cloud", re.compile(r"(?i)insufficient balance|provider balance"), "https://www.atlascloud.ai/ (Billing)"),
+    ("Anthropic API", re.compile(r"(?i)credit balance is too low"), "https://console.anthropic.com/settings/billing"),
 )
 
 _last: dict = {}
