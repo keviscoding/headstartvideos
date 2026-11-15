@@ -15,6 +15,7 @@ Thumbnail Studio showed as "Unexpected token '<', <!DOCTYPE ... is not valid JSO
 """
 
 from __future__ import annotations
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -263,7 +264,9 @@ def _submit_and_download(
 
 
 def _out_of_balance(err) -> bool:
-    return isinstance(err, Exception) and ("insufficient balance" in str(err).lower() or "402" in str(err))
+    # 402 as a status, never inside a number ("timed out after -3.000402 s" read as out of credit, 2026-11-15)
+    return isinstance(err, Exception) and ("insufficient balance" in str(err).lower()
+                                           or re.search(r"(?<![\d.])402(?![\d.])", str(err)) is not None)
 
 
 def _finish(results: list, deadline: float | None) -> list[str]:
