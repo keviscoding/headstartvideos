@@ -1,7 +1,8 @@
 """
-Voiceover generation via Atlas Cloud xAI TTS only.
+Voiceover generation via Atlas Cloud xAI TTS, or Kie's Gemini voices when the site uses Kie (core.kie_site; Atlas ran
+dry 2026-11-13). Each of the site's voices has its Gemini stand-in (kie_site.GEMINI_VOICES).
 
-No Gemini TTS fallback — if Atlas fails, we surface a clear error.
+No other fallback — if the provider fails, we surface a clear error.
 """
 
 from __future__ import annotations
@@ -402,6 +403,24 @@ def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
     raise last_err or RuntimeError("Atlas TTS failed")
 
 
+def _kie_tts_chunk(text: str, voice: str, out_path: str) -> None:
+    """One audio chunk from Kie's Gemini voice for `voice`, saved as the same PCM WAV as an Atlas chunk."""
+    from core import kie_site
+    last: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            _download_audio(kie_site.tts(text, voice, timeout=_poll_budget_seconds(len(text))), out_path)
+            return
+        except Exception as e:                                    # noqa: BLE001 - one more try, then the reason
+            if "provider balance" in str(e):
+                raise RuntimeError("Voiceover service is temporarily unavailable (provider balance: Kie.ai credits "
+                                   "are insufficient). Please try again later or contact support.") from e
+            last = e
+        print(f"[voiceover] Kie TTS failure (attempt {attempt}/2): {str(last)[:160]}")
+        Path(out_path).unlink(missing_ok=True)
+    raise RuntimeError(f"Voiceover generation failed on Kie: {last}")
+
+
 def generate_voiceover(
     script: str,
     voice: str = "leo",
@@ -479,7 +498,8 @@ def generate_voiceover(
                 Path(p).unlink(missing_ok=True)
             raise
 
-    if not get_atlas_key():
+    from core import kie_site
+    if not get_atlas_key() and not kie_site.active():
         raise RuntimeError("ATLASCLOUD_KEY not configured. Voiceover requires Atlas Cloud.")
 
     acquired = _vo_slots.acquire(timeout=180)
@@ -516,7 +536,13 @@ def _generate_voiceover_locked(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     chunks = _chunk_script(script.strip(), max_chars=ATLAS_MAX_CHARS)
-    print(f"[voiceover] Atlas xAI TTS — {len(chunks)} chunk(s), voice={voice_id}, total_chars={len(script)}")
+    from core import kie_site
+    on_kie = kie_site.active()
+    if on_kie:
+        print(f"[voiceover] Kie Gemini TTS — {len(chunks)} chunk(s), voice={kie_site.gemini_voice(voice_name)}, "
+              f"total_chars={len(script)}")
+    else:
+        print(f"[voiceover] Atlas xAI TTS — {len(chunks)} chunk(s), voice={voice_id}, total_chars={len(script)}")
 
     wav_paths: list[str] = [""] * len(chunks)
 
@@ -524,14 +550,18 @@ def _generate_voiceover_locked(
         # Unique per-chunk names even if two requests share a second-bucket dir.
         chunk_path = str(out_dir / f"_atlas_{i:03d}_{uuid.uuid4().hex[:8]}.wav")
         print(f"[voiceover] Chunk {i + 1}/{len(chunks)} ({len(chunk)} chars)...")
-        _atlas_tts_chunk(chunk, voice_id, chunk_path)
+        if on_kie:
+            _kie_tts_chunk(chunk, voice_name, chunk_path)
+        else:
+            _atlas_tts_chunk(chunk, voice_id, chunk_path)
         print(f"[voiceover] Chunk {i + 1}/{len(chunks)} done")
         return i, chunk_path
 
     try:
-        # Parallelize chunks for speed (Atlas handles concurrent requests well)
+        # Parallelize chunks for speed (Atlas handles concurrent requests well). On Kie every chunk at once (up to
+        # 8): the page waits on this request, and Cloudflare cuts it at 100 s.
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        workers = min(3, len(chunks))
+        workers = min(8 if on_kie else 3, len(chunks))
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futures = [ex.submit(_run_one, i, c) for i, c in enumerate(chunks)]
             try:
@@ -546,7 +576,7 @@ def _generate_voiceover_locked(
         output_path = str(out_dir / "voiceover.wav")
         _concat_wavs(wav_paths, output_path)
         final = str(Path(output_path).resolve())
-        print(f"[voiceover] Complete via Atlas: {final} ({Path(final).stat().st_size} bytes)")
+        print(f"[voiceover] Complete via {'Kie' if on_kie else 'Atlas'}: {final} ({Path(final).stat().st_size} bytes)")
         return final
     except Exception:
         for p in wav_paths:

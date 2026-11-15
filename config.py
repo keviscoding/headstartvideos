@@ -17,6 +17,12 @@ YOUTUBE_COOKIES_FILE = (os.getenv("YOUTUBE_COOKIES_FILE", "") or "").strip()
 DOWNSUB_KEY = os.getenv("DOWNSUB_KEY", "")
 PIXABAY_KEY = os.getenv("PIXABAY_KEY", "")
 ATLASCLOUD_KEY = os.getenv("ATLASCLOUD_KEY", "")
+# Kie.ai makes the site's text, voices, pictures and clips (core/kie_site.py) since Atlas ran dry (owner 2026-11-15:
+# "use Kie.AI instead of atlas"). The creators' Kie key serves when no KIE_API_KEY is set. SITE_AI_PROVIDER=atlas
+# switches back; a customer's own Atlas key (BYOK) always stays on Atlas.
+KIE_API_KEY = (os.getenv("KIE_API_KEY", "") or os.getenv("CREATORS_KIE_KEY", "")).strip()
+SITE_AI_PROVIDER = (os.getenv("SITE_AI_PROVIDER", "kie") or "kie").strip().lower()
+KIE_TEXT_MODEL = os.getenv("KIE_TEXT_MODEL", "gemini-3.8-flash")
 # Groq — fast, cheap Whisper transcription API. If set, word-level alignment is
 # offloaded here (large-v3-turbo) instead of running whisper on the local CPU.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")

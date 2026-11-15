@@ -353,11 +353,10 @@ def _vlm_via_atlas(frame_path: str, prompt: str, threshold: float) -> tuple[bool
         "max_tokens": 256,
     }
     with httpx.Client(timeout=60) as client:
-        resp = client.post(
-            f"{ATLAS_LLM_BASE}/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json=body,
-        )
+        from core.kie_site import openai_target
+        url, headers, body = openai_target(f"{ATLAS_LLM_BASE}/chat/completions",
+                                           {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, body)
+        resp = client.post(url, headers=headers, json=body)
         if resp.status_code >= 400:
             raise RuntimeError(f"Atlas vision {resp.status_code}: {resp.text[:300]}")
         payload = resp.json()
