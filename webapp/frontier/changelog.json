@@ -1,5 +1,15 @@
 [
   {
+    "build": 134,
+    "date": "2026-11-19",
+    "title": "Run Claude through Kie.ai or another provider",
+    "items": [
+      "Setup, step 2 has a new choice: Claude through another provider, like Kie.ai. Paste your Kie.ai key, or another provider's address and key, and every Claude step runs through it.",
+      "That provider bills you for what each video uses, with no Claude plan limits. Press Set up Claude for videos once more after saving it.",
+      "Before, picking Other provider inside Claude Code's own sign-in didn't reach Studio, so it kept saying Claude wasn't signed in."
+    ]
+  },
+  {
     "build": 133,
     "date": "2026-11-12",
     "title": "A video that comes out black stops instead of finishing",

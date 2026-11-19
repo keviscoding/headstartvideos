@@ -1799,6 +1799,34 @@ def create_app():
         cr_claude.forget_status()
         return jsonify(saved=True, message="Removed. Claude runs on your signed-in Claude plan again.")
 
+    # Claude through another provider that speaks Anthropic's Messages API (cr_claude.other_provider; owner, 2026-11-19):
+    # its address and key are checked (free, where it lists its models) before they're saved; Kie.ai is a preset.
+    @studio.app.post("/cr-claude/provider")
+    def save_claude_provider():
+        data = request.get_json(silent=True) or {}
+        url = cr_claude.PROVIDER_PRESETS.get(str(data.get("preset") or "")) or str(data.get("url") or "").strip()
+        token = str(data.get("key") or "").strip()
+        why = cr_claude.check_other_provider(url, token)
+        if why:
+            return jsonify(error=why), 400
+        write_provider(cr_claude.PROVIDER_URL_NAME, cr_claude.provider_url(url))
+        write_provider(cr_claude.PROVIDER_TOKEN_NAME, token)
+        cr_claude.forget_status()
+        label = cr_claude.provider_label(url)
+        return jsonify(saved=True, message=f"Saved on this computer. Claude now runs through your {label} account, "
+                                           f"with no Claude plan limits: {label} bills you for what each video uses. "
+                                           "Press Set up Claude for videos once more to check it.")
+
+    @studio.app.post("/cr-claude/provider/remove")
+    def remove_claude_provider():
+        from dotenv import unset_key
+        for name in (cr_claude.PROVIDER_URL_NAME, cr_claude.PROVIDER_TOKEN_NAME):
+            if (HOME / ".env").is_file():
+                unset_key(str(HOME / ".env"), name)
+            os.environ.pop(name, None)
+        cr_claude.forget_status()
+        return jsonify(saved=True, message="Removed. Claude runs on your Anthropic API key or signed-in Claude plan again.")
+
     # Studio Cloud on the creator's own Modal account (owner, 2026-10-29: creators who want cloud rendering add their
     # own cloud keys). The token is checked with Modal (which also makes Studio's storage there) before it's saved.
     def cloud_render_running():
