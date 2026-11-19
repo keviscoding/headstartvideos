@@ -118,6 +118,13 @@ under Saved ideas.
   Studio checks it with Anthropic for free, then every Claude step runs through Claude Code on that key: no plan
   limits, billed by Anthropic to their API account (they add credit at console.anthropic.com). Then **Set up Claude for
   videos** once more re-checks the models. Remove my API key there goes back to their plan.
+- Claude through another provider (Claude Code's own "Other provider" sign-in, such as Kie.ai): setup page, step 2,
+  **Using another provider for Claude (like Kie.ai)? Connect it here**. They pick Kie.ai (their Kie.ai key) or type
+  another provider's Anthropic (Messages API) address, and paste its key there (never in chat). The provider must offer
+  Claude Sonnet 5.5 and Opus 5.5 under Claude's own names (claude-sonnet-5-5, claude-opus-5-5). Every Claude step then
+  runs through Claude Code on that provider, billed by it, ahead of a saved Anthropic key. Then **Set up Claude for
+  videos** once more re-checks the models. Remove this provider there goes back to their key or plan. Setting it
+  only inside Claude Code's own sign-in does not reach Studio: Studio ignores Claude Code's settings files.
 - Studio makes every video with Claude Code (on the customer's Claude plan, or their API key above); there is no API-brain option. If
   `setup_check` says `old_api_route`, this customer still uses the old route (an API account as Studio's brain): ask
   them to press **Switch to Claude Code (recommended)** on the setup page, step 2. It connects Claude Code, picks the

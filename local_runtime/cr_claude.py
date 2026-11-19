@@ -169,6 +169,90 @@ def check_api_key(key, *, get=None) -> str:
     return ""
 
 
+# Claude through another provider that speaks Anthropic's Messages API (Claude Code's own "Other provider" sign-in;
+# owner, 2026-11-19 "can we fix this?"). Setup step 2 saves its address and key; every Claude Code question Studio asks
+# then carries them as ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN, ahead of a saved Anthropic key or the plan sign-in,
+# billed to the creator's account there. Claude's own model names are asked for (claude-sonnet-5-5, claude-opus-5-5).
+PROVIDER_URL_NAME = "CR_CLAUDE_BASE_URL"
+PROVIDER_TOKEN_NAME = "CR_CLAUDE_AUTH_TOKEN"
+PROVIDER_URL_SHAPE = re.compile(r"https://[A-Za-z0-9.\-]+(:\d{1,5})?(/[A-Za-z0-9._~\-/]*)?")
+# Kie.ai: the same addresses the website's Claude on Kie uses (webapp/frontier_providers.py): messages under /claude,
+# the free model list under /anthropic (/claude has none, and answers a refused key with HTTP 200)
+PROVIDER_PRESETS = {"kie": "https://api.kie.ai/claude"}
+MODEL_LISTS = {"https://api.kie.ai/claude": "https://api.kie.ai/anthropic/v1/models"}
+
+
+def _saved(name, source=None) -> str:
+    env = os.environ if source is None else source
+    found = str(env.get(name) or os.environ.get(name) or "").strip()
+    if not found:
+        try:
+            for line in (HOME / ".env").read_text(encoding="utf-8", errors="ignore").splitlines():
+                key, _, value = line.strip().partition("=")
+                if key.strip() == name:
+                    found = value.strip().strip('"').strip("'")
+        except OSError:
+            pass
+    return found
+
+
+def provider_url(value) -> str:
+    """The address Claude Code is given: https only, no trailing /v1 (Claude Code adds /v1/messages itself)."""
+    url = str(value or "").strip().rstrip("/")
+    url = re.sub(r"/v1(/messages)?$", "", url)
+    return url if PROVIDER_URL_SHAPE.fullmatch(url) and len(url) <= 300 else ""
+
+
+def _token_ok(token) -> bool:
+    token = str(token or "")
+    return 8 <= len(token) <= 512 and token.isascii() and token.isprintable() and not any(c.isspace() for c in token)
+
+
+def other_provider(source=None) -> dict:
+    """The creator's saved other provider {url, token}; {} when none (or either half is broken)."""
+    url, token = provider_url(_saved(PROVIDER_URL_NAME, source)), _saved(PROVIDER_TOKEN_NAME, source)
+    return {"url": url, "token": token} if url and _token_ok(token) else {}
+
+
+def provider_label(url) -> str:
+    """'Kie.ai' or the provider's host: what Setup and the billing line name, never the key."""
+    host = re.sub(r"^https://", "", str(url or "")).split("/")[0].split(":")[0]
+    return "Kie.ai" if host == "api.kie.ai" else host
+
+
+def provider_billing(url) -> str:
+    return (f"Claude runs through your {provider_label(url)} account: no Claude plan limits, and {provider_label(url)} "
+            "bills you for what each video uses.")
+
+
+def check_other_provider(url, token, *, get=None) -> str:
+    """'' when the provider's address and key look usable, else why not, in plain words. Lists its models (free) where
+    the provider has that list; one without it is checked by Setup's tiny Claude check instead."""
+    if not provider_url(url):
+        return "That isn't a whole https address. Copy your provider's Anthropic (Messages API) address again."
+    if not _token_ok(token):
+        return "That isn't a whole API key. Copy it again from your provider."
+    import requests
+    try:
+        r = (get or requests.get)(MODEL_LISTS.get(provider_url(url)) or provider_url(url) + "/v1/models", timeout=(10, 20), allow_redirects=False,
+                                  headers={"Authorization": "Bearer " + token, "x-api-key": token,
+                                           "anthropic-version": "2023-06-01"})
+    except requests.RequestException:
+        return f"{provider_label(url)} didn't answer. Check the address and your connection, then try again."
+    if r.status_code in (401, 403):
+        return f"{provider_label(url)} didn't accept this key. Copy it again from your account there."
+    if r.status_code >= 500:
+        return f"{provider_label(url)} couldn't check this key right now (HTTP {r.status_code}). Try again in a moment."
+    try:
+        listed = {str(m.get("id")) for m in (r.json() or {}).get("data") or [] if isinstance(m, dict)}
+    except (ValueError, TypeError, AttributeError):
+        listed = set()
+    if r.status_code == 200 and listed and not listed & set(MODELS):
+        return (f"{provider_label(url)} doesn't offer Claude Sonnet 5.5 or Opus 5.5 under Claude's own model names "
+                "(claude-sonnet-5-5, claude-opus-5-5). Studio needs those.")
+    return ""
+
+
 def forget_status():
     """The next status() asks Claude Code again (the saved API key changed)."""
     with _status_lock:
@@ -176,7 +260,8 @@ def forget_status():
 
 
 def clean_environment(source=None):
-    """Use the customer's local login (or the API key they saved in Setup), never inherited API/cloud credentials."""
+    """Use the customer's local login (or the API key or other provider they saved in Setup), never inherited
+    API/cloud credentials."""
     saved_key = api_key(source)
     env = dict(os.environ if source is None else source)
     for name in list(env):
@@ -189,7 +274,10 @@ def clean_environment(source=None):
                              "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "MAX_THINKING_TOKENS",
                              "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING"}):
             env.pop(name, None)
-    if saved_key:
+    other = other_provider(source)
+    if other:                          # the creator's other provider goes ahead of a saved Anthropic key
+        env["ANTHROPIC_BASE_URL"], env["ANTHROPIC_AUTH_TOKEN"] = other["url"], other["token"]
+    elif saved_key:
         env["ANTHROPIC_API_KEY"] = saved_key
     # Do not repeat a timed-out request inside the CLI either. Rejected-request
     # handling remains Claude Code's own behavior, within this one authorization.
@@ -361,23 +449,31 @@ def _status(exe, *, run=None, environment=None):
         data = json.loads(auth.stdout or "{}")
         method = data.get("authMethod", "none")
         own_key = method == "api_key" and data.get("apiKeySource") == "ANTHROPIC_API_KEY" and env.get("ANTHROPIC_API_KEY")
+        # the saved other provider: Claude Code reads ANTHROPIC_AUTH_TOKEN as an "oauth_token" sign-in (2.1.291)
+        own_provider = (method in {"oauth_token", "api_key"} and env.get("ANTHROPIC_AUTH_TOKEN")
+                        and env.get("ANTHROPIC_BASE_URL"))
         # an API key's account is the key itself (a new key verifies its models again); never the key, only its hash
-        result["account_fingerprint"] = hashlib.sha256(("api-key:" + env["ANTHROPIC_API_KEY"]).encode() if own_key else str(
+        result["account_fingerprint"] = hashlib.sha256(
+            ("provider:" + env["ANTHROPIC_BASE_URL"] + "\n" + env["ANTHROPIC_AUTH_TOKEN"]).encode() if own_provider else
+            ("api-key:" + env["ANTHROPIC_API_KEY"]).encode() if own_key else str(
             data.get("email") or data.get("accountUuid") or "unknown-local-account").encode()).hexdigest()
         result["auth_method"] = method if method in {"none", "claude.ai", "oauth_token", "api_key", "api_key_helper", "third_party"} else "unknown"
         result["api_provider"] = "firstParty" if data.get("apiProvider") == "firstParty" else "other"
         subscription = data.get("subscriptionType", "")
         result["subscription_type"] = subscription if subscription in {"free", "pro", "max", "team", "enterprise"} else ""
         result["authenticated"] = bool(auth.returncode == 0 and data.get("loggedIn") is True
-                                       and (method == "claude.ai" or own_key) and data.get("apiProvider") == "firstParty")
+                                       and (method == "claude.ai" or own_key or own_provider)
+                                       and data.get("apiProvider") == "firstParty")
         result["ready"] = result["authenticated"]
         result["api_key"] = bool(own_key)
+        result["other_provider"] = provider_label(env["ANTHROPIC_BASE_URL"]) if own_provider else ""
         import cr_allowance
         result["allowance"] = cr_allowance.status(HOME, result["account_fingerprint"])
-        result["message"] = (API_KEY_BILLING if own_key and result["ready"] else
+        result["message"] = (provider_billing(env["ANTHROPIC_BASE_URL"]) if own_provider and result["ready"] else
+                             API_KEY_BILLING if own_key and result["ready"] else
                              "Your local Claude account is connected. Its usage limits apply." if result["ready"] else
-                             "Sign in to Claude Code with your Claude subscription, or save an Anthropic API key in "
-                             "Setup step 2.")
+                             "Sign in to Claude Code with your Claude subscription, or save an Anthropic API key or "
+                             "another provider in Setup step 2.")
     except subprocess.TimeoutExpired:
         result["timed_out"] = result["slow"] = True      # "slow" stays: setup says this, not "sign in"
         result["message"] = ("Claude Code took more than a minute and a half to answer its sign-in check. Close other "
@@ -741,7 +837,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.133")
+            installed_version=cfg.get("local_version","5.3-admin.134")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text(encoding="utf-8"))
