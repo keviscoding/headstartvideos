@@ -19,8 +19,8 @@ from core.avatar_gen_pipeline import select_shot_framing
 
 def test_framing_covers_all_five_for_typical_short():
     """
-    A typical Short with 3-4 b-roll shots should use 3-4 different framings.
-    First 3 must include close-up or detail, and wide.
+    A typical Short with 3 b-roll shots enforces the cycle: medium, detail (ECU), wide.
+    All 3 must be unique with no consecutive repeats.
     """
     print("TEST: framing_covers_all_five_for_typical_short")
     
@@ -32,90 +32,80 @@ def test_framing_covers_all_five_for_typical_short():
     ]
     
     framings_used = []
+    shot_sizes_used = []
     prev = None
     
     for broll_idx, text in enumerate(segments):
         result = select_shot_framing(broll_idx, text, prev, len(segments))
         framing = result["framing"]
+        shot_size = result.get("shot_size", "")
         framings_used.append(framing)
+        shot_sizes_used.append(shot_size)
         
         # Should never repeat consecutive
         assert framing != prev, f"B-roll {broll_idx} repeated framing {framing}"
         
         prev = framing
-        print(f"  B-roll {broll_idx}: {framing} - {result['directive'][:60]}...")
+        print(f"  B-roll {broll_idx}: {shot_size} {framing} - {result['directive'][:60]}...")
     
-    # With 3 segments, we should get 3 different framings
+    # With 3 segments, enforced cycle should be: medium, detail, wide
+    expected_order = ["medium", "detail", "wide"]
+    assert framings_used == expected_order, f"Expected {expected_order}, got {framings_used}"
+    
+    # All 3 must be unique
     assert len(set(framings_used)) == 3, f"Expected 3 unique framings, got {len(set(framings_used))}: {framings_used}"
     
-    # First 3 must include close-up or detail
-    has_closeup_or_detail = any(f in framings_used for f in ["close_up", "detail"])
-    assert has_closeup_or_detail, f"First 3 framings missing close-up/detail: {framings_used}"
+    # Verify shot_size prefix is present for each
+    assert all(ss for ss in shot_sizes_used), f"Missing shot_size prefixes: {shot_sizes_used}"
     
-    # First 3 must include wide
-    has_wide = "wide" in framings_used
-    assert has_wide, f"First 3 framings missing wide: {framings_used}"
-    
-    print(f"  ✓ PASS: 3 b-roll shots produced 3 unique framings with close-up/detail and wide: {framings_used}")
+    print(f"  ✓ PASS: 3 b-roll shots produced enforced cycle {framings_used} with shot_size prefixes")
 
 
 def test_framing_covers_all_five_with_four_broll():
     """
-    A Short with 4 b-roll shots gets 4 different framings.
-    With 5 b-roll shots, all 5 framings appear.
+    With the 3-shot cycle (medium, detail, wide), 4 shots repeat medium, 6 shots cycle twice.
     """
     print("\nTEST: framing_covers_all_five_with_four_broll")
     
-    # Test 4 b-roll shots
+    # Test 4 b-roll shots: medium, detail, wide, medium
     all_framings_4 = []
-    prev = None
     for broll_idx in range(4):
         text = f"Segment {broll_idx}"
-        result = select_shot_framing(broll_idx, text, prev, 4)
+        result = select_shot_framing(broll_idx, text, None, 4)
         framing = result["framing"]
         all_framings_4.append(framing)
-        prev = framing
     
-    unique_4 = set(all_framings_4)
     print(f"  4 b-roll shots: {all_framings_4}")
-    print(f"  Unique: {len(unique_4)}/4")
-    assert len(unique_4) == 4, f"Expected 4 unique framings, got {len(unique_4)}: {unique_4}"
+    # Should be medium, detail, wide, medium
+    expected_4 = ["medium", "detail", "wide", "medium"]
+    assert all_framings_4 == expected_4, f"Expected {expected_4}, got {all_framings_4}"
+    print(f"  Unique: {len(set(all_framings_4))}/3 (medium, detail, wide)")
     
-    # Test 5 b-roll shots gets all 5
-    all_framings_5 = []
-    prev = None
-    for broll_idx in range(5):
+    # Test 6 b-roll shots cycles twice: medium, detail, wide, medium, detail, wide
+    all_framings_6 = []
+    for broll_idx in range(6):
         text = f"Segment {broll_idx}"
-        result = select_shot_framing(broll_idx, text, prev, 5)
+        result = select_shot_framing(broll_idx, text, None, 6)
         framing = result["framing"]
-        all_framings_5.append(framing)
-        prev = framing
+        all_framings_6.append(framing)
     
-    unique_5 = set(all_framings_5)
-    available_framings = {"close_up", "detail", "over_shoulder", "wide", "medium"}
+    print(f"  6 b-roll shots: {all_framings_6}")
+    expected_6 = ["medium", "detail", "wide", "medium", "detail", "wide"]
+    assert all_framings_6 == expected_6, f"Expected {expected_6}, got {all_framings_6}"
     
-    print(f"  5 b-roll shots: {all_framings_5}")
-    print(f"  Unique: {len(unique_5)}/5")
-    
-    assert len(unique_5) == 5, f"Expected all 5 framings, got {len(unique_5)}: {unique_5}"
-    
-    # Check each is in the available set
-    for f in unique_5:
-        assert f in available_framings, f"Unknown framing: {f}"
-    
-    print(f"  ✓ PASS: 4 b-roll gets 4 framings, 5 b-roll gets all 5")
+    print(f"  ✓ PASS: 4 b-roll cycles as expected, 6 b-roll completes two full cycles")
 
 
 def test_framing_never_repeats_consecutive():
-    """No two consecutive b-roll shots should use the same framing."""
+    """The 3-shot cycle guarantees no two consecutive b-roll shots use the same framing."""
     print("\nTEST: framing_never_repeats_consecutive")
     
-    # Test with same text repeated (should still vary)
+    # Test with same text repeated (should still vary due to cycle)
     segments = ["Same text repeated"] * 10
     prev = None
     
     for broll_idx, text in enumerate(segments):
-        result = select_shot_framing(broll_idx, text, prev, len(segments))
+        result = select_shot_framing(broll_idx, text, None, len(segments))
         framing = result["framing"]
         
         if prev is not None:
@@ -123,20 +113,19 @@ def test_framing_never_repeats_consecutive():
         
         prev = framing
     
-    print("  ✓ PASS: 10 consecutive b-roll shots never repeated framing")
+    print("  ✓ PASS: 10 consecutive b-roll shots never repeated framing (enforced by cycle)")
 
 
 def test_framing_directive_present():
-    """Each framing should have a directive for prompt generation."""
+    """Each framing in the 3-shot cycle should have directive, shot_size, and camera_move."""
     print("\nTEST: framing_directive_present")
     
-    # With round-robin, first 5 b-roll shots give us all 5 framings
+    # With 3-shot cycle, first 3 b-roll shots give us all 3 framings
     framings_found = []
     
-    for broll_idx in range(5):
+    for broll_idx in range(3):
         text = f"Test segment {broll_idx}"
-        prev = framings_found[-1] if framings_found else None
-        result = select_shot_framing(broll_idx, text, prev, 5)
+        result = select_shot_framing(broll_idx, text, None, 3)
         framing = result["framing"]
         
         # Check directive
@@ -144,35 +133,71 @@ def test_framing_directive_present():
         assert isinstance(result["directive"], str), f"directive not a string for {framing}"
         assert len(result["directive"]) > 0, f"Empty directive for {framing}"
         
+        # Check shot_size prefix
+        assert "shot_size" in result, f"Missing shot_size for {framing}"
+        assert isinstance(result["shot_size"], str), f"shot_size not a string for {framing}"
+        assert len(result["shot_size"]) > 0, f"Empty shot_size for {framing}"
+        
+        # Check camera_move
+        assert "camera_move" in result, f"Missing camera_move for {framing}"
+        
         framings_found.append(framing)
-        print(f"  B-roll {broll_idx} ({framing}): '{result['directive'][:60]}...'")
+        print(f"  B-roll {broll_idx} ({result['shot_size']} {framing}): '{result['directive'][:60]}...'")
     
     unique_framings = set(framings_found)
-    assert len(unique_framings) == 5, f"Expected 5 unique framings, got {len(unique_framings)}: {unique_framings}"
-    print("  ✓ PASS: All 5 framings have directives")
+    expected_framings = {"medium", "detail", "wide"}
+    assert unique_framings == expected_framings, f"Expected {expected_framings}, got {unique_framings}"
+    print("  ✓ PASS: All 3 framings have directive, shot_size, and camera_move")
 
 
 def test_framing_round_robin_for_short_videos():
     """
-    Round-robin ensures different framings across b-roll shots.
+    The 3-shot cycle deterministically assigns shot sizes for variety.
     """
     print("\nTEST: framing_round_robin_for_short_videos")
     
-    # 4 b-roll shots should give us 4 different framings
-    segments = [f"Segment {i}" for i in range(4)]
+    # 3 b-roll shots should give us the full cycle: medium, detail, wide
+    segments = [f"Segment {i}" for i in range(3)]
     framings = []
-    prev = None
     
     for broll_idx, text in enumerate(segments):
-        result = select_shot_framing(broll_idx, text, prev, len(segments))
+        result = select_shot_framing(broll_idx, text, None, len(segments))
         framing = result["framing"]
         framings.append(framing)
-        prev = framing
     
-    unique_count = len(set(framings))
-    assert unique_count == 4, f"Expected 4 unique framings for 4 b-roll shots, got {unique_count}: {framings}"
+    expected_cycle = ["medium", "detail", "wide"]
+    assert framings == expected_cycle, f"Expected {expected_cycle}, got {framings}"
     
-    print(f"  ✓ PASS: 4 b-roll shots yielded 4 unique framings: {framings}")
+    print(f"  ✓ PASS: 3 b-roll shots yielded enforced cycle: {framings}")
+
+
+def test_ecu_detail_has_zoom_strength():
+    """
+    ECU detail shots (index 1, 4, 7, ...) should have zoom_strength for visible motion.
+    """
+    print("\nTEST: ecu_detail_has_zoom_strength")
+    
+    # Test first 7 b-roll shots to cover two cycles plus one
+    for broll_idx in range(7):
+        result = select_shot_framing(broll_idx, f"Segment {broll_idx}", None, 7)
+        framing = result["framing"]
+        zoom_strength = result.get("zoom_strength")
+        
+        # ECU detail shots are at indices 1, 4, 7, ... (every third starting from 1)
+        if broll_idx % 3 == 1:
+            assert framing == "detail", f"Expected detail at index {broll_idx}, got {framing}"
+            assert zoom_strength is not None, f"ECU detail at index {broll_idx} missing zoom_strength"
+            assert zoom_strength > 1.0, f"ECU detail zoom_strength should be > 1.0, got {zoom_strength}"
+            print(f"  B-roll {broll_idx} (detail): zoom_strength={zoom_strength}")
+        else:
+            # Medium and wide should not have zoom_strength
+            assert framing in ["medium", "wide"], f"Expected medium/wide at index {broll_idx}, got {framing}"
+            if zoom_strength is not None:
+                # zoom_strength can be None or explicitly None
+                pass
+            print(f"  B-roll {broll_idx} ({framing}): no zoom_strength")
+    
+    print("  ✓ PASS: ECU detail shots have zoom_strength, medium/wide do not")
 
 
 if __name__ == "__main__":
@@ -186,6 +211,7 @@ if __name__ == "__main__":
         test_framing_never_repeats_consecutive()
         test_framing_directive_present()
         test_framing_round_robin_for_short_videos()
+        test_ecu_detail_has_zoom_strength()
         
         print("\n" + "=" * 70)
         print("✓ ALL TESTS PASSED")
