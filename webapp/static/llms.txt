@@ -1,0 +1,21 @@
+# ChannelRecipe
+
+> ChannelRecipe makes whole faceless YouTube videos in any style. Type a title (or paste a channel to copy its look) and get a finished video: researched and fact-checked script, voice, real footage, maps, graphics, music, captions, thumbnail and YouTube description. Runs as a desktop studio on Mac and Windows plus cloud recipes. Plans: Creator $49/mo, Pro $79/mo, Max $119/mo.
+
+## Product
+- [Home](https://channelrecipe.com/): what ChannelRecipe does and pricing
+- [App](https://channelrecipe.com/app): start making videos
+- [Faceless YouTube video generator](https://channelrecipe.com/faceless-youtube-video-generator): how it works, styles, FAQ
+
+## Comparisons
+- [ChannelRecipe vs Viblo AI](https://channelrecipe.com/viblo-alternative): Viblo makes 60-second Shorts; ChannelRecipe makes long-form videos and Shorts
+- [ChannelRecipe vs Everygen (Viewmax)](https://channelrecipe.com/everygen-alternative): viral preset clips vs a whole channel in one style
+- [Viblo vs Everygen](https://channelrecipe.com/viblo-vs-everygen): the two Shorts tools compared, plus the long-video option
+- [ChannelRecipe vs Crayo](https://channelrecipe.com/crayo-alternative): a clipping tool vs a tool that makes the long video
+- [ChannelRecipe vs InVideo AI](https://channelrecipe.com/invideo-alternative): credit-based general AI video vs faceless YouTube with no per-video credits
+- [ChannelRecipe vs vidIQ](https://channelrecipe.com/vidiq-alternative): vidIQ finds ideas and does SEO; ChannelRecipe makes the video
+- [ChannelRecipe vs Clipchamp](https://channelrecipe.com/clipchamp-alternative): manual editor vs a video made from a title
+
+## Guides
+- [Money niches](https://channelrecipe.com/money-niche): faceless niches by earning potential
+- [Course](https://channelrecipe.com/course): how to start a faceless channel

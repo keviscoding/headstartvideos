@@ -1,0 +1,186 @@
+/* ChannelRecipe SEO pages
+   Built on channelrecipe.com's own tokens and class names (site-header, cta-btn, ghost-btn, eyebrow,
+   section-heading, step-card, faq-item, final-cta, footer-section), so these pages can drop into the
+   site and share its stylesheet. Serve at /static/seo.css, or merge into the main CSS. */
+
+:root {
+  --canvas: #F7F5F0; --canvas-2: #F1EEE6; --ink: #16161A; --ink-2: #45454E; --ink-3: #6E6E79;
+  --hairline: #E5E1D8; --accent: #6D5AE0; --accent-hover: #5A48C9; --accent-soft: #EDEAFB;
+  --white: #FFFFFF; --success: #14B87A; --danger: #C8372D;
+  --night: #0B0B10; --night-2: #121219; --night-3: #1A1A23;
+  --on-night: #F4F2EC; --on-night-2: #B4B2BE; --on-night-3: #8A8896; --night-line: rgba(255,255,255,.09);
+  --glow: #A99BFF; --warm: #FFB46B;
+  --font-display: "Cabinet Grotesk", "Cabinet Grotesk Fallback", "General Sans", system-ui, sans-serif;
+  --font-body: "General Sans", "General Sans Fallback", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; font-family: var(--font-body); background: var(--canvas); color: var(--ink);
+  -webkit-font-smoothing: antialiased; line-height: 1.6; overflow-x: hidden; }
+h1, h2, h3, p, ul, ol { margin: 0; }
+img, video { max-width: 100%; display: block; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+
+.container { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+.narrow { max-width: 960px; }
+@media (max-width: 480px) { .container { padding: 0 16px; } }
+
+/* Header (same markup and look as the homepage) */
+.site-header { position: absolute; top: 0; left: 0; right: 0; z-index: 20; padding: 18px 0; }
+.site-nav { display: flex; align-items: center; gap: 24px; }
+.brand { display: inline-flex; align-items: center; gap: 8px; color: var(--on-night); text-decoration: none;
+  font-family: var(--font-display); font-weight: 800; font-size: 18px; letter-spacing: -.01em; }
+.brand .accent, .footer-brand .accent { color: var(--glow); }
+.nav-links { display: flex; gap: 22px; margin-left: 12px; }
+.nav-links a, .nav-login { color: var(--on-night-2); text-decoration: none; font-size: 15px; font-weight: 600; transition: color .15s; }
+.nav-links a:hover, .nav-login:hover { color: #fff; }
+.nav-actions { margin-left: auto; display: flex; align-items: center; gap: 18px; }
+.nav-login { white-space: nowrap; }
+@media (max-width: 820px) { .nav-links { display: none; } }
+
+/* Buttons */
+.cta-btn { display: inline-flex; align-items: center; gap: 10px; background: var(--accent); color: var(--white);
+  font-size: 17px; font-weight: 700; padding: 16px 32px; border-radius: 12px; border: none; cursor: pointer;
+  text-decoration: none; transition: background .2s, box-shadow .2s; box-shadow: 0 10px 40px rgba(109,90,224,.45); }
+.cta-btn:hover { background: var(--accent-hover); }
+.cta-btn.nav-cta { font-size: 14px; padding: 10px 20px; border-radius: 10px; white-space: nowrap; box-shadow: none; }
+.ghost-btn { display: inline-flex; align-items: center; gap: 8px; color: var(--on-night); text-decoration: none;
+  font-size: 16px; font-weight: 600; padding: 15px 24px; border-radius: 12px; background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.16); transition: background .2s; }
+.ghost-btn:hover { background: rgba(255,255,255,.13); }
+.play { width: 0; height: 0; border-left: 9px solid currentColor; border-top: 6px solid transparent; border-bottom: 6px solid transparent; }
+@media (max-width: 420px) { .cta-btn.nav-cta { padding: 9px 14px; font-size: 13px; } .nav-actions { gap: 14px; } }
+
+/* Hero: night band, shorter than the homepage's so the comparison shows above the fold */
+.seo-hero { position: relative; overflow: hidden; isolation: isolate; background: var(--night); color: var(--on-night);
+  padding: 132px 0 64px; text-align: center; }
+.seo-hero::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(ellipse 60% 70% at 50% 0%, rgba(109,90,224,.28), rgba(11,11,16,0) 70%); }
+.hero-kicker { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 24px; font-size: 13px; font-weight: 600;
+  color: var(--on-night-2); padding: 7px 14px 7px 12px; border-radius: 999px; background: rgba(255,255,255,.06); border: 1px solid var(--night-line); }
+.rec { width: 8px; height: 8px; border-radius: 50%; background: #FF5A4E; box-shadow: 0 0 0 4px rgba(255,90,78,.18); }
+.seo-hero h1 { font-family: var(--font-display); font-weight: 900; font-size: clamp(36px, 5.6vw, 68px); line-height: 1;
+  letter-spacing: -.04em; margin: 0 auto 22px; max-width: 900px; text-wrap: balance; }
+.shine { background-image: linear-gradient(92deg, #C8BEFF 0%, #A99BFF 38%, #FFB46B 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.seo-hero .sub { font-size: 19px; line-height: 1.55; color: var(--on-night-2); max-width: 640px; margin: 0 auto 32px; text-wrap: pretty; }
+.hero-ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.cta-micro { display: block; font-size: 13px; color: var(--on-night-3); margin-top: 14px; }
+@media (max-width: 640px) {
+  .seo-hero { padding: 108px 0 48px; }
+  .seo-hero .sub { font-size: 16px; }
+  .hero-ctas .cta-btn, .hero-ctas .ghost-btn { width: 100%; justify-content: center; }
+}
+
+/* Strip of real Studio clips under the hero */
+.clip-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 48px; }
+.clip { position: relative; aspect-ratio: 9 / 16; border-radius: 12px; overflow: hidden; background: var(--night-3); }
+.clip video { width: 100%; height: 100%; object-fit: cover; }
+.clip span { position: absolute; left: 8px; bottom: 8px; right: 8px; font: 700 11px/1.3 var(--font-body); color: #fff;
+  background: rgba(11,11,16,.72); padding: 4px 8px; border-radius: 6px; text-align: left; }
+@media (max-width: 760px) { .clip-strip { grid-template-columns: repeat(3, 1fr); } .clip:nth-child(n+4) { display: none; } }
+
+/* Style cards: a clip with the recipe name and what it's for */
+.style-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+@media (max-width: 980px) { .style-grid { grid-template-columns: repeat(2, 1fr); } }
+.style-card { background: var(--white); border: 1px solid var(--hairline); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; }
+.style-card .clip { border-radius: 0; aspect-ratio: 4 / 5; }
+.style-card .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 4px; }
+.style-card h3 { font-family: var(--font-display); font-size: 17px; font-weight: 800; }
+.style-card p { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.tag { align-self: flex-start; font: 700 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--accent); background: var(--accent-soft); padding: 4px 8px; border-radius: 4px; }
+
+/* Sections */
+.seo-section { padding: 88px 0; }
+.seo-section.alt { background: var(--canvas-2); }
+.eyebrow { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent-hover); text-align: center; margin-bottom: 12px; }
+.section-heading { font-family: var(--font-display); font-size: clamp(30px, 4.2vw, 48px); line-height: 1.04; font-weight: 900;
+  letter-spacing: -.035em; text-align: center; margin: 0 auto 16px; max-width: 820px; text-wrap: balance; }
+.section-sub { text-align: center; color: var(--ink-2); font-size: 17px; line-height: 1.6; max-width: 640px; margin: 0 auto 40px; text-wrap: pretty; }
+.night .section-heading, .night .eyebrow { color: var(--on-night); }
+.night .eyebrow { color: var(--glow); }
+
+/* Long-form reading column */
+.prose { max-width: 700px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; font-size: 17px; color: var(--ink-2); }
+.prose h3 { font-family: var(--font-display); font-weight: 800; font-size: 24px; letter-spacing: -.015em; color: var(--ink); margin-top: 16px; }
+.prose strong { color: var(--ink); }
+.prose ul, .prose ol { padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
+
+/* Comparison table */
+.compare { overflow-x: auto; background: var(--white); border: 1px solid var(--hairline); border-radius: 18px; }
+.compare table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 15px; }
+.compare th, .compare td { padding: 16px 20px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--hairline); }
+.compare tbody tr:last-child > * { border-bottom: 0; }
+.compare thead th { font-family: var(--font-display); font-size: 18px; font-weight: 800; letter-spacing: -.01em; color: var(--ink); background: var(--white); }
+.compare tbody th { width: 22%; font-weight: 700; color: var(--ink); font-size: 14px; }
+.compare td { color: var(--ink-2); }
+.compare .us { background: var(--accent-soft); color: var(--ink); }
+.compare thead .us { background: var(--accent); color: #fff; }
+.compare-note { text-align: center; margin: 18px auto 0; font-size: 13px; color: var(--ink-3); max-width: 720px; }
+
+/* "Pick this if" verdict cards */
+.verdict-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+@media (max-width: 760px) { .verdict-grid { grid-template-columns: 1fr; } }
+.verdict { background: var(--white); border: 1px solid var(--hairline); border-radius: 18px; padding: 28px; display: flex; flex-direction: column; gap: 12px; }
+.verdict.ours { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 20px 50px rgba(109,90,224,.14); }
+.verdict h3 { font-family: var(--font-display); font-size: 22px; font-weight: 800; letter-spacing: -.01em; }
+.verdict ul { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.verdict li { display: flex; gap: 10px; font-size: 15px; color: var(--ink-2); line-height: 1.5; }
+.verdict li::before { content: "✓"; color: var(--success); font-weight: 700; }
+
+/* Reason cards and steps (same look as the homepage's how-it-works) */
+.steps-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.steps-grid.two { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 760px) { .steps-grid, .steps-grid.two { grid-template-columns: 1fr; } }
+.step-card { background: var(--white); border-radius: 18px; padding: 28px; border: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 8px; }
+.step-num { font-family: var(--font-display); font-weight: 900; font-size: 44px; line-height: 1; letter-spacing: -.04em; color: var(--accent); margin-bottom: 6px; }
+.step-card h3 { font-family: var(--font-display); font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
+.step-card p { font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+
+/* Cost callout */
+.cost-box { background: var(--night); color: var(--on-night-2); border-radius: 18px; padding: 32px; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.cost-box h3 { font-family: var(--font-display); font-size: 24px; font-weight: 800; color: var(--on-night); letter-spacing: -.015em; margin-bottom: 8px; }
+.cost-box p { font-size: 15px; }
+.cost-lines { display: flex; flex-direction: column; gap: 10px; font-size: 15px; }
+.cost-lines div { display: flex; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--night-line); padding-bottom: 10px; }
+.cost-lines b { color: var(--on-night); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 760px) { .cost-box { grid-template-columns: 1fr; padding: 24px; } }
+
+/* FAQ: <details> so answers are in the HTML for search engines without any script */
+.faq-list { max-width: 720px; margin: 0 auto; }
+.faq-item { border-bottom: 1px solid var(--hairline); padding: 20px 0; }
+.faq-q { font-size: 17px; font-weight: 700; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 16px; list-style: none; }
+.faq-q::-webkit-details-marker { display: none; }
+.faq-q::after { content: "+"; font-size: 22px; color: var(--ink-3); transition: transform .2s; }
+.faq-item[open] .faq-q::after { transform: rotate(45deg); }
+.faq-a { font-size: 15px; color: var(--ink-2); line-height: 1.65; padding-top: 12px; }
+
+/* Related comparisons (internal links) */
+.related { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.related a { display: flex; flex-direction: column; gap: 4px; background: var(--white); border: 1px solid var(--hairline); border-radius: 14px;
+  padding: 18px 20px; text-decoration: none; color: var(--ink); transition: transform .2s, box-shadow .2s; }
+.related a:hover { transform: translateY(-3px); box-shadow: 0 12px 40px rgba(0,0,0,.08); }
+.related b { font-family: var(--font-display); font-size: 17px; font-weight: 800; }
+.related span { font-size: 13px; color: var(--ink-3); }
+
+/* Final CTA + footer */
+.final-cta { background: var(--night); color: var(--on-night); padding: 104px 0; text-align: center; position: relative; isolation: isolate; overflow: hidden; }
+.final-cta::before { content: ""; position: absolute; inset: 0; z-index: -1; background: radial-gradient(ellipse 50% 60% at 50% 100%, rgba(109,90,224,.3), rgba(11,11,16,0) 70%); }
+.final-cta .section-heading { color: var(--on-night); margin-bottom: 28px; }
+.legal-note { font-size: 13px; color: var(--ink-3); text-align: center; max-width: 720px; margin: 0 auto; padding: 32px 0 0; }
+.footer-section { padding: 48px 0; text-align: center; background: var(--night); color: var(--on-night-3); border-top: 1px solid var(--night-line); }
+.footer-brand { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px; font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--on-night); }
+.footer-section p { font-size: 13px; }
+.footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin-top: 10px; }
+.footer-links a { color: var(--on-night-2); text-decoration: none; font-size: 13px; }
+.footer-links a:hover { color: #fff; text-decoration: underline; }
+
+/* Marks a line Kevis must check before publishing. Delete the class once checked. */
+.verify { background: #FFF1C2; color: #6B4E00; border-radius: 4px; padding: 0 4px; font-size: .85em; font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+
+/* The smallest phones (320 px): the logo and both header buttons fit without a sideways scroll */
+@media (max-width: 360px) { .site-nav { gap: 12px; } .nav-actions { gap: 10px; } .cta-btn.nav-cta { padding: 8px 12px; } }

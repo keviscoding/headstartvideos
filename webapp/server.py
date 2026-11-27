@@ -2324,6 +2324,29 @@ async def harness_3d_page():
     return web_assets.html_page(STATIC_DIR / "harness" / "3d-documentary-harness.html")
 
 
+# Search pages (2026-11-27): ChannelRecipe compared with other tools, and what Studio is. Each lives in static/seo/ under
+# its own slug and is served at that clean URL, its head (canonical, meta, JSON-LD) exactly as written.
+SEO_PAGES = ("viblo-alternative", "everygen-alternative", "viblo-vs-everygen", "crayo-alternative",
+             "invideo-alternative", "vidiq-alternative", "clipchamp-alternative", "faceless-youtube-video-generator")
+
+
+def _seo_page(slug: str):
+    async def page():
+        return web_assets.html_page(STATIC_DIR / "seo" / f"{slug}.html")
+    page.__name__ = "seo_" + slug.replace("-", "_")
+    return page
+
+
+for _slug in SEO_PAGES:
+    app.get(f"/{_slug}", response_class=HTMLResponse)(_seo_page(_slug))
+
+
+# Everygen was called Viewmax, and people still search the old name.
+@app.get("/viewmax-alternative", include_in_schema=False)
+async def viewmax_alternative():
+    return RedirectResponse("/everygen-alternative", status_code=301)
+
+
 # ChannelRecipe for creators (live but unannounced, noindex): the landing and its app prototype. Built from
 # creators/web on the creator-edit branch by creators/web/publish.py; its videos and images live on the CDN under
 # public/creators/. Relative links need the trailing slash, so /creators redirects to /creators/.
@@ -2544,8 +2567,16 @@ async def robots_txt():
                              headers={"Cache-Control": web_assets.PAGE})
 
 
+# What AI assistants read about the site (llmstxt.org): plain text.
+@app.get("/llms.txt", include_in_schema=False)
+async def llms_txt():
+    return FileResponse(str(STATIC_DIR / "llms.txt"), media_type="text/plain; charset=utf-8",
+                        headers={"Cache-Control": web_assets.PAGE})
+
+
 # The public pages search engines should list.
-SITEMAP_PAGES = ("/", "/course", "/money-niche", "/3d-harness", "/privacy", "/terms")
+SITEMAP_PAGES = ("/", "/app", "/course", "/money-niche", "/3d-harness", *(f"/{s}" for s in SEO_PAGES),
+                 "/privacy", "/terms")
 
 
 @app.get("/sitemap.xml", include_in_schema=False)
