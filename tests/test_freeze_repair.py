@@ -156,7 +156,10 @@ def _stick_figures(seg_dir):
     for i, (x0, way) in enumerate(((40, 1), (300, -1))):
         figure = (f"drawbox=x='{x0}+{way}*t*37.5':y=110:w=2:h=40:color=black:t=fill,"
                   f"drawbox=x='{x0 - 6}+{way}*t*37.5':y=100:w=14:h=12:color=black:t=2,"
-                  f"drawbox=x=140:y=240:w='120+t*12':h=14:color=0x202020:t=fill")
+                  # the bar grows by uncovering it (a white box sliding right): ffmpeg on the Windows runner rejects
+                  # a drawbox width that changes with t, while a moving x works everywhere
+                  f"drawbox=x=140:y=240:w=240:h=14:color=0x202020:t=fill,"
+                  f"drawbox=x='260+t*12':y=240:w=240:h=14:color=white:t=fill")
         _encode(["-f", "lavfi", "-i", f"color=white:s={W}x{H}:r=10:d=10", "-vf", figure], seg_dir / f"seg_{i:03d}.mp4")
     return [10.0, 10.0]
 
